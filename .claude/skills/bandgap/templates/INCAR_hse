@@ -1,0 +1,32 @@
+SYSTEM = HSE06 Band Gap Calculation (restart from PBE)
+# --- 电子结构 ---
+ISTART  = 1          # 必须！从 PBE 的 WAVECAR 读取初始波函数
+ICHARG  = 2          # 从 CHGCAR 读取电荷密度
+PREC    = Accurate
+ENCUT   = 520        # 必须与 PBE SCF 阶段完全一致
+EDIFF   = 1E-5       # HSE 收敛标准可适当放宽
+NELM    = 100
+
+# --- 杂化泛函 HSE06 ---
+LHFCALC = .TRUE.
+HFSCREEN = 0.2       # HSE06 标准屏蔽参数
+AEXX     = 0.25      # HSE06 标准精确交换混合比例
+# 特殊材料请参考 references/hse_params.md 调整上述两个参数
+
+# --- 算法（大体系推荐 Damped，小体系或难收敛用 All） ---
+ALGO    = Damped
+TIME    = 0.4        # 与 ALGO=Damped 配合
+
+# --- 加速选项 ---
+PRECFOCK = Fast      # 加速 HF 积分；若需高精度改为 Normal
+
+# --- 展宽 ---
+ISMEAR  = 0
+SIGMA   = 0.05
+
+# --- 输出 ---
+LWAVE   = .FALSE.    # HSE WAVECAR 体积极大，通常不需要保留
+LCHARG  = .FALSE.
+
+# --- 并行 ---
+NCORE   = 4          # 根据计算节点核数调整

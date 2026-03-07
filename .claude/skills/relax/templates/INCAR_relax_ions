@@ -1,0 +1,37 @@
+SYSTEM = Ionic Relaxation Only (fixed cell shape and volume)
+# 适用场景：晶格常数已知（如实验值或上一步 ISIF=3 已优化），
+# 仅需优化原子坐标。常用于界面、缺陷、吸附体系。
+
+# --- 电子结构 ---
+ISTART  = 0
+ICHARG  = 2
+PREC    = Accurate
+ENCUT   = 520        # 根据材料调整
+EDIFF   = 1E-6
+NELM    = 100
+
+# --- 交换关联 ---
+GGA     = PE
+# 磁性体系需添加: ISPIN = 2 / MAGMOM = ...
+# 强关联体系需添加: LDAU = .TRUE. / LDAUU = ...
+
+# --- 展宽 ---
+ISMEAR  = 0          # 半导体/绝缘体；金属改为 1
+SIGMA   = 0.05
+
+# --- 离子弛豫 ---
+IBRION  = 2
+ISIF    = 2          # 仅优化原子坐标，固定晶胞
+NSW     = 200
+EDIFFG  = -0.02
+POTIM   = 0.5
+
+# --- 算法 ---
+ALGO    = Normal
+
+# --- 输出 ---
+LWAVE   = .FALSE.
+LCHARG  = .FALSE.
+
+# --- 并行 ---
+NCORE   = 4

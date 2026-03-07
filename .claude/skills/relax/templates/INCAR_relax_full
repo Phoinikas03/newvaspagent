@@ -1,0 +1,35 @@
+SYSTEM = Full Structural Relaxation (atoms + cell shape + volume)
+# --- 电子结构 ---
+ISTART  = 0          # 从头开始
+ICHARG  = 2          # 从叠加原子电荷密度初始化
+PREC    = Accurate
+ENCUT   = 520        # 根据材料调整（POTCAR 中最大 ENMAX × 1.3）
+EDIFF   = 1E-6       # 电子步收敛标准
+NELM    = 100        # 最大电子步数
+
+# --- 交换关联 ---
+GGA     = PE         # PBE 泛函
+# 磁性体系需添加: ISPIN = 2 / MAGMOM = ...
+# 强关联体系需添加: LDAU = .TRUE. / LDAUU = ... （参考 references/incar_params.md）
+# vdW 修正需添加: IVDW = 11 或 12
+
+# --- 展宽（根据材料类型选择，参考 references/incar_params.md）---
+ISMEAR  = 0          # 半导体/绝缘体用 Gaussian；金属改为 1
+SIGMA   = 0.05       # 金属改为 0.1~0.2
+
+# --- 离子弛豫 ---
+IBRION  = 2          # 共轭梯度 CG；初始结构差时改为 1 (RMM-DIIS)
+ISIF    = 3          # 同时优化原子位置 + 晶胞形状 + 体积
+NSW     = 200        # 最大离子步数；复杂体系可增大到 500
+EDIFFG  = -0.02      # 力收敛标准 (eV/Å)；高精度要求改为 -0.01
+POTIM   = 0.5        # CG 步长；若 BRIONS 警告则减小到 0.3
+
+# --- 算法 ---
+ALGO    = Normal
+
+# --- 输出（松弛阶段不需要保留 WAVECAR） ---
+LWAVE   = .FALSE.
+LCHARG  = .FALSE.
+
+# --- 并行 ---
+NCORE   = 4          # 根据计算节点核数调整
