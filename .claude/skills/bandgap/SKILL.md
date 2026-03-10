@@ -28,7 +28,7 @@ bandgap/
 
 - `duckduckgo_search` / `google_search`：搜索文档、论坛、参数建议
 - `visit_webpage`：提取网页全文
-- `arxiv_search`：检索特定材料的 HSE 计算参数文献
+- `Skill` (`literature`)：检索特定材料的 HSE 计算参数文献及实验带隙对比值
 - `get_poscar_from_md`：根据 Materials Project ID 获取 POSCAR
 - `setup_vasp_inputs`：自动生成 KPOINTS、POTCAR
 - `run_vasp`：执行 VASP 计算（禁止直接在 Bash 中运行 VASP）
@@ -55,7 +55,10 @@ bandgap/
 
 在写 INCAR 之前，先查阅本地参考文档：
 - `Read references/hse_params.md`，根据材料类型确认 `HFSCREEN`、`AEXX`、`ALGO` 等参数。
-- 仅当材料特殊（如强关联、新型钙钛矿等）且参考文档未覆盖时，才调用 `arxiv_search` 补充查阅。
+- 仅当材料特殊（如强关联、新型钙钛矿等）且参考文档未覆盖时，调用 `Skill: literature`，并明确告知：
+  - **检索目标**：计算参数（HFSCREEN、AEXX、ALGO 等 HSE 参数）
+  - **材料体系**：化学式或材料名（如 `"BiFeO3"`）
+  - **写入目标**：将返回的引用块追加写入本工作区的 `HSE_INCAR_explanation.md`
 
 ---
 
@@ -107,7 +110,10 @@ bandgap/
 向用户报告：
 - HSE06 带隙值（eV）及带隙类型（直接/间接）
 - 跃迁路径
-- 与实验值或文献值的对比（若可查到）
+- 与实验值的对比：调用 `Skill: literature`，并明确告知：
+  - **检索目标**：实验对比值（带隙实验测量值）
+  - **材料体系**：当前计算材料的化学式
+  - **写入目标**：将返回的引用块（含实验值对比表）追加写入 `HSE_INCAR_explanation.md`
 - 所有关键文件的最终位置：`INCAR_pbe`、`INCAR_hse`、`HSE_INCAR_explanation.md`、`vasprun.xml`、`OUTCAR`
 
 ---
@@ -125,4 +131,4 @@ bandgap/
 - **WAVECAR 连续性**：`ISTART=1` 是 HSE 阶段热启动的关键，绝不能在 HSE 阶段设 `ISTART=0`。
 - **ENCUT 一致性**：PBE 和 HSE 两阶段的 `ENCUT` 必须完全相同，否则 WAVECAR 无法读取。
 - **历史文件追溯**：`INCAR_pbe` 和 `INCAR_hse` 必须在工作区中同时存在，不允许静默覆盖。
-- **参数先查本地**：先查 `references/hse_params.md` 和 `references/troubleshooting.md`，再联网搜索。
+- **参数先查本地**：先查 `references/hse_params.md` 和 `references/troubleshooting.md`；本地未覆盖时调用 `Skill: literature` 检索，而非直接调用 `arxiv_search` 或搜索工具，确保结果结构化且带引用。
