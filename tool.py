@@ -375,3 +375,89 @@ async def arxiv_search_impl(query: str, max_results: int = 5) -> Dict[str, Any]:
         
     except Exception as e:
         return {"content": [{"type": "text", "text": f"Error searching academic papers: {str(e)}"}]}
+
+import requests
+
+def _semanticscholar_search_sync(query: str, max_results: int) -> list:
+    """(同步函数) 调用 Semantic Scholar Bulk Search API 获取文献和 PDF 链接"""
+    
+    # 遵循官方推荐，使用 bulk search 端点代替普通的 relevance search
+    # Base URL: https://api.semanticscholar.org/graph/v1
+    base_url = "https://api.semanticscholar.org/graph/v1/paper/search/bulk"
+    
+    # query: 支持高级搜索语法（如 "generative ai" +security -privacy）
+    # fields: 官方建议仅请求需要的字段以加快响应速度。这里请求 title, abstract, year, 和 openAccessPdf
+    params = {
+        "query": query,
+        "fields": "title,abstract,year,openAccessPdf"
+    }
+    
+    # 【强烈推荐】将你的 API Key 填入此处，否则将与全球未认证用户共享极低的请求池
+    headers = {
+        # "x-api-key": "YOUR_API_KEY_HERE" 
+    }
+    
+    response = requests.get(base_url, params=params, headers=headers, timeout=15)
+    response.raise_for_status()
+    
+    data = response.json()
+    
+    papers = []
+    # Bulk Search 返回的结果依然在 "data" 列表中
+    for item in data.get('data', []):
+        if len(papers) >= max_results:
+            break # Bulk Search 默认返回全量匹配数据(通过token翻页)，我们在此处做手动截断
+            
+        title = item.get('title') or "Untitled"
+        abstract = item.get('abstract') or "No abstract available"
+        year = item.get('year') or "Unknown year"
+        
+        pdf_link = ""
+        oa_pdf = item.get('openAccessPdf')
+        if oa_pdf and isinstance(oa_pdf, dict):
+            pdf_link = oa_pdf.get('url', "")
+            
+        papers.append({
+            "title": title,
+            "abstract": abstract,
+            "year": year,
+            "pdf_link": pdf_link
+        })
+        
+    return papers
+
+async def semanticscholar_search_impl(query: str, max_results: int = 5) -> Dict[str, Any]:
+    """(异步接口) 供 Agent / Tool 调用的核心逻辑"""
+    try:
+        papers = await asyncio.to_thread(_semanticscholar_search_sync, query, max_results)
+        
+        if not papers:
+            return {"content": [{"type": "text", "text": f"No papers found for query: '{query}'"}]}
+            
+        snippets = []
+        for idx, paper in enumerate(papers):
+            pdf_url = paper["pdf_link"] if paper["pdf_link"] else "No open-access PDF available"
+            abstract_text = paper['abstract']
+            if len(abstract_text) > 500:
+                abstract_text = abstract_text[:500] + "..."
+                
+            snippets.append(
+                f"### {idx + 1}. {paper['title']} ({paper['year']})\n"
+                f"PDF Download Link: {pdf_url}\n"
+                f"Abstract: {abstract_text}\n"
+            )
+            
+        final_text = "## Semantic Scholar Bulk Search Results\n\n" + "\n\n".join(snippets)
+        return {"content": [{"type": "text", "text": final_text}]}
+        
+    except requests.exceptions.HTTPError as e:
+        if e.response.status_code == 429:
+            # 根据官方文档，429 代表 Hit rate limit
+            error_msg = "Rate limit exceeded (429). You are sharing the unauthenticated API pool. Please configure an API Key (1 req/sec limit)."
+        elif e.response.status_code == 400:
+            error_msg = f"Bad Request (400): Check your search query parameters. Details: {e.response.text}"
+        else:
+            error_msg = f"HTTP Error {e.response.status_code}: {str(e)}"
+        return {"content": [{"type": "text", "text": error_msg}]}
+    except Exception as e:
+        return {"content": [{"type": "text", "text": f"Error searching Semantic Scholar: {str(e)}"}]}

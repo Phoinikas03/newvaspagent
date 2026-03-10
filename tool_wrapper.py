@@ -1,4 +1,4 @@
-from tool import duckduckgo_search_impl, get_poscar_impl, visit_webpage_impl, google_search_impl, arxiv_search_impl, setup_vasp_inputs_impl, run_vasp_impl
+from tool import duckduckgo_search_impl, get_poscar_impl, visit_webpage_impl, google_search_impl, arxiv_search_impl, setup_vasp_inputs_impl, run_vasp_impl, semanticscholar_search_impl
 from claude_agent_sdk import tool
 from typing import Dict, Any, Optional
 
@@ -151,3 +151,27 @@ def arxiv_search_tool(max_results: int = 5):
         )
 
     return arxiv_search
+
+# ==========================================
+# Tool 包装器：Semantic Scholar 学术文献搜索
+# ==========================================
+def semanticscholar_search_tool(max_results: int = 5):
+    """闭包函数：注入 max_results 配置并返回组装好的 Semantic Scholar 搜索 Tool"""
+    
+    @tool(
+        name="semanticscholar_search", 
+        description=(
+            "Search for academic papers across all scientific fields using the Semantic Scholar API. "
+            "Supports advanced search syntax (e.g., '\"exact phrase\" +required -excluded'). "
+            "Returns the paper title, publication year, abstract, and an open-access PDF download link if available."
+        ), 
+        input_schema={"query": str}
+    )
+    async def semanticscholar_search(args: Dict[str, Any]) -> Dict[str, Any]:
+        # 仅负责参数提取和转发
+        return await semanticscholar_search_impl(
+            query=args["query"], 
+            max_results=max_results
+        )
+
+    return semanticscholar_search

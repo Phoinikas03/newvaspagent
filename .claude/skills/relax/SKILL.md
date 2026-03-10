@@ -29,7 +29,7 @@ relax/
 - `get_poscar_from_md`：根据 Materials Project ID 获取 POSCAR
 - `duckduckgo_search` / `google_search`：搜索文档、参数建议、报错解决方案
 - `visit_webpage`：提取网页全文
-- `arxiv_search`：检索特定材料的 DFT 计算参数文献
+- `Skill` (`literature`)：检索特定材料的 DFT 计算参数文献及实验对比值
 - `setup_vasp_inputs`：自动生成 KPOINTS、POTCAR
 - `run_vasp`：执行 VASP 计算（禁止直接在 Bash 中运行 VASP）
 - `Write` / `Edit`：生成和修改工作区文件
@@ -63,7 +63,10 @@ relax/
    - 是否需要 `IVDW`（vdW 修正）
    - `ISIF` 选择（全优化用 3，固定晶格用 2）
 
-2. 仅当材料特殊（新型钙钛矿、稀土化合物等）且参考文档未覆盖时，才调用 `arxiv_search` 或搜索工具补充查阅。
+2. 仅当材料特殊（新型钙钛矿、稀土化合物等）且参考文档未覆盖时，调用 `Skill: literature`，并明确告知：
+   - **检索目标**：计算参数（需要哪些参数，如 ENCUT、LDAUU、IVDW）
+   - **材料体系**：化学式或材料名（如 `"BiFeO3"`）
+   - **写入目标**：将返回的引用块追加写入本工作区的 `INCAR_explanation.md`
 
 ---
 
@@ -139,7 +142,7 @@ python scripts/analyze_result.py .
 
 ## 核心原则
 
-- **参数先查本地**：先查 `references/incar_params.md` 和 `troubleshooting.md`，再联网搜索，避免每次重复查询。
+- **参数先查本地**：先查 `references/incar_params.md` 和 `troubleshooting.md`；本地未覆盖时调用 `Skill: literature` 检索，而非直接调用 `arxiv_search` 或搜索工具，确保结果结构化且带引用。
 - **物理严谨性**：时刻关注材料的电子结构分类（金属/半导体、磁性/非磁性），确保 ISMEAR/MAGMOM 等参数设置合理。
 - **续算而非重算**：离子步未收敛时，将 CONTCAR 复制为 POSCAR 续算，而不是从头开始。
 - **步骤透明**：每完成一个重要节点（获取结构、生成 INCAR、完成收敛检查），向用户简要汇报进度。
