@@ -2,7 +2,6 @@ import os
 import asyncio
 from pathlib import Path
 from typing import Dict, Any
-
 from datetime import datetime
 import subprocess
 
@@ -33,19 +32,20 @@ async def get_poscar_impl(mp_id: str, workspace_dir: str) -> Dict[str, Any]:
     output_filename = (workdir / f"POSCAR_{mp_id}").resolve()
     
     try:
-        # 【关键优化】将同步网络请求和磁盘读写推送到后台线程
+        # 将同步网络请求和磁盘读写推送到后台线程
         await asyncio.to_thread(_fetch_and_save_structure_sync, mp_id, output_filename, api_key)
         return {"content": [{"type": "text", "text": f"POSCAR_{mp_id} saved to {output_filename}"}]}
     except Exception as e:
         return {"content": [{"type": "text", "text": f"Error: {str(e)}"}]}
 
+
 # ==========================================
-# 设置 VASP 输入文件
+# 设置 VASP 输入文件 (POTCAR 智能回退增强版)
 # ==========================================
 def _setup_vasp_inputs_sync(poscar_path: Path, incar_path: Path, work_dir: Path, kpoints_density: int) -> str:
     """(同步函数) 实际执行文件读写、Pymatgen 对象实例化及文件生成的阻塞任务"""
     from pymatgen.core import Structure
-    from pymatgen.io.vasp import Incar, Kpoints, Potcar
+    from pymatgen.io.vasp import Incar, Kpoints, Potcar, PotcarSingle
     
     # 确保目标工作目录存在
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -57,9 +57,30 @@ def _setup_vasp_inputs_sync(poscar_path: Path, incar_path: Path, work_dir: Path,
     # 2. 自动生成 KPOINTS (基于原子密度)
     kpoints = Kpoints.automatic_density(structure, kpoints_density)
     
-    # 3. 自动生成 POTCAR (基于 PBE 泛函)
-    # ⚠️ 强依赖：此步骤需要运行环境中已正确配置 PMG_VASP_PSP_DIR
-    potcar = Potcar(symbols=structure.symbol_set, functional="PBE")
+    # 3. 自动生成 POTCAR (智能 Fallback 机制)
+    # 获取 POSCAR 中按顺序排列的元素种类
+    species = [str(sp) for sp in structure.types_of_specie]
+    potcar_symbols = []
+    
+    for sym in species:
+        best_sym = None
+        # 按计算代价从低到高进行智能尝试 (标准 -> _pv -> _sv -> _d -> _h)
+        for suffix in ["", "_pv", "_sv", "_d", "_h"]:
+            try:
+                test_sym = f"{sym}{suffix}"
+                # 尝试读取该符号对应的 POTCAR
+                PotcarSingle.from_symbol_and_functional(test_sym, "PBE")
+                best_sym = test_sym
+                break # 找到最轻量且存在的一个，直接跳出
+            except Exception:
+                continue
+                
+        if not best_sym:
+            raise ValueError(f"Cannot find any PBE POTCAR for element '{sym}' (tried '', '_pv', '_sv', etc.). Please check PMG_VASP_PSP_DIR.")
+            
+        potcar_symbols.append(best_sym)
+        
+    potcar = Potcar(symbols=potcar_symbols, functional="PBE")
     
     # 4. 将所有文件写入目标工作目录
     structure.to(fmt="poscar", filename=str(work_dir / "POSCAR"))
@@ -67,25 +88,21 @@ def _setup_vasp_inputs_sync(poscar_path: Path, incar_path: Path, work_dir: Path,
     kpoints.write_file(str(work_dir / "KPOINTS"))
     potcar.write_file(str(work_dir / "POTCAR"))
     
-    return f"Successfully generated POSCAR, INCAR, KPOINTS, and POTCAR in {work_dir}"
+    return f"Successfully generated POSCAR, INCAR, KPOINTS, and POTCAR in {work_dir}\n(Used POTCARs: {', '.join(potcar_symbols)})"
 
 
 async def setup_vasp_inputs_impl(poscar_path: str, incar_path: str, workspace_dir: str, kpoints_density: int = 100) -> Dict[str, Any]:
     """(异步接口) 供 Tool 调用的核心逻辑：基于自定义 INCAR 和 POSCAR 自动生成全套 VASP 输入文件"""
-    
-    # 将输入路径转换为标准的 Path 对象并解析绝对路径，避免相对路径带来的异常
     work_dir = Path(workspace_dir).resolve()
     poscar_file = Path(poscar_path).resolve()
     incar_file = Path(incar_path).resolve()
     
-    # 基础校验：提早暴露文件丢失问题，避免陷入深层报错
     if not poscar_file.exists():
         return {"content": [{"type": "text", "text": f"Error: The source POSCAR file was not found at {poscar_file}"}]}
     if not incar_file.exists():
         return {"content": [{"type": "text", "text": f"Error: The source INCAR file was not found at {incar_file}"}]}
         
     try:
-        # 【关键优化】使用 asyncio.to_thread 将纯净的、阻塞的 Pymatgen 处理逻辑推送到后台线程
         success_msg = await asyncio.to_thread(
             _setup_vasp_inputs_sync, 
             poscar_file, 
@@ -96,109 +113,107 @@ async def setup_vasp_inputs_impl(poscar_path: str, incar_path: str, workspace_di
         return {"content": [{"type": "text", "text": success_msg}]}
         
     except Exception as e:
-        # 捕获可能出现的 Pymatgen 错误（例如环境变量未配置导致找不到 POTCAR）
         error_msg = f"Error during VASP input generation: {str(e)}"
-        
-        # 针对最常见的 POTCAR 缺失给出明确的修复建议
         if "No POTCAR" in str(e) or "VASP_PSP_DIR" in str(e):
             error_msg += "\n(Hint: Ensure PMG_VASP_PSP_DIR is configured in your environment or ~/.pmgrc.yaml)"
-            
         return {"content": [{"type": "text", "text": error_msg}]}
 
+
 # ==========================================
-# 运行 VASP
+# 运行 VASP (KPOINTS/KSPACING 双轨校验版)
 # ==========================================
-def _run_vasp_sync(work_dir: Path, num_process: int) -> str:
-    """(同步函数) 实际执行 VASP 计算的阻塞任务，包含日志重定向"""
-    
-    # 1. 生成时间戳和日志文件名
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    logname = f"log_{timestamp}.txt"
+def _run_vasp_sync(work_dir: Path, num_process: int, log_name: str | None = None) -> str:
+    """(同步函数) 实际执行 VASP 计算的阻塞任务，包含日志重定向。"""
+    if log_name is None or not str(log_name).strip():
+        logname = f"log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+    else:
+        logname = Path(str(log_name).strip()).name
+        if not logname or logname in (".", ".."):
+            logname = f"log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
     log_path = work_dir / logname
     
-    # 2. 构建 MPI 运行命令
-    # 对应 bash 命令: mpirun -n <num_process> vasp_std
     command = ["mpirun", "-n", str(num_process), "vasp_std"]
     
-    # 3. 执行子进程并重定向输出
-    # 使用追加模式 ("a") 打开文件，stdout=log_file 和 stderr=subprocess.STDOUT 
-    # 完美等价于 bash 中的 >> "$logname" 2>&1
     with open(log_path, "a") as log_file:
         process = subprocess.run(
             command,
-            cwd=str(work_dir),          # 确保命令在目标工作目录 (workspace_dir) 中执行
-            stdout=log_file,            # 标准输出追加到日志文件
-            stderr=subprocess.STDOUT,   # 将标准错误 (2) 合并到标准输出 (1)
-            text=True                   # 以文本模式处理输出
+            cwd=str(work_dir),
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            text=True
         )
         
-    # 4. 检查进程返回码，非 0 代表 VASP 运行异常崩溃
     if process.returncode != 0:
         raise RuntimeError(f"VASP execution failed with return code {process.returncode}. Please check {logname} for details.")
         
     return f"VASP calculation completed successfully. Log saved to {logname} in {work_dir}"
 
 
-async def run_vasp_impl(workspace_dir: str, num_process: int = 4) -> Dict[str, Any]:
-    """(异步接口) 供 Tool 调用的核心逻辑：基于指定进程数运行 VASP"""
-    
-    # 解析并获取绝对路径
+async def run_vasp_impl(
+    workspace_dir: str,
+    num_process: int = 4,
+    log_name: str | None = None,
+) -> Dict[str, Any]:
+    """(异步接口) 供 Tool 调用运行 VASP"""
     work_dir = Path(workspace_dir).resolve()
     
-    # 基础校验 1：确保工作目录存在
     if not work_dir.exists() or not work_dir.is_dir():
         return {"content": [{"type": "text", "text": f"Error: The workspace directory was not found at {work_dir}"}]}
         
-    # 基础校验 2：提早拦截文件丢失问题，防止 VASP 秒退
-    required_files = ["INCAR", "POSCAR", "POTCAR", "KPOINTS"]
-    missing_files = [f for f in required_files if not (work_dir / f).exists()]
+    # 基础校验：只强制检查 INCAR, POSCAR, POTCAR
+    required_base_files = ["INCAR", "POSCAR", "POTCAR"]
+    missing_files = [f for f in required_base_files if not (work_dir / f).exists()]
     if missing_files:
         return {"content": [{"type": "text", "text": f"Error: Cannot run VASP. Missing required input files in workspace: {', '.join(missing_files)}"}]}
         
+    # 灵活检查 K 点配置：要么有 KPOINTS 文件，要么 INCAR 里有 KSPACING 参数
+    has_kpoints_file = (work_dir / "KPOINTS").exists()
+    has_kspacing_in_incar = False
+    
+    incar_path = work_dir / "INCAR"
+    if incar_path.exists():
+        try:
+            with open(incar_path, "r", encoding="utf-8") as f:
+                if "KSPACING" in f.read().upper():
+                    has_kspacing_in_incar = True
+        except Exception:
+            pass
+
+    if not (has_kpoints_file or has_kspacing_in_incar):
+        return {"content": [{"type": "text", "text": "Error: Cannot run VASP. Missing KPOINTS file AND no KSPACING parameter found in INCAR."}]}
+        
     try:
-        # 【关键设计】使用 asyncio.to_thread 将耗时的 VASP 计算推入后台线程，
-        # 确保 VASP 运行期间不会阻塞 MCP Server 的主事件循环
         success_msg = await asyncio.to_thread(
-            _run_vasp_sync, 
-            work_dir, 
-            num_process
+            _run_vasp_sync,
+            work_dir,
+            num_process,
+            log_name,
         )
         return {"content": [{"type": "text", "text": success_msg}]}
         
     except FileNotFoundError as e:
-        # 专门捕获 subprocess 找不到可执行文件 (mpirun 或 vasp_std) 的异常
-        error_msg = f"Error: Executable not found. {str(e)}\n"
-        error_msg += "(Hint: Ensure 'mpirun' and 'vasp_std' are correctly installed and added to your system PATH.)"
+        error_msg = f"Error: Executable not found. {str(e)}\n(Hint: Ensure 'mpirun' and 'vasp_std' are correctly installed and added to your system PATH.)"
         return {"content": [{"type": "text", "text": error_msg}]}
         
     except Exception as e:
-        # 捕获 VASP 运行过程中的报错（如内存溢出、参数错误导致的异常退出）
-        error_msg = f"Error during VASP execution: {str(e)}"
-        return {"content": [{"type": "text", "text": error_msg}]}
+        return {"content": [{"type": "text", "text": f"Error during VASP execution: {str(e)}"}]}
+
 
 # ==========================================
 # DuckDuckGo 搜索
 # ==========================================
 async def duckduckgo_search_impl(query: str, max_results: int = 10) -> Dict[str, Any]:
-    """(异步接口) 供 Tool 调用和测试搜索实现"""
     try:
         from ddgs import DDGS
-
         def _run_search():
             with DDGS() as ddgs:
                 return list(ddgs.text(query, max_results=max_results))
-
-        # 将同步的搜索库调用放入后台线程
         results = await asyncio.to_thread(_run_search)
-
         if not results:
             return {"content": [{"type": "text", "text": "No results found! Try a less restrictive/shorter query."}]}
-
         postprocessed_results = [f"[{res['title']}]({res['href']})\n{res['body']}" for res in results]
         final_text = "## Search Results\n\n" + "\n\n".join(postprocessed_results)
-
         return {"content": [{"type": "text", "text": final_text}]}
-
     except ImportError:
         return {"content": [{"type": "text", "text": "Error: You must install `ddgs` (pip install duckduckgo-search)."}]}
     except Exception as e:
@@ -208,97 +223,67 @@ async def duckduckgo_search_impl(query: str, max_results: int = 10) -> Dict[str,
 # Google 搜索
 # ==========================================
 def _google_search_sync(query: str, provider: str, api_key: str) -> dict:
-    """(同步函数) 实际执行 HTTP 请求的阻塞任务"""
     import requests
-    
     if provider == "serpapi":
         base_url = "https://serpapi.com/search.json"
         params = {"q": query, "api_key": api_key, "engine": "google", "google_domain": "google.com"}
     else:
         base_url = "https://google.serper.dev/search"
         params = {"q": query, "api_key": api_key}
-
     response = requests.get(base_url, params=params, timeout=15)
     response.raise_for_status()
     return response.json()
 
 async def google_search_impl(query: str, provider: str = "serper") -> Dict[str, Any]:
-    """(异步接口) 供 Tool 调用的核心逻辑"""
     api_key = os.getenv(f"{provider.upper()}_API_KEY")
-    # api_key = "005bbbfe8fd8c8bd183a6e0b20c1ae08c83001da"
     if not api_key:
         return {"content": [{"type": "text", "text": f"Error: Missing API key. Make sure {provider.upper()}_API_KEY is in your env variables."}]}
-
     try:
-        # 将同步的 HTTP 请求推送到后台线程
         results = await asyncio.to_thread(_google_search_sync, query, provider, api_key)
-        
         organic_key = "organic_results" if provider == "serpapi" else "organic"
-
         if organic_key not in results or len(results[organic_key]) == 0:
             return {"content": [{"type": "text", "text": f"No results found for '{query}'. Try with a more general query."}]}
-
         web_snippets = []
         for idx, page in enumerate(results[organic_key]):
             title = page.get("title", "No Title")
             link = page.get("link", "")
             snippet = page.get("snippet", "")
             web_snippets.append(f"{idx + 1}. [{title}]({link})\n{snippet}")
-
         final_text = "## Search Results\n\n" + "\n\n".join(web_snippets)
         return {"content": [{"type": "text", "text": final_text}]}
-
     except Exception as e:
         return {"content": [{"type": "text", "text": f"Error: {str(e)}"}]}
-
 
 # ==========================================
 # 网页浏览工具
 # ==========================================
 def _visit_webpage_sync(url: str) -> str:
-    """(同步函数) 负责网页抓取和 Markdown 转换的阻塞任务"""
     import requests
     import re
     import urllib3
     from markdownify import markdownify
-    
-    # 彻底静音 urllib3 的 InsecureRequestWarning 警告（让控制台清爽一点）
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-    
-    # 【关键修改】添加常见浏览器的 User-Agent，绕过基础反爬
     headers = {
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
     }
-    
-    # 将 headers 传入请求
     response = requests.get(url, headers=headers, timeout=20, verify=False)
     response.raise_for_status()
-
-    # 转换并清理多余的换行符
     markdown_content = markdownify(response.text).strip()
     markdown_content = re.sub(r"\n{3,}", "\n\n", markdown_content)
     return markdown_content
 
 async def visit_webpage_impl(url: str, max_output_length: int = 50000) -> Dict[str, Any]:
-    """(异步接口) 供 Tool 调用的核心逻辑，包含安全截断"""
     try:
-        # 提前检查依赖，防止在网络请求后才报错
         import markdownify  
     except ImportError:
         return {"content": [{"type": "text", "text": "Error: You must install `markdownify` (pip install markdownify)."}]}
-
     import requests
     try:
-        # 将高 CPU 开销的解析和高 I/O 开销的请求放入线程池
         markdown_content = await asyncio.to_thread(_visit_webpage_sync, url)
-
-        # 长度安全截断，保护上下文窗口
         if len(markdown_content) > max_output_length:
             markdown_content = markdown_content[:max_output_length] + \
                 f"\n\n..._This content has been truncated to stay below {max_output_length} characters_...\n"
-
         return {"content": [{"type": "text", "text": markdown_content}]}
-
     except requests.exceptions.Timeout:
         return {"content": [{"type": "text", "text": "Error: The request timed out. Please try again later or check the URL."}]}
     except Exception as e:
@@ -308,11 +293,8 @@ async def visit_webpage_impl(url: str, max_output_length: int = 50000) -> Dict[s
 # 学术开源文献检索 (arXiv API)
 # ==========================================
 def _arxiv_search_sync(query: str, max_results: int) -> list:
-    """(同步函数) 调用 arXiv API 并解析 XML 获取 PDF 链接"""
     import requests
     import xml.etree.ElementTree as ET
-    
-    # 构造请求，arXiv API 不需要 API Key
     base_url = "http://export.arxiv.org/api/query"
     params = {
         "search_query": query,
@@ -321,138 +303,98 @@ def _arxiv_search_sync(query: str, max_results: int) -> list:
         "sortBy": "relevance",
         "sortOrder": "descending"
     }
-    
     response = requests.get(base_url, params=params, timeout=15)
     response.raise_for_status()
-    
-    # 解析 Atom XML 格式
     root = ET.fromstring(response.text)
-    
-    # 定义 XML 命名空间
     ns = {'atom': 'http://www.w3.org/2005/Atom'}
-    
     papers = []
     for entry in root.findall('atom:entry', ns):
         title = entry.find('atom:title', ns).text.replace('\n', ' ').strip()
         summary = entry.find('atom:summary', ns).text.replace('\n', ' ').strip()
-        
-        # 提取网页版链接和 PDF 链接
         pdf_link = ""
         for link in entry.findall('atom:link', ns):
             if link.attrib.get('title') == 'pdf':
                 pdf_link = link.attrib.get('href')
                 break
-                
         papers.append({
             "title": title,
             "summary": summary,
             "pdf_link": pdf_link
         })
-        
     return papers
 
 async def arxiv_search_impl(query: str, max_results: int = 5) -> Dict[str, Any]:
-    """(异步接口) 供 Tool 调用的核心逻辑"""
     try:
-        # 将网络请求和 XML 解析推入后台线程
         papers = await asyncio.to_thread(_arxiv_search_sync, query, max_results)
-        
         if not papers:
             return {"content": [{"type": "text", "text": f"No open-access papers found for query: '{query}'"}]}
-            
-        # 格式化输出，专门凸显 PDF 链接供 Agent 识别
         snippets = []
         for idx, paper in enumerate(papers):
             pdf_url = paper["pdf_link"] + ".pdf" if paper["pdf_link"] else "No PDF available"
             snippets.append(
                 f"### {idx + 1}. {paper['title']}\n"
                 f"**PDF Download Link**: {pdf_url}\n"
-                f"**Abstract**: {paper['summary'][:500]}...\n" # 截断摘要以节省 token
+                f"**Abstract**: {paper['summary'][:500]}...\n"
             )
-            
         final_text = "## Academic Search Results (Open Access)\n\n" + "\n\n".join(snippets)
         return {"content": [{"type": "text", "text": final_text}]}
-        
     except Exception as e:
         return {"content": [{"type": "text", "text": f"Error searching academic papers: {str(e)}"}]}
 
+# ==========================================
+# Semantic Scholar 学术文献搜索
+# ==========================================
 import requests
 
 def _semanticscholar_search_sync(query: str, max_results: int) -> list:
-    """(同步函数) 调用 Semantic Scholar Bulk Search API 获取文献和 PDF 链接"""
-    
-    # 遵循官方推荐，使用 bulk search 端点代替普通的 relevance search
-    # Base URL: https://api.semanticscholar.org/graph/v1
     base_url = "https://api.semanticscholar.org/graph/v1/paper/search/bulk"
-    
-    # query: 支持高级搜索语法（如 "generative ai" +security -privacy）
-    # fields: 官方建议仅请求需要的字段以加快响应速度。这里请求 title, abstract, year, 和 openAccessPdf
     params = {
         "query": query,
         "fields": "title,abstract,year,openAccessPdf"
     }
-    
-    # 【强烈推荐】将你的 API Key 填入此处，否则将与全球未认证用户共享极低的请求池
-    headers = {
-        # "x-api-key": "YOUR_API_KEY_HERE" 
-    }
-    
+    headers = {}
     response = requests.get(base_url, params=params, headers=headers, timeout=15)
     response.raise_for_status()
-    
     data = response.json()
-    
     papers = []
-    # Bulk Search 返回的结果依然在 "data" 列表中
     for item in data.get('data', []):
         if len(papers) >= max_results:
-            break # Bulk Search 默认返回全量匹配数据(通过token翻页)，我们在此处做手动截断
-            
+            break
         title = item.get('title') or "Untitled"
         abstract = item.get('abstract') or "No abstract available"
         year = item.get('year') or "Unknown year"
-        
         pdf_link = ""
         oa_pdf = item.get('openAccessPdf')
         if oa_pdf and isinstance(oa_pdf, dict):
             pdf_link = oa_pdf.get('url', "")
-            
         papers.append({
             "title": title,
             "abstract": abstract,
             "year": year,
             "pdf_link": pdf_link
         })
-        
     return papers
 
 async def semanticscholar_search_impl(query: str, max_results: int = 5) -> Dict[str, Any]:
-    """(异步接口) 供 Agent / Tool 调用的核心逻辑"""
     try:
         papers = await asyncio.to_thread(_semanticscholar_search_sync, query, max_results)
-        
         if not papers:
             return {"content": [{"type": "text", "text": f"No papers found for query: '{query}'"}]}
-            
         snippets = []
         for idx, paper in enumerate(papers):
             pdf_url = paper["pdf_link"] if paper["pdf_link"] else "No open-access PDF available"
             abstract_text = paper['abstract']
             if len(abstract_text) > 500:
                 abstract_text = abstract_text[:500] + "..."
-                
             snippets.append(
                 f"### {idx + 1}. {paper['title']} ({paper['year']})\n"
                 f"PDF Download Link: {pdf_url}\n"
                 f"Abstract: {abstract_text}\n"
             )
-            
         final_text = "## Semantic Scholar Bulk Search Results\n\n" + "\n\n".join(snippets)
         return {"content": [{"type": "text", "text": final_text}]}
-        
     except requests.exceptions.HTTPError as e:
         if e.response.status_code == 429:
-            # 根据官方文档，429 代表 Hit rate limit
             error_msg = "Rate limit exceeded (429). You are sharing the unauthenticated API pool. Please configure an API Key (1 req/sec limit)."
         elif e.response.status_code == 400:
             error_msg = f"Bad Request (400): Check your search query parameters. Details: {e.response.text}"
