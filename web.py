@@ -107,6 +107,16 @@ _HTML = """<!DOCTYPE html>
   .md-content hr { border-color: var(--border); margin: .8em 0; }
   .md-content strong { color: #f0f6fc; }
 
+  .agent-tools-stack {
+    display: flex; flex-direction: column;
+    gap: 0;
+  }
+  .msg-bubble > .md-content:empty { display: none; }
+  .agent-tools-stack:not(:empty) ~ .md-content:not(:empty) {
+    margin-top: 10px; padding-top: 10px;
+    border-top: 1px solid var(--border);
+  }
+
   .tool-card {
     background: var(--tool-bg); border: 1px solid var(--tool-border);
     border-radius: var(--radius); overflow: hidden; margin: 12px 0;
@@ -127,12 +137,44 @@ _HTML = """<!DOCTYPE html>
   }
   .tool-body.open { display: block; }
 
+  .tool-result-card {
+    margin: 12px 0; border: 1px solid var(--border); border-radius: var(--radius);
+    overflow: hidden; background: #141820;
+  }
+  .tool-result-card.err {
+    border-color: var(--error);
+    box-shadow: 0 0 0 1px rgba(248, 81, 73, 0.2);
+  }
+  .tool-result-header {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    padding: 6px 12px; font-size: 12px; color: var(--muted);
+    border-bottom: 1px solid var(--border);
+  }
+  .tool-result-id { font-family: monospace; font-size: 11px; opacity: 0.9; word-break: break-all; }
+  .tool-result-body {
+    margin: 0; padding: 10px 12px;
+    font-family: 'Consolas','JetBrains Mono',monospace;
+    font-size: 12px; color: var(--text);
+    white-space: pre-wrap; word-break: break-all;
+    max-height: 480px; overflow-y: auto;
+  }
+
   .result-bar {
     text-align: center; font-size: 12px; color: var(--muted);
     padding: 6px; border-top: 1px solid var(--border); margin-top: 6px;
   }
   .result-bar.ok { color: var(--success); }
   .result-bar.err { color: var(--error); }
+
+  .result-sdk-summary {
+    margin-top: 8px; padding: 8px 10px;
+    border: 1px solid var(--border); border-radius: 8px;
+    background: #12151c; font-size: 13px;
+  }
+  .result-sdk-summary > summary {
+    cursor: pointer; color: var(--muted); user-select: none;
+  }
+  .result-sdk-summary[open] > summary { margin-bottom: 8px; color: var(--accent); }
 
   #input-area {
     flex-shrink: 0; background: var(--surface); border-top: 1px solid var(--border);
@@ -175,7 +217,7 @@ const sendBtn = document.getElementById('send-btn');
 const statusBadge = document.getElementById('status-badge');
 const logPathEl = document.getElementById('log-path');
 
-let curBubble = null, curMd = null, pendingText = '';
+let curBubble = null, curMd = null, toolsStackEl = null, pendingText = '';
 
 const ws = new WebSocket(`ws://${location.host}/ws`);
 ws.onopen  = () => setStatus('已连接', false);
@@ -196,6 +238,7 @@ function dispatch(d, replay) {
   if      (d.type === 'user_message') appendUserMsg(d.text);
   else if (d.type === 'agent_text')   appendText(d.text);
   else if (d.type === 'tool_use')     appendTool(d.name, d.input_str || '');
+  else if (d.type === 'tool_result')  appendToolResult(d);
   else if (d.type === 'result')       appendResult(d);
   else if (d.type === 'log_path')     logPathEl.textContent = d.path;
   else if (!replay && d.type === 'status') setStatus(d.text, d.thinking ?? false);
@@ -208,6 +251,17 @@ function setStatus(text, thinking) {
 }
 function scrollBottom() { chat.scrollTop = chat.scrollHeight; }
 
+function renderMarkdownTo(el, md) {
+  try {
+    el.innerHTML = marked.parse(md);
+    el.querySelectorAll('pre code').forEach((c) => {
+      try { hljs.highlightElement(c); } catch (_e) {}
+    });
+  } catch (_e) {
+    el.textContent = md;
+  }
+}
+
 function ensureAgentBubble() {
   if (curBubble) return;
   const row = document.createElement('div');
@@ -215,8 +269,11 @@ function ensureAgentBubble() {
   row.innerHTML = '<div class="msg-label">Agent</div>';
   const bubble = document.createElement('div');
   bubble.className = 'msg-bubble';
+  toolsStackEl = document.createElement('div');
+  toolsStackEl.className = 'agent-tools-stack';
   curMd = document.createElement('div');
   curMd.className = 'md-content';
+  bubble.appendChild(toolsStackEl);
   bubble.appendChild(curMd);
   row.appendChild(bubble);
   chat.appendChild(row);
@@ -227,8 +284,7 @@ function ensureAgentBubble() {
 function appendText(text) {
   ensureAgentBubble();
   pendingText += text;
-  curMd.innerHTML = marked.parse(pendingText);
-  curMd.querySelectorAll('pre code').forEach(hljs.highlightElement);
+  renderMarkdownTo(curMd, pendingText);
   scrollBottom();
 }
 
@@ -241,10 +297,30 @@ function appendTool(name, inputStr) {
     <div class="tool-header" onclick="toggleTool('${id}')">
       <span>🔧</span>
       <span class="tool-name">${esc(name)}</span>
-      <span class="tool-toggle" id="${id}-btn">▶ 展开</span>
+      <span class="tool-toggle" id="${id}-btn">▼ 收起</span>
     </div>
-    <pre class="tool-body" id="${id}">${esc(inputStr)}</pre>`;
-  curBubble.appendChild(card);
+    <pre class="tool-body open" id="${id}">${esc(inputStr)}</pre>`;
+  toolsStackEl.appendChild(card);
+  scrollBottom();
+}
+
+function appendToolResult(d) {
+  ensureAgentBubble();
+  const card = document.createElement('div');
+  card.className = 'tool-result-card' + (d.is_error ? ' err' : '');
+  const head = document.createElement('div');
+  head.className = 'tool-result-header';
+  const idSpan = document.createElement('span');
+  idSpan.className = 'tool-result-id';
+  idSpan.textContent = d.tool_use_id ? `id: ${d.tool_use_id}` : '';
+  head.innerHTML = '<span>' + (d.is_error ? '⚠️' : '✅') + ' 工具返回</span>';
+  head.appendChild(idSpan);
+  const pre = document.createElement('pre');
+  pre.className = 'tool-result-body';
+  pre.textContent = d.content_str != null ? String(d.content_str) : '';
+  card.appendChild(head);
+  card.appendChild(pre);
+  toolsStackEl.appendChild(card);
   scrollBottom();
 }
 
@@ -265,7 +341,21 @@ function appendResult(d) {
     bar.textContent = `✓ 完成  轮次: ${d.turns}`;
   }
   curBubble.appendChild(bar);
-  curBubble = curMd = null;
+  const summ = (d.summary || '').trim();
+  if (summ) {
+    const det = document.createElement('details');
+    det.className = 'result-sdk-summary';
+    det.open = false;
+    const sm = document.createElement('summary');
+    sm.textContent = 'ResultMessage 完整输出（与上文可能重复）';
+    det.appendChild(sm);
+    const body = document.createElement('div');
+    body.className = 'md-content';
+    renderMarkdownTo(body, summ);
+    det.appendChild(body);
+    curBubble.appendChild(det);
+  }
+  curBubble = curMd = toolsStackEl = null;
   pendingText = '';
   scrollBottom();
 }
@@ -292,7 +382,7 @@ function send() {
   inputEl.style.height = '';
   sendBtn.disabled = true;
   setStatus('思考中...', true);
-  curBubble = curMd = null;
+  curBubble = curMd = toolsStackEl = null;
   pendingText = '';
 }
 
@@ -309,7 +399,7 @@ sendBtn.addEventListener('click', send);
 # WebUI class
 # ---------------------------------------------------------------------------
 
-_HISTORY_TYPES = {"user_message", "agent_text", "tool_use", "result", "log_path"}
+_HISTORY_TYPES = {"user_message", "agent_text", "tool_use", "tool_result", "result", "log_path"}
 
 
 class WebUI:

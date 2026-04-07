@@ -57,14 +57,21 @@ def run_vasp_tool(workspace_dir: str):
     
     @tool(
         name="run_vasp",
-        description="Run VASP calculation in the workspace directory. The default number of processes is 4.",
-        input_schema={"num_process": Optional[int]}
+        description=(
+            "Run VASP calculation in the workspace directory. Default num_process is 4. "
+            "Optional log_name: output log filename (basename only, e.g. encut_400.log); "
+            "if omitted, uses log_YYYYMMDD_HHMMSS.txt."
+        ),
+        input_schema={"num_process": Optional[int], "log_name": Optional[str]},
     )
     async def run_vasp(args: Dict[str, Any]) -> Dict[str, Any]:
         np = int(args.get("num_process", 4))
+        ln = args.get("log_name")
+        log_name = str(ln).strip() if ln is not None and str(ln).strip() else None
         return await run_vasp_impl(
             workspace_dir=workspace_dir,
-            num_process=np
+            num_process=np,
+            log_name=log_name,
         )
 
     return run_vasp
@@ -92,7 +99,7 @@ def duckduckgo_search_tool(max_results: int = 10):
 # ==========================================
 # Google 搜索工具
 # ==========================================
-def google_search_tool(provider: str = "serpapi"):
+def google_search_tool(provider: str = "serper"):
     """闭包函数：注入 provider 配置并返回组装好的 Tool"""
     
     @tool(
