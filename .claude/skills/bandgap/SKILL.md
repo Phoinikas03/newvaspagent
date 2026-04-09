@@ -30,14 +30,16 @@ bandgap/
 - `visit_webpage`：提取网页全文
 - `Skill` (`literature`)：检索特定材料的 HSE 计算参数文献及实验带隙对比值
 - `get_poscar_from_md`：根据 Materials Project ID 获取 POSCAR
-- `setup_vasp_inputs`：自动生成 KPOINTS、POTCAR
-- `run_vasp`：执行 VASP 计算（禁止直接在 Bash 中运行 VASP）
+- `setup_vasp_inputs`：生成 POTCAR 与 POSCAR 拷贝；若 **INCAR** 中含 **`KSPACING`** 则**不**生成 **KPOINTS**
+- Skill（`run_vasp`）：按该 skill 与系统 orchestration 规则运行 VASP（MCP 工具 `run_vasp` 已移除）
 - `Write` / `Edit`：生成和修改工作区文件
 - `Bash`：文件管理、运行后处理脚本
 - `Read` / `Grep`：读取日志和输出文件
 - `Skill` (`relax`)：引导用户进行结构松弛
 
 注意：当前运行在无 GUI 的终端环境中。若需向用户提问，**直接输出纯文本问题并停止生成，等待用户在终端输入回复**。
+
+**执行方式（与系统 ITERATIVE EXECUTION RULE 一致）**：每次 VASP 提交须**单独**执行并在继续前用 `check_convergence.py` 等检查；**严禁**用 Bash/Python 的 `for` 循环或单条命令把 PBE/HSE、多次参数试探或多目录计算一次性后台跑完。PBE 阶段通过并产出有效 `WAVECAR`/`CHGCAR` 后，再进入 HSE；HSE 前须已按步骤向用户确认。允许的一次性脚本仅限本 skill `scripts/` 下列出的后处理（如 `check_convergence.py`、`gap.py`）。
 
 ---
 
@@ -66,11 +68,11 @@ bandgap/
 
 **目标**：获得高质量波函数（`WAVECAR`）和电荷密度（`CHGCAR`），供 HSE 续算使用。
 
-1. `Read templates/INCAR_pbe_scf`，按材料调整 `ENCUT`（取 POTCAR 中最大 ENMAX × 1.3）
+1. `Read templates/INCAR_pbe_scf`，按材料调整 `ENCUT`（取 POTCAR 中最大 ENMAX × 1.3）；保持模板中的 **`KSPACING`**（及 **`KGAMMA`**），PBE 与后续 HSE 必须一致
 2. `Write INCAR`（覆写）
 3. `Bash`：`cp INCAR INCAR_pbe`（保留历史版本，不可省略）
-4. 调用 `setup_vasp_inputs` 准备 POTCAR 和 KPOINTS
-5. 调用 `run_vasp` 提交计算
+4. 调用 `setup_vasp_inputs` 准备 POTCAR（含 **`KSPACING`** 时不生成 **KPOINTS**）
+5. 按 Skill `run_vasp`，用 Bash 或 `TaskOutput` 提交 PBE 步 VASP 计算
 6. 计算结束后，`Bash`：`python scripts/check_convergence.py .`
    - 确认 `electronic_converged: true`
    - 确认 `wavecar_nonempty: true` 且 `chgcar_nonempty: true`
@@ -83,11 +85,11 @@ bandgap/
 **目标**：基于 PBE 波函数热启动，获得准确带隙。
 
 1. 确认工作区内 `WAVECAR` 和 `CHGCAR` 均存在且非空（来自第 3 步）
-2. `Read templates/INCAR_hse`，将 `ENCUT` 设为与 PBE SCF **完全一致**的值，填入第 2 步确定的 HSE 参数
+2. `Read templates/INCAR_hse`，将 `ENCUT`、**`KSPACING`**（及 **`KGAMMA`**）设为与 PBE SCF **完全一致**，填入第 2 步确定的 HSE 参数
 3. `Write INCAR`（覆写）
 4. `Bash`：`cp INCAR INCAR_hse`（保留历史版本，不可省略）
 5. 生成说明文档：`Write HSE_INCAR_explanation.md`，记录 PBE→HSE 的参数逻辑及参考来源
-6. 向用户确认是否继续（HSE 耗时极长），等待回复后再调用 `run_vasp`
+6. 向用户确认是否继续（HSE 耗时极长），等待回复后再按 Skill `run_vasp` 运行 HSE 步
 7. 计算结束后，`Bash`：`python scripts/check_convergence.py .`
    - 若遇到报错，先 `Read references/troubleshooting.md` 查阅处理方案
    - `ZBRENT: fatal error` 等已知报错在 `vasprun.xml` 完整生成的前提下可安全忽略
@@ -128,6 +130,7 @@ bandgap/
 
 ## 核心原则
 
+- **禁止 monolithic 循环批量跑 VASP**：不得编写带 `for`/`while` 的 Bash/Python 一次提交多阶段或多组 INCAR 的 VASP；须逐次提交并逐步核查（与本 skill 第 3、4 步顺序一致）。
 - **WAVECAR 连续性**：`ISTART=1` 是 HSE 阶段热启动的关键，绝不能在 HSE 阶段设 `ISTART=0`。
 - **ENCUT 一致性**：PBE 和 HSE 两阶段的 `ENCUT` 必须完全相同，否则 WAVECAR 无法读取。
 - **历史文件追溯**：`INCAR_pbe` 和 `INCAR_hse` 必须在工作区中同时存在，不允许静默覆盖。

@@ -1,4 +1,4 @@
-from tool import duckduckgo_search_impl, get_poscar_impl, visit_webpage_impl, google_search_impl, arxiv_search_impl, setup_vasp_inputs_impl, run_vasp_impl, semanticscholar_search_impl
+from tool import duckduckgo_search_impl, get_poscar_impl, visit_webpage_impl, google_search_impl, arxiv_search_impl, setup_vasp_inputs_impl, semanticscholar_search_impl
 from claude_agent_sdk import tool
 from typing import Dict, Any, Optional
 
@@ -31,7 +31,9 @@ def setup_vasp_inputs_tool(workspace_dir: str, default_kpoints_density: int = 10
     @tool(
         name="setup_vasp_inputs", 
         description=(
-            "Generates full VASP input files (KPOINTS, POTCAR, POSCAR, INCAR) in the workspace directory based on a provided POSCAR file path and a custom INCAR file path. The default kpoints density is 100."
+            "Generates VASP inputs (POTCAR, POSCAR copy, INCAR) in the workspace. "
+            "If the INCAR contains KSPACING, k-points come from INCAR only and no KPOINTS file is written. "
+            "Otherwise writes KPOINTS via automatic_density; kpoints_density defaults to 100."
         ), 
         input_schema={
             "poscar_path": str, 
@@ -52,29 +54,8 @@ def setup_vasp_inputs_tool(workspace_dir: str, default_kpoints_density: int = 10
         )
             
     return setup_vasp_inputs
-def run_vasp_tool(workspace_dir: str):
-    """闭包函数：注入 workspace_dir 配置并返回组装好的 Tool"""
-    
-    @tool(
-        name="run_vasp",
-        description=(
-            "Run VASP calculation in the workspace directory. Default num_process is 4. "
-            "Optional log_name: output log filename (basename only, e.g. encut_400.log); "
-            "if omitted, uses log_YYYYMMDD_HHMMSS.txt."
-        ),
-        input_schema={"num_process": Optional[int], "log_name": Optional[str]},
-    )
-    async def run_vasp(args: Dict[str, Any]) -> Dict[str, Any]:
-        np = int(args.get("num_process", 4))
-        ln = args.get("log_name")
-        log_name = str(ln).strip() if ln is not None and str(ln).strip() else None
-        return await run_vasp_impl(
-            workspace_dir=workspace_dir,
-            num_process=np,
-            log_name=log_name,
-        )
 
-    return run_vasp
+
 # ==========================================
 # DuckDuckGo 搜索工具
 # ==========================================

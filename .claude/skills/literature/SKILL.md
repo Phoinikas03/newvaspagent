@@ -50,11 +50,13 @@ lattice_eos/
 - `Skill` (`literature`)：检索特定材料的可靠实验晶格常数及标准 EOS 拟合文献
 - `get_poscar_from_md`：根据特定材料生成或获取初始 POSCAR
 - `setup_vasp_inputs`：自动生成基本输入文件
-- `run_vasp`：执行 VASP 计算（禁止直接在 Bash 中运行 VASP）
+- Skill（`run_vasp`）：按该 skill 与系统 orchestration 规则，用 Bash / `TaskOutput` / 作业调度运行 VASP（MCP 工具 `run_vasp` 已移除）
 - `Write` / `Edit`：生成和修改工作区文件
 - `Bash`：文件管理、运行预处理与后处理脚本
 - `Read` / `Grep`：读取日志和输出文件
 注意：当前运行在无 GUI 的终端环境中。若需向用户提问，**直接输出纯文本问题并停止生成，等待用户在终端输入回复**。
+
+**执行方式（与系统 ITERATIVE EXECUTION RULE 一致）**：除下文 §2 逐点收敛要求外，全工作流**严禁**用 `for` 循环或 monolithic Bash/Python 一次提交多点、多 `scale_*` 的 VASP。允许的一次性脚本仅限 `generate_scaled_poscars.py`、`fit_eos.py`、`check_convergence.py`。每个测试点、每个 `scale_*` 目录须**单独**跑 VASP 并核查后再继续。
 
 ---
 
@@ -70,6 +72,8 @@ lattice_eos/
 
 ### 2. 收敛性测试 (Convergence Test)
 **目标**：确定满足 1 meV/atom 精度的最优 `ENCUT` 和 `KSPACING`（在 VASP 中，我们优先使用 INCAR 中的 KSPACING 标签，而非显式的 KPOINTS 文件）。
+
+**执行方式（与系统 ITERATIVE EXECUTION RULE 一致）**：每个 ENCUT/KSPACING 测试点必须**单独**跑 VASP、读能量再决定下一步；**严禁**用 `for` 循环或单条 Bash 把多个测试点一次性后台提交。循环只存在于推理中，每步单独执行并核查。
 
 1. **环境准备**：
   - 在根目录创建 `convergence_test/` 文件夹。将 `POSCAR_mp-<id>` 复制到该目录下并重命名为 `POSCAR`。将 `templates/INCAR_static` 复制到该目录命名为 `INCAR_template`。
@@ -106,7 +110,7 @@ lattice_eos/
   - 将根目录的 `INCAR_production` 复制进子目录并重命名为 `INCAR`。
   - 调用 `setup_vasp_inputs` 准备与收敛测试一致的 POTCAR。
   - **关键清理**：执行 `rm -f KPOINTS` 确保子目录内没有 KPOINTS 文件，让 VASP 严格依赖 INCAR 中的 KSPACING。
-  - 调用 `run_vasp` 提交计算。
+  - 按 Skill `run_vasp`，用 Bash 或 `TaskOutput` 在该子目录提交并完成 VASP 计算。
 3. 计算结束后，使用 `check_convergence.py` 遍历检查，确认所有 `scale_x.xxx/` 下的 `electronic_converged: true`。
 
 ---
@@ -137,7 +141,8 @@ lattice_eos/
 
 ## 核心原则
 
-- **CRITICAL TOOL USAGE RULE**：在进行参数扫描（如收敛测试或体积缩放批量计算）时，**禁止**编写原生的 Bash/Python 循环脚本直接拉起 `mpirun vasp_std`。你必须在自己的思维链中管理循环逻辑，并逐个目标点调用 `setup_vasp_inputs` 和 `run_vasp` 工具进行任务提交。
+- **禁止整块循环脚本跑收敛/EOS 点**：与上文「执行方式」及下条一致；除已列明的 `scripts/` 工具外，不得用循环脚本批量提交 VASP。
+- **CRITICAL TOOL USAGE RULE**：在进行参数扫描（如收敛测试或体积缩放批量计算）时，**禁止**编写原生的 Bash/Python 循环脚本直接拉起 `mpirun vasp_std`。你必须在自己的思维链中管理循环逻辑，并逐个目标点调用 `setup_vasp_inputs`，再按 Skill `run_vasp` 用 Bash / `TaskOutput` / 调度器逐点提交计算。
 - **强制使用 KSPACING**：本工作流废弃了传统的 KPOINTS 文件配置。在执行每次计算前，必须确保目标目录下的 `KPOINTS` 文件被删除，以强迫 VASP 读取 `INCAR` 中的 `KSPACING` 标签。
 - **参数绝对一致**：批量计算中，所有的 `ENCUT` 和 `KSPACING` 必须**完全一致**。改变基点截断能会导致 Pulay 应力误差。
 - **静态计算优先**：各个比例下的 VASP 计算必须是**单点静态计算 (ISIF=2 且 NSW=0)**，不能在内部再次进行晶胞体积松弛。

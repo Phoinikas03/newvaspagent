@@ -50,7 +50,7 @@ LAPACK: Routine ZPOTRF failed!
 ```
 WAVECAR: reading failed
 ```
-**原因**：PBE 和 HSE 阶段的 KPOINTS 或 ENCUT 不一致，导致波函数格式不匹配。  
+**原因**：PBE 和 HSE 阶段的 **KSPACING**（或历史遗留的 **KPOINTS**）或 **ENCUT** 不一致，导致波函数格式不匹配。  
 **处理**：确保 HSE 阶段的 `ENCUT` 和 K 点网格与 PBE SCF 阶段完全一致；若不一致，删除 WAVECAR 并将 HSE 的 `ISTART` 改回 `0`（从头计算，代价是失去 PBE 热启动优势）。
 
 ---

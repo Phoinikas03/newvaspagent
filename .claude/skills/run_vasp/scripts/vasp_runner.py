@@ -3,7 +3,44 @@ import os
 import sys
 import argparse
 import subprocess
+import shlex
+import shutil
 from pathlib import Path
+
+
+def verify_local_dependencies(exe: str, env_script: str = "") -> None:
+    """本地模式执行前检查；失败时打印 ERROR 并以非零码退出，便于 Agent 从 Bash 输出识别。"""
+    env_p = Path(env_script) if env_script else None
+    if env_p and env_p.exists():
+        check = (
+            "set -e; source "
+            + shlex.quote(str(env_p.resolve()))
+            + "; command -v mpirun >/dev/null; command -v "
+            + shlex.quote(exe)
+            + " >/dev/null"
+        )
+        r = subprocess.run(["bash", "-c", check], capture_output=True, text=True)
+        if r.returncode != 0:
+            print(
+                f"ERROR: After sourcing {env_script}, mpirun or {exe} not found (command not found).",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        return
+    if not shutil.which("mpirun"):
+        print(
+            "ERROR: mpirun not found in PATH (command not found). "
+            "Load your MPI module or extend PATH, e.g. via --env-script / template/env_local.sh.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if not shutil.which(exe):
+        print(
+            f"ERROR: {exe} not found in PATH (command not found). "
+            "Load your VASP module or extend PATH, e.g. via --env-script / template/env_local.sh.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
 def create_local_batch_script(work_dirs, np, exe, env_script, gpu_per_task):
     """场景1 & 场景3：生成包含后台并行与 GPU 绑定的本地执行脚本"""
@@ -66,18 +103,29 @@ if __name__ == "__main__":
 
     run_script_path = Path("vasp_orchestration_run.sh")
 
-    if args.mode == 'local':
+    if args.mode == "local":
+        verify_local_dependencies(args.exe, args.env_script)
         content = create_local_batch_script(args.dirs, args.np, args.exe, args.env_script, args.gpu_per_task)
         run_script_path.write_text(content)
         os.chmod(run_script_path, 0o755)
         print(f"Generated local execution script: {run_script_path}")
         print("Starting execution (background tasks managed by wait)...")
-        subprocess.run(["bash", run_script_path.name])
-        
+        proc = subprocess.run(["bash", run_script_path.name])
+        if proc.returncode != 0:
+            print(
+                f"ERROR: local orchestration script exited with code {proc.returncode}. "
+                "Check vasp_run_*.log in each task directory and stderr above.",
+                file=sys.stderr,
+            )
+            sys.exit(proc.returncode)
+
     elif args.mode == 'slurm':
         content = create_slurm_script(args.dirs, args.np, args.exe, args.env_script, args.slurm_template)
         submit_script = Path("submit_vasp.slurm")
         submit_script.write_text(content)
         print(f"Generated Slurm submission script: {submit_script}")
         print("Submitting to cluster...")
-        subprocess.run(["sbatch", submit_script.name])
+        proc = subprocess.run(["sbatch", submit_script.name])
+        if proc.returncode != 0:
+            print(f"ERROR: sbatch failed with code {proc.returncode}", file=sys.stderr)
+            sys.exit(proc.returncode)

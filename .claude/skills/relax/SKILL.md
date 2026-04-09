@@ -30,13 +30,14 @@ relax/
 - `duckduckgo_search` / `google_search`：搜索文档、参数建议、报错解决方案
 - `visit_webpage`：提取网页全文
 - `Skill` (`literature`)：检索特定材料的 DFT 计算参数文献及实验对比值
-- `setup_vasp_inputs`：自动生成 KPOINTS、POTCAR
-- `run_vasp`：执行 VASP 计算（禁止直接在 Bash 中运行 VASP）
+- `setup_vasp_inputs`：生成 POTCAR 与 POSCAR 拷贝；若 **INCAR** 中含 **`KSPACING`** 则仅用 INCAR 定义 K 点、**不**生成 **KPOINTS**；否则按 `kpoints_density` 生成 **KPOINTS**
 - `Write` / `Edit`：生成和修改工作区文件
 - `Bash`：文件管理、运行后处理脚本
 - `Read` / `Grep`：读取日志和输出文件
 
 注意：当前运行在无 GUI 的终端环境中。若需向用户提问，**直接输出纯文本问题并停止生成，等待用户在终端输入回复**。
+
+**执行方式（与系统 ITERATIVE EXECUTION RULE 一致）**：每次 VASP 运行（含 **续算**：`CONTCAR`→`POSCAR` 后的新一轮）须**单独**提交并在继续前检查收敛；**严禁**用 Bash/Python 的 `for` 循环或单条命令把多次松弛/多组 INCAR 试探一次性后台跑完。允许的一次性脚本仅限本 skill `scripts/` 下列出的工具（如 `check_convergence.py`、`analyze_result.py`）。
 
 ---
 
@@ -72,7 +73,7 @@ relax/
 
 ### 3. 生成 INCAR 与说明文档
 
-1. `Read templates/INCAR_relax_full`（或 `INCAR_relax_ions`，视 ISIF 决定），按材料填入第 2 步确定的参数
+1. `Read templates/INCAR_relax_full`（或 `INCAR_relax_ions`，视 ISIF 决定），按材料填入第 2 步确定的参数（模板已含 **`KSPACING`** / **`KGAMMA`**，可按体系收敛需求改 `KSPACING`）
 2. `Write INCAR`（写入工作区）
 3. `Write INCAR_explanation.md`，记录每个关键参数的选择依据及参考来源
 
@@ -80,15 +81,15 @@ relax/
 
 ### 4. 补全输入文件
 
-调用 `setup_vasp_inputs`，传入 `poscar_path` 和 `incar_path`，自动生成 POTCAR 和 KPOINTS。
+调用 `setup_vasp_inputs`，传入 `poscar_path` 和 `incar_path`，自动生成 POTCAR（并在 INCAR 含 **`KSPACING`** 时不生成 **KPOINTS**）。
 
-如有必要，根据材料特性调整 `kpoints_density`（金属需更密，分子晶体可以稀疏）。
+仅当 **`INCAR` 中未设置 `KSPACING`** 时，才依赖 `kpoints_density` 生成 **KPOINTS**；金属等需更密网格时应**优先**收紧 **`KSPACING`** 数值，而非仅调大 `kpoints_density`。
 
 ---
 
 ### 5. 运行 VASP 计算
 
-调用 `run_vasp` 提交计算，等待完成。
+按 Skill `run_vasp`，用 Bash 或 `TaskOutput` 提交计算并等待完成。
 
 ---
 
@@ -142,6 +143,7 @@ python scripts/analyze_result.py .
 
 ## 核心原则
 
+- **禁止 monolithic 循环批量跑 VASP**：不得编写带 `for`/`while` 的 Bash/Python 一次提交多次松弛或多组参数；每次计算或续算均须单独提交并核查后再进行下一步。
 - **参数先查本地**：先查 `references/incar_params.md` 和 `troubleshooting.md`；本地未覆盖时调用 `Skill: literature` 检索，而非直接调用 `arxiv_search` 或搜索工具，确保结果结构化且带引用。
 - **物理严谨性**：时刻关注材料的电子结构分类（金属/半导体、磁性/非磁性），确保 ISMEAR/MAGMOM 等参数设置合理。
 - **续算而非重算**：离子步未收敛时，将 CONTCAR 复制为 POSCAR 续算，而不是从头开始。
