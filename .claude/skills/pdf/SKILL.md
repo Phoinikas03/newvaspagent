@@ -10,6 +10,10 @@ license: Proprietary. LICENSE.txt has complete terms
 
 This guide covers essential PDF processing operations using Python libraries and command-line tools. For advanced features, JavaScript libraries, and detailed examples, see REFERENCE.md. If you need to fill out a PDF form, read FORMS.md and follow its instructions.
 
+### 与本项目 VASP 工作流的关系
+
+本 skill **仅**处理 PDF。若同一任务后续涉及 VASP，须调用 Skill `run_vasp` 及相应材料学 skill，并遵守项目 **ITERATIVE EXECUTION RULE**：每次单独提交与核查（读 `OUTCAR`/收敛脚本后再继续）；**禁止**用 `for`/`while` 或 monolithic Bash/Python 一次批量跑多步、多目录 VASP。不得以「只读文献 PDF」为由绕过 `run_vasp` 的环境探针与硬件分叉规则。
+
 ## Quick Start
 
 ```python

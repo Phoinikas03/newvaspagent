@@ -2,9 +2,6 @@ import os
 import asyncio
 from pathlib import Path
 from typing import Dict, Any
-from datetime import datetime
-import subprocess
-
 # ==========================================
 # 获取 POSCAR (MPRester 异步优化版)
 # ==========================================
@@ -54,8 +51,8 @@ def _setup_vasp_inputs_sync(poscar_path: Path, incar_path: Path, work_dir: Path,
     structure = Structure.from_file(str(poscar_path))
     incar = Incar.from_file(str(incar_path))
     
-    # 2. 自动生成 KPOINTS (基于原子密度)
-    kpoints = Kpoints.automatic_density(structure, kpoints_density)
+    # 2. K 点：若 INCAR 已含 KSPACING，则由 VASP 从 INCAR 生成网格，不写 KPOINTS 文件
+    use_kspacing = incar.get("KSPACING") is not None
     
     # 3. 自动生成 POTCAR (智能 Fallback 机制)
     # 获取 POSCAR 中按顺序排列的元素种类
@@ -85,10 +82,22 @@ def _setup_vasp_inputs_sync(poscar_path: Path, incar_path: Path, work_dir: Path,
     # 4. 将所有文件写入目标工作目录
     structure.to(fmt="poscar", filename=str(work_dir / "POSCAR"))
     incar.write_file(str(work_dir / "INCAR"))
-    kpoints.write_file(str(work_dir / "KPOINTS"))
+    kpath = work_dir / "KPOINTS"
+    if use_kspacing:
+        if kpath.exists():
+            kpath.unlink()
+        k_mesh_info = f"K mesh from INCAR KSPACING={incar.get('KSPACING')} (no KPOINTS file)"
+    else:
+        kpoints = Kpoints.automatic_density(structure, kpoints_density)
+        kpoints.write_file(str(kpath))
+        k_mesh_info = f"KPOINTS from automatic_density={kpoints_density}"
     potcar.write_file(str(work_dir / "POTCAR"))
     
-    return f"Successfully generated POSCAR, INCAR, KPOINTS, and POTCAR in {work_dir}\n(Used POTCARs: {', '.join(potcar_symbols)})"
+    return (
+        f"Successfully generated POSCAR, INCAR, and POTCAR in {work_dir}\n"
+        f"{k_mesh_info}\n"
+        f"(Used POTCARs: {', '.join(potcar_symbols)})"
+    )
 
 
 async def setup_vasp_inputs_impl(poscar_path: str, incar_path: str, workspace_dir: str, kpoints_density: int = 100) -> Dict[str, Any]:
@@ -117,86 +126,6 @@ async def setup_vasp_inputs_impl(poscar_path: str, incar_path: str, workspace_di
         if "No POTCAR" in str(e) or "VASP_PSP_DIR" in str(e):
             error_msg += "\n(Hint: Ensure PMG_VASP_PSP_DIR is configured in your environment or ~/.pmgrc.yaml)"
         return {"content": [{"type": "text", "text": error_msg}]}
-
-
-# ==========================================
-# 运行 VASP (KPOINTS/KSPACING 双轨校验版)
-# ==========================================
-def _run_vasp_sync(work_dir: Path, num_process: int, log_name: str | None = None) -> str:
-    """(同步函数) 实际执行 VASP 计算的阻塞任务，包含日志重定向。"""
-    if log_name is None or not str(log_name).strip():
-        logname = f"log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-    else:
-        logname = Path(str(log_name).strip()).name
-        if not logname or logname in (".", ".."):
-            logname = f"log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-    log_path = work_dir / logname
-    
-    command = ["mpirun", "-n", str(num_process), "vasp_std"]
-    
-    with open(log_path, "a") as log_file:
-        process = subprocess.run(
-            command,
-            cwd=str(work_dir),
-            stdout=log_file,
-            stderr=subprocess.STDOUT,
-            text=True
-        )
-        
-    if process.returncode != 0:
-        raise RuntimeError(f"VASP execution failed with return code {process.returncode}. Please check {logname} for details.")
-        
-    return f"VASP calculation completed successfully. Log saved to {logname} in {work_dir}"
-
-
-async def run_vasp_impl(
-    workspace_dir: str,
-    num_process: int = 4,
-    log_name: str | None = None,
-) -> Dict[str, Any]:
-    """(异步接口) 供 Tool 调用运行 VASP"""
-    work_dir = Path(workspace_dir).resolve()
-    
-    if not work_dir.exists() or not work_dir.is_dir():
-        return {"content": [{"type": "text", "text": f"Error: The workspace directory was not found at {work_dir}"}]}
-        
-    # 基础校验：只强制检查 INCAR, POSCAR, POTCAR
-    required_base_files = ["INCAR", "POSCAR", "POTCAR"]
-    missing_files = [f for f in required_base_files if not (work_dir / f).exists()]
-    if missing_files:
-        return {"content": [{"type": "text", "text": f"Error: Cannot run VASP. Missing required input files in workspace: {', '.join(missing_files)}"}]}
-        
-    # 灵活检查 K 点配置：要么有 KPOINTS 文件，要么 INCAR 里有 KSPACING 参数
-    has_kpoints_file = (work_dir / "KPOINTS").exists()
-    has_kspacing_in_incar = False
-    
-    incar_path = work_dir / "INCAR"
-    if incar_path.exists():
-        try:
-            with open(incar_path, "r", encoding="utf-8") as f:
-                if "KSPACING" in f.read().upper():
-                    has_kspacing_in_incar = True
-        except Exception:
-            pass
-
-    if not (has_kpoints_file or has_kspacing_in_incar):
-        return {"content": [{"type": "text", "text": "Error: Cannot run VASP. Missing KPOINTS file AND no KSPACING parameter found in INCAR."}]}
-        
-    try:
-        success_msg = await asyncio.to_thread(
-            _run_vasp_sync,
-            work_dir,
-            num_process,
-            log_name,
-        )
-        return {"content": [{"type": "text", "text": success_msg}]}
-        
-    except FileNotFoundError as e:
-        error_msg = f"Error: Executable not found. {str(e)}\n(Hint: Ensure 'mpirun' and 'vasp_std' are correctly installed and added to your system PATH.)"
-        return {"content": [{"type": "text", "text": error_msg}]}
-        
-    except Exception as e:
-        return {"content": [{"type": "text", "text": f"Error during VASP execution: {str(e)}"}]}
 
 
 # ==========================================

@@ -9,6 +9,16 @@ import socket
 def check_command(cmd):
     return shutil.which(cmd) is not None
 
+
+def dependency_status():
+    """核心可执行文件是否在 PATH 中（用于侦察阶段主动排雷）。"""
+    return {
+        "mpirun_found": check_command("mpirun"),
+        "vasp_std_found": check_command("vasp_std"),
+        "vasp_gpu_found": check_command("vasp_gpu"),
+    }
+
+
 def get_gpu_info():
     if not check_command('nvidia-smi'):
         return {"has_gpu": False, "count": 0}
@@ -28,7 +38,8 @@ def probe_environment():
         "is_login_node": is_login_node,
         "cpu_cores_total": os.cpu_count(),
         "gpu_info": get_gpu_info(),
-        "scheduler": "slurm" if check_command('sbatch') else ("pbs" if check_command('qsub') else "none")
+        "scheduler": "slurm" if check_command('sbatch') else ("pbs" if check_command('qsub') else "none"),
+        "dependencies": dependency_status(),
     }
     return info
 

@@ -88,8 +88,7 @@ def _build_system_prompt(workspace: str, task_type: str) -> str:
         "1. You MUST NOT use the AskUserQuestion tool. Never ask for confirmation.",
         "2. You MUST complete the entire computation in one session — create INCAR, "
         "run VASP, extract results. Do NOT stop after merely describing your plan.",
-        "3. Prefer running `bash run_vasp.sh` in the data directory via Shell to "
-        "launch VASP, rather than using the run_vasp MCP tool.",
+        "3. Prefer running `bash run_vasp.sh` in the data directory via Shell to launch VASP.",
         "",
     ]
     if task_type == "relax":
@@ -117,7 +116,7 @@ async def run_single_task(
         AssistantMessage, ResultMessage, TextBlock,
     )
     from tool_wrapper import (
-        poscar_tool, setup_vasp_inputs_tool, run_vasp_tool,
+        poscar_tool, setup_vasp_inputs_tool,
         duckduckgo_search_tool, google_search_tool,
         visit_webpage_tool, arxiv_search_tool,
     )
@@ -129,7 +128,6 @@ async def run_single_task(
         tools=[
             poscar_tool(workspace),
             setup_vasp_inputs_tool(workspace),
-            run_vasp_tool(workspace),
             duckduckgo_search_tool(),
             google_search_tool(),
             visit_webpage_tool(),
@@ -146,7 +144,6 @@ async def run_single_task(
             "Skill",
             f"mcp__{mcp_name}__get_poscar_from_md",
             f"mcp__{mcp_name}__setup_vasp_inputs",
-            f"mcp__{mcp_name}__run_vasp",
             f"mcp__{mcp_name}__duckduckgo_search",
             f"mcp__{mcp_name}__google_search",
             f"mcp__{mcp_name}__visit_webpage",

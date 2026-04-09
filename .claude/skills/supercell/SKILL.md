@@ -24,3 +24,11 @@ description: 执行晶体结构的线性扩胞（Supercell Generation）。当�
 ## 注意事项
 - 扩胞后原子数过多（如超过 500 个）时，应特别提醒用户计算成本会显著增加。
 - 保持原子标签和坐标系的完整性。
+
+## 执行方式（与系统 ITERATIVE EXECUTION RULE 一致）
+
+本 skill 仅通过 `scripts/make_supercell.py` 生成结构。若用户需对**多种**超胞方案或多个输出结构**分别**跑 VASP，须**逐目录**提交并在每步核查；**禁止**用 `for` 或 monolithic Bash 一次提交全部相关 VASP。实际计算一律走 Skill `run_vasp`（含 Step 2–3 的环境探针与 **STRICT HARDWARE ALIGNMENT**），并遵守其 Step 4：对 `vasp_runner.py --dirs` **分批**调用、在中间读 OUTCAR/日志后再继续，不得单次把全部目录无核查地排队跑完。
+
+## 核心原则
+
+- **禁止以扩胞为借口批量跑 VASP**：结构准备可一次完成；一旦进入 `mpirun` / `vasp_runner`，仍须迭代执行，与 `relax`、`lattice_constant` 等 skill 口径一致。

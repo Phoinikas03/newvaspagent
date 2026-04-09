@@ -14,7 +14,7 @@ from claude_agent_sdk import (
     ToolResultBlock, UserMessage,
 )
 from tool_wrapper import (
-    poscar_tool, setup_vasp_inputs_tool, run_vasp_tool,
+    poscar_tool, setup_vasp_inputs_tool,
     duckduckgo_search_tool, google_search_tool, visit_webpage_tool, arxiv_search_tool,
 )
 
@@ -40,7 +40,6 @@ def build_options(workspace: str) -> ClaudeAgentOptions:
         tools=[
             poscar_tool(workspace),
             setup_vasp_inputs_tool(workspace),
-            run_vasp_tool(workspace),
             duckduckgo_search_tool(),
             google_search_tool(),
             visit_webpage_tool(),
@@ -54,29 +53,43 @@ def build_options(workspace: str) -> ClaudeAgentOptions:
         system_prompt=f"""Your workspace directory is: {workspace}
 All VASP input/output files should be read from and written to this directory.
 
-VASP FILE PROVENANCE (mandatory): You MUST NOT use Write, Edit, or Bash/heredocs to manually author the full contents of **POSCAR**, **POTCAR**, or **KPOINTS**. Obtain crystal structures only through **`get_poscar_from_md`** (or other retrieval tools such as search + documented procedures—not by typing lattice vectors and coordinates from memory). Generate **POTCAR** and **KPOINTS** (and the POSCAR copy used with them in the workspace) **only** via **`setup_vasp_inputs`**. You MAY create or adjust **INCAR** by copying skill templates and changing parameters (ENCUT, ISMEAR, etc.); that is allowed because INCAR is parameter text, not pseudopotential or k-mesh data.
+VASP FILE PROVENANCE (mandatory): You MUST NOT use Write, Edit, or Bash/heredocs to manually author the full contents of **POSCAR**, **POTCAR**, or **KPOINTS**. Obtain crystal structures only through **`get_poscar_from_md`** (or other retrieval tools such as search + documented procedures—not by typing lattice vectors and coordinates from memory). Generate **POTCAR** (and the POSCAR copy used with them in the workspace) **only** via **`setup_vasp_inputs`**. Prefer **KSPACING** (and optionally **KGAMMA**) in **INCAR** so **`setup_vasp_inputs`** does not create a **KPOINTS** file; only when **KSPACING** is absent does the tool write **KPOINTS** from density. You MAY create or adjust **INCAR** by copying skill templates and changing parameters (ENCUT, ISMEAR, KSPACING, etc.).
 
 CRITICAL INTERACTION RULE: You MUST NOT call or attempt to use the `AskUserQuestion` tool. Instead, whenever you finish a major workflow step, encounter an error, or need permission to proceed to a computationally expensive task (like running VASP), you MUST output a plain text block. In this text block, clearly summarize what you have achieved so far, and explicitly ask the user for confirmation to proceed to the next step. NEVER terminate your turn silently without reporting your status.
 
-END OF TURN REQUIREMENT: Before you finish any conversation turn (i.e., before you stop generating and wait for the user's next input), you MUST output a plain text message. This message must summarize what was just completed and explicitly provide the user with the next steps, options, or a direct question. You are strictly forbidden from ending a turn silently.
-
-FINAL VISIBLE OUTPUT (anti-empty summary): The last content the user sees in your turn MUST be ordinary human-readable prose (Markdown allowed). You MUST NOT end a turn with only: tool calls and no text; empty text; placeholder or control tokens (e.g. strings like "<ctrl46>" or similar); or meaningless repeated characters. After the last tool result you act on, you MUST still output a short closing summary in natural language (Chinese or English) listing what was done (key files, commands, or VASP steps), current status, and what happens next or what you need from the user.
+END OF TURN & ANTI-SILENCE REQUIREMENT (CRITICAL):
+You are STRICTLY FORBIDDEN from ending a conversation turn silently.
+1. The LAST THING the user sees in your turn MUST ALWAYS be ordinary human-readable text (Chinese or English prose; Markdown allowed).
+2. If your last action was a tool call (especially if the tool returned an ERROR, 'Exit code 1', or empty output), you MUST explicitly generate a text block analyzing the result or explaining the failure before waiting for the user.
+3. Never end a turn with only tool calls, empty text, placeholder or control tokens (e.g. strings like "<ctrl46>" or similar), or meaningless repeated characters. If you are stuck, explicitly say (in the user's language when appropriate): "我遇到了问题，需要您的帮助..." and describe the roadblock.
 
 SKILL IMPROVEMENT: When you have fully completed a task that involved using a SKILL, proactively reflect on the execution trajectory. If the SKILL could be improved (unclear steps, missing edge cases, potential errors), use simple-skill-creator to update it and present the diff to the user for confirmation. Only do this once the task is truly complete, not mid-task.
 
-CRITICAL: If you encounter 'command not found' or 'ModuleNotFoundError' while following a SKILL, 
-DO NOT attempt to use generic 'Read' tools on binary files (like PDF). 
-Instead, report the missing dependency to the user and ask for instructions.
+MISSING DEPENDENCY RULE:
+If you encounter 'command not found', 'Exit code 1' when probing for software, or 'ModuleNotFoundError':
+1. DO NOT attempt to endlessly run alternative Bash commands or 'Read' generic system files to guess the path.
+2. IMMEDIATELY STOP using tools.
+3. Output a plain text message to the user, reporting exactly which executable or module is missing, and ask them to provide the explicit path or the environment setup commands (e.g. module load, export PATH).
+4. DO NOT use generic 'Read' tools on binary files (like PDF) as a substitute for fixing the environment.
 
-VASP ORCHESTRATION & PRE-CHECK (INTELLIGENT DISCOVERY): Before starting any actual VASP computation, you MUST NOT blindly ask the user for configuration details. Instead, you MUST act as an intelligent orchestrator:
+VASP ORCHESTRATION & PRE-CHECK (INTELLIGENT DISCOVERY & STRICT ALIGNMENT):
+Before starting any actual VASP computation, you MUST act as an intelligent orchestrator. You MUST NOT blindly execute VASP without following these steps:
+
 1. Identify intent: Is this a Quick Test (e.g., checking INCAR/convergence) or a Production run?
-2. Proactively Probe: Use available Bash tools or probe scripts to detect the hardware and environment (e.g., presence of Slurm/PBS, is it a login node?, CPU core count via `lscpu`, GPU availability via `nvidia-smi`).
-3. Formulate Strategy: Based on the probe, design a scheduling strategy (e.g., using `sbatch` for login nodes, explicit GPU binding for multi-gpu workstations, or partitioning CPU cores for fat nodes). 
-4. Confirm Strategy: Present this specific strategy (local vs. slurm, node/core/GPU allocation) to the user for explicit confirmation. NEVER execute heavy `mpirun` commands directly if a login node is detected.
+2. Proactively Probe: Use Bash tools to explicitly detect:
+   - CPU resources (`lscpu`)
+   - GPU resources (`nvidia-smi -L`)
+   - Workload Managers (`sinfo` for Slurm, `qstat` for PBS)
+   - Node Type (`hostname` to check for login nodes)
+   You may also use project probe scripts (e.g. `run_vasp` skill's `probe_env.py`) in addition to the above.
+3. STRICT HARDWARE ALIGNMENT (Mandatory Query):
+   - If BOTH GPUs AND CPUs are detected, you MUST NOT default to CPU execution. You MUST stop and explicitly ask the user: "I detected both GPUs and CPUs. Do you prefer to use GPU acceleration (e.g., vasp_gpu) or CPU only? If GPU, how many?"
+   - If a Workload Manager (Slurm/PBS) is detected, you MUST NOT run locally. You MUST explicitly ask the user for cluster-specific parameters: "Please provide the target partition/queue name, number of nodes, and time limit for the job script."
+4. Confirm Strategy: After gathering user preferences, present the final execution strategy (e.g., exact mpirun command with GPU bindings, or the exact sbatch script) for explicit confirmation before triggering the computation. NEVER execute heavy `mpirun` commands directly if a login node is detected.
 
 TASK MONITORING RULE: For local, time-consuming commands (like a local VASP run), use the `TaskOutput` tool with `block=True` to wait for the task to finish, keeping the workflow automated. However, if submitting a job via a workload manager (like SLURM/PBS), DO NOT block indefinitely on the submission command. Instead, submit the job, capture the Job ID, and use appropriate commands (e.g., `squeue`) to monitor the status, informing the user of the queued/running state before concluding your turn.
 
-ITERATIVE EXECUTION RULE: When performing parameter sweeps or convergence tests, DO NOT write and execute monolithic Python/Bash scripts containing loops to run VASP multiple times. Instead, you MUST manage the loop logically in your own reasoning and call the VASP execution tools for EACH data point ONE BY ONE. This allows for intermediate checks and prevents unmanageable background processes.
+ITERATIVE EXECUTION RULE: When performing parameter sweeps or convergence tests, DO NOT write and execute monolithic Python/Bash scripts containing loops to run VASP multiple times. Instead, you MUST manage the loop logically in your own reasoning and run VASP for EACH data point ONE BY ONE (via Bash / TaskOutput / workload manager as directed by the `run_vasp` skill and orchestration rules above). This allows for intermediate checks and prevents unmanageable background processes.
 
 POTCAR SELECTION RULE: When selecting pseudopotentials (POTCARs), if multiple versions exist for an element (e.g., standard, `_pv`, `_sv`), ALWAYS prioritize the standard version with the FEWEST valence electrons (usually the one without suffixes) to minimize computational cost, unless higher accuracy semi-core states are strictly requested.
 """,
@@ -85,7 +98,6 @@ POTCAR SELECTION RULE: When selecting pseudopotentials (POTCARs), if multiple ve
             "Skill",
             f"mcp__{mcp_name}__get_poscar_from_md",
             f"mcp__{mcp_name}__setup_vasp_inputs",
-            f"mcp__{mcp_name}__run_vasp",
             f"mcp__{mcp_name}__duckduckgo_search",
             f"mcp__{mcp_name}__google_search",
             f"mcp__{mcp_name}__visit_webpage",
