@@ -229,6 +229,7 @@ ws.onmessage = (ev) => {
     d.events.forEach(e => dispatch(e, true));
     setStatus('就绪', false);
     sendBtn.disabled = false;
+    scrollBottom();
     return;
   }
   dispatch(d, false);
@@ -335,7 +336,8 @@ function appendResult(d) {
   const bar = document.createElement('div');
   if (d.error) {
     bar.className = 'result-bar err';
-    bar.textContent = `✗ 出错  轮次: ${d.turns}`;
+    const sub = (d.subtype && String(d.subtype).trim()) ? `  ${d.subtype}` : '';
+    bar.textContent = `✗ 出错  轮次: ${d.turns}${sub}`;
   } else {
     bar.className = 'result-bar ok';
     bar.textContent = `✓ 完成  轮次: ${d.turns}`;
@@ -421,6 +423,12 @@ class WebUI:
     async def stop(self) -> None:
         if self._runner:
             await self._runner.cleanup()
+
+    def extend_history(self, events: list[dict]) -> None:
+        """在连接建立前注入事件（例如从 log.txt 恢复），供首次 WebSocket 重放。"""
+        for e in events:
+            if e.get("type") in _HISTORY_TYPES:
+                self._history.append(e)
 
     async def send(self, data: dict) -> None:
         if data.get("type") in _HISTORY_TYPES:

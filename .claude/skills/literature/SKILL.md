@@ -1,151 +1,89 @@
 ---
-name: "vasp-lattice-constant-eos"
-description: "执行 VASP 平衡晶格常数计算和状态方程 (EOS) 拟合的自动化工作流。采用标准流程：首先进行截断能与 K 点网格的收敛性测试 (1 meV/atom 精度)，随后对晶胞进行多比例各向同性缩放，执行批量静态计算，最后拟合 EOS 曲线以获取理论上最稳定的平衡晶格常数与体积。"
-version: "1.2.0"
+name: "vasp-literature-retrieval"
+description: "为计算材料学任务结构化检索与整理文献：实验晶格常数、带隙、DFT/HSE/VASP 参数、DFT+U、EOS 方法等。在 relax、bandgap、lattice_constant、encut_kspacing_convergence 等技能要求「先查文献」或本地 references 未覆盖时触发；统一使用本 skill 规定的检索顺序与 arXiv 查询规范，输出带引用的摘要并可写入用户指定的工作区 Markdown。"
+version: "1.0.0"
 ---
 
-# VASP 平衡晶格常数与 EOS 计算工作流 (Lattice Constant & EOS Workflow)
+# 文献检索与引用整理 (Literature Retrieval)
 
-你是一个专业的计算材料学专家。这个 Skill 用于指导你自动化地完成固体材料平衡晶格常数的高精度检索与计算。通过状态方程 (Equation of State, EOS) 拟合能量-体积曲线，是寻找材料基态稳定结构的黄金标准。
+你是一个专业的计算材料学助手。本 Skill 规定如何**系统化**使用可用搜索工具查找论文与数据，并把结果整理成可供下游步骤使用的**结构化说明**（含引用线索），而不是零散摘句。
 
-## 技能依赖目录结构 (Skill Assets)
-
-lattice_eos/
-├── SKILL.md                       ← 本文件（工作流指令）
-├── scripts/
-│   ├── generate_scaled_poscars.py ← 根据缩放因子列表批量生成带应变的 POSCAR
-│   ├── fit_eos.py                 ← 提取批量计算能量，拟合 EOS (如 Birch-Murnaghan) 并输出结果 JSON
-│   └── check_convergence.py       ← 检查单次 VASP 计算 OUTCAR 收敛状态
-├── references/
-│   ├── convergence_rules.md       ← 截断能与 K 点收敛标准的经验准则
-│   └── troubleshooting.md         ← 常见报错与物理意义异常（如拟合发散）处理方案
-└── templates/
-    └── INCAR_static               ← 高精度静态计算 INCAR 模板
-
-## 执行期目录结构规范 (Execution Directory Structure)
-
-在执行计算时，你**必须**在当前 Workspace 中严格构建并维护以下文件树结构。禁止将所有文件混杂在根目录中：
-
-```text
-<workspace_root>/
-├── POSCAR_mp-<id>                 ← 从 MP 数据库下载的初始结构文件
-├── INCAR_production               ← 收敛测试后生成的最终生产用 INCAR (包含最优 ENCUT 和 KSPACING)
-├── eos_results.json               ← EOS 拟合后输出的最终结果文件
-├── convergence_test/              ← 收敛性测试专属工作目录
-│   ├── POSCAR                     ← 用于收敛测试的基础结构文件
-│   ├── INCAR_template             ← 测试用的 INCAR 模板
-│   ├── encut_test/                ← 截断能测试专属子目录
-│   │   └── e_<value>/             ← 例如 e_400/, e_450/
-│   └── kspacing_test/             ← K点间距测试专属子目录
-│       └── k_<value>/             ← 例如 k_0.30/, k_0.25/
-├── scale_0.940/                   ← 体积缩放单点计算子目录 (-6%)
-├── scale_0.960/                   ← ...
-└── scale_1.060/                   ← 体积缩放单点计算子目录 (+6%)
+## 目录结构
 
 ```
+literature/
+├── SKILL.md                    ← 本文件
+└── references/
+    └── query_guide.md          ← arXiv 查询词写法（材料名为主，少堆方法关键词）
+```
 
-## 可用工具
+## 何时触发
 
-- `duckduckgo_search` / `Google Search`：搜索实验晶格常数、空间群信息
-- `Skill` (`literature`)：检索特定材料的可靠实验晶格常数及标准 EOS 拟合文献
-- `get_poscar_from_md`：根据特定材料生成或获取初始 POSCAR
-- `setup_vasp_inputs`：自动生成基本输入文件
-- Skill（`run_vasp`）：按该 skill 与系统 orchestration 规则，用 Bash / `TaskOutput` / 作业调度运行 VASP（MCP 工具 `run_vasp` 已移除）
-- `Write` / `Edit`：生成和修改工作区文件
-- `Bash`：文件管理、运行预处理与后处理脚本
-- `Read` / `Grep`：读取日志和输出文件
-注意：当前运行在无 GUI 的终端环境中。若需向用户提问，**直接输出纯文本问题并停止生成，等待用户在终端输入回复**。
+- 用户或上游 skill 需要：**实验对比值**（晶格常数、带隙、弹性常数等）、**推荐计算参数**（ENCUT、K 点、HSE、`LDAUU`、杂化参数等）、**方法学说明**（EOS 形式、收敛判据引用）。
+- 其它 skill 写明「仅当本地 `references/*.md` 未覆盖时调用 `Skill: literature`」时——**先读本 skill**，再按下列流程检索，**不要**跳过本 skill 直接乱用 `arxiv_search`（避免查询词不当、结果不可复现）。
 
-**执行方式（与系统 ITERATIVE EXECUTION RULE 一致）**：除下文 §2 逐点收敛要求外，全工作流**严禁**用 `for` 循环或 monolithic Bash/Python 一次提交多点、多 `scale_*` 的 VASP。允许的一次性脚本仅限 `generate_scaled_poscars.py`、`fit_eos.py`、`check_convergence.py`。每个测试点、每个 `scale_*` 目录须**单独**跑 VASP 并核查后再继续。
+## 可用工具（与当前 Agent MCP 一致）
 
----
+- `arxiv_search`：开放获取预印本，标题/摘要/PDF 链接
+- `google_search`：网页与学术线索
+- `duckduckgo_search`：通用网页检索
+- `visit_webpage`：打开 URL 抽取正文（用于摘要页、期刊页、数据表）
+- `Write` / `Edit`：将整理后的块写入工作区文件（如 `INCAR_explanation.md`、`HSE_INCAR_explanation.md`、`Convergence_Report.md` 附录等）
 
-## 工作流步骤
-
-### 1. 确认输入与初始结构
-
-1. 确认用户是否提供了目标材料的**元素组成**和**晶体结构类型**（如 FCC, BCC, 金刚石结构）。若未提供，询问用户并等待回复。
-2. 检索实验参考值：调用 `Skill: literature` 获取该材料的实验晶格常数。
-3. 构建初始结构：调用 `get_poscar_from_md` 获取初始结构，该文件应保存在根目录，命名规范为 `POSCAR_mp-<id>`。
+若运行环境后续增加 `semanticscholar_search`，可在 **arXiv 结果不足**时作为补充，仍须遵守下文「查询词」原则。
 
 ---
 
-### 2. 收敛性测试 (Convergence Test)
-**目标**：确定满足 1 meV/atom 精度的最优 `ENCUT` 和 `KSPACING`（在 VASP 中，我们优先使用 INCAR 中的 KSPACING 标签，而非显式的 KPOINTS 文件）。
+## 检索流程
 
-**执行方式（与系统 ITERATIVE EXECUTION RULE 一致）**：每个 ENCUT/KSPACING 测试点必须**单独**跑 VASP、读能量再决定下一步；**严禁**用 `for` 循环或单条 Bash 把多个测试点一次性后台提交。循环只存在于推理中，每步单独执行并核查。
+### 1. 明确检索目标（每次调用本 skill 时先写清）
 
-1. **环境准备**：
-  - 在根目录创建 `convergence_test/` 文件夹。将 `POSCAR_mp-<id>` 复制到该目录下并重命名为 `POSCAR`。将 `templates/INCAR_static` 复制到该目录命名为 `INCAR_template`。
-  - 读取 POTCAR 获取默认的最大截断能 `ENMAX`（使用 `grep ENMAX POTCAR`）。
-2. **截断能测试 (ENCUT)**：
-  - **固定 K 点**：在 `INCAR` 中固定使用极高密度的 K 点：`KSPACING = 0.10`。
-  - **测试范围**：从 `ENMAX` 向上步进 50 eV 取 5-6 个点（例如 `ENMAX`, `ENMAX+50`, `ENMAX+100`...）。
-  - **执行**：为每个点创建 `convergence_test/encut_test/e_<value>` 子目录，**确保删除该目录下的 KPOINTS 文件**（以强制 VASP 识别 INCAR 中的 KSPACING），调用计算。
-  - **判定**：提取能量，计算相邻步长的差值，选取变化幅度 `< 1 meV/atom` 的最小 `ENCUT`。
-3. **K点间距测试 (KSPACING)**：
-  - **固定截断能**：在 `INCAR` 中固定使用上一步选出的最优 `ENCUT`。
-  - **测试范围**：`KSPACING` 取值依次为：`0.30`, `0.25`, `0.20`, `0.15`, `0.10`（数值越小 K 点越密）。
-  - **执行**：为每个点创建 `convergence_test/kspacing_test/k_<value>` 子目录，**务必删除该目录下的 KPOINTS 文件**，调用计算。
-  - **判定**：同样以 `< 1 meV/atom` 为标准确定最优的 `KSPACING`。
-4. **生成说明文档**：`Write convergence_test/Convergence_Report.md`，记录选定的最优 `ENCUT` 和 `KSPACING`，并列出能量随参数变化的列表。
+向用户或从上下文提取并内化：
 
----
+- **材料体系**：化学式或矿物名/结构标签（如 `"SrTiO3"`、立方钙钛矿）。
+- **检索目标类型**（可多选）：实验值 / DFT 计算参数 / 方法综述 / 带隙与光学实验 / 结构数据。
+- **写入目标**（若上游 skill 已指定）：例如「追加到 `INCAR_explanation.md`」——最终必须用 **`Write`/`Edit`** 落盘。
 
-### 3. 生成体积缩放结构 (Volume Scaling)
-**目标**：在平衡体积附近生成一系列各向同性缩放的晶胞结构，用于描绘能量势阱。
+### 2. arXiv 查询前必读
 
-1. 退回至根目录 `<workspace_root>/` 进行操作。
-2. 设定缩放因子列表，例如：`0.94, 0.96, 0.98, 1.00, 1.02, 1.04, 1.06`。
-3. 使用 `Bash` 调用脚本：`python scripts/generate_scaled_poscars.py --poscar POSCAR_mp-<id> --scales 0.94 0.96 0.98 1.00 1.02 1.04 1.06`
-4. 确认根目录下成功生成了相应的 `scale_x.xxx/` 文件夹。
+`Read references/query_guide.md`。
 
----
+核心原则：**查询词以材料体系为主，不要堆砌 `HSE VASP DFT+U` 等**（详见该文件表格与反例）。
 
-### 4. 批量静态计算 (Production Runs)
-**目标**：获取所有不同体积/缩放比例下系统的精确总能量。
+### 3. 搜索顺序（建议）
 
-1. **生成生产用文件**：在根目录下生成包含收敛参数的 `INCAR_production` (必须包含确定的 `ENCUT` 和 `KSPACING`)。
-2. 对于每一个 `scale_x.xxx` 子文件夹，循环执行以下操作：
-  - 将根目录的 `INCAR_production` 复制进子目录并重命名为 `INCAR`。
-  - 调用 `setup_vasp_inputs` 准备与收敛测试一致的 POTCAR。
-  - **关键清理**：执行 `rm -f KPOINTS` 确保子目录内没有 KPOINTS 文件，让 VASP 严格依赖 INCAR 中的 KSPACING。
-  - 按 Skill `run_vasp`，用 Bash 或 `TaskOutput` 在该子目录提交并完成 VASP 计算。
-3. 计算结束后，使用 `check_convergence.py` 遍历检查，确认所有 `scale_x.xxx/` 下的 `electronic_converged: true`。
+1. **`arxiv_search`**：用 `query_guide.md` 中的推荐句式发 **1～3 次**查询；优先读摘要中与目标相关的句子，记录 **论文标识**（arXiv id / 标题 / 年份）。
+2. 若摘要信息不足：对选中的条目用 **`visit_webpage`** 打开 PDF 页面或期刊页面（若有），抓取**数值与条件**（温度、实验方法、计算泛函）。
+3. **`google_search` 或 `duckduckgo_search`**：用于补实验手册、数据库页面、综述（例如「材料名 + experimental lattice constant」），仍应用**简短查询词**，避免一整句英文堆砌。
 
----
+### 4. 输出格式（回复用户或写入文件时采用）
 
-### 5. 状态方程拟合 (EOS Fitting)
-**目标**：从离散的体积-能量数据点中找出解析能量最低点。
+使用 Markdown，至少包含：
 
-1. 确保所有缩放任务正常结束。
-2. 在根目录执行拟合：`Bash`：`python scripts/fit_eos.py --dirs scale_* --eos_type birch_murnaghan > eos_results.json` (或确保脚本直接输出此文件)。
-3. 读取 `eos_results.json` 中的结果：
-  - `V_0`：平衡体积
-  - `E_0`：最低系统能量
-  - `B_0`：体积弹性模量 (Bulk Modulus)
-  - `a_eq`：计算得出的平衡晶格常数 (Lattice Constant)
-  - `R_squared`：拟合优度
+- **检索目标**（一句话）
+- **推荐数值或参数区间**（带单位；若有多篇不一致，列出范围并说明分歧可能原因）
+- **参考文献列表**：每条条目含 **标题、作者或年份（若可得）、来源（arXiv:xxxx / DOI / URL）**
+- **不确定性说明**：实验 vs 计算、体相 vs 薄膜、是否含掺杂等。
 
----
+若上游要求「引用块追加到某文件」，将上述块作为一节追加，并保证与材料体系、计算任务一致。
 
-### 6. 结果汇报与核查
-向用户报告：
+### 5. 与其它 Skill 的衔接
 
-- 最优计算参数（使用的 ENCUT 和 KSPACING）。
-- 计算得出的平衡晶格常数 a_eq 和体积弹性模量 B_0。
-- 拟合优度（若 R^2 < 0.99，需警告用户曲线可能未包含能量最低点，需扩大缩放范围）。
-- 与实验值的对比：计算误差百分比 `Error (%) = |a_calc - a_exp| / a_exp * 100%`。
+- **`encut_kspacing_convergence`**：本 skill **不**替代收敛测试；仅提供文献中的 ENCUT/K 点经验作**初值参考**，真正收敛仍以该 skill 与 `Convergence_Report.md` 为准。
+- **`lattice_constant`**：实验晶格常数对比值优先通过本 skill 或 Materials Project 实验数据交叉核对。
+- **`relax` / `bandgap`**：当 `references/incar_params.md`、`hse_params.md` 等未覆盖时，用本 skill 补参数与实验带隙引用。
 
 ---
 
 ## 核心原则
 
-- **禁止整块循环脚本跑收敛/EOS 点**：与上文「执行方式」及下条一致；除已列明的 `scripts/` 工具外，不得用循环脚本批量提交 VASP。
-- **CRITICAL TOOL USAGE RULE**：在进行参数扫描（如收敛测试或体积缩放批量计算）时，**禁止**编写原生的 Bash/Python 循环脚本直接拉起 `mpirun vasp_std`。你必须在自己的思维链中管理循环逻辑，并逐个目标点调用 `setup_vasp_inputs`，再按 Skill `run_vasp` 用 Bash / `TaskOutput` / 调度器逐点提交计算。
-- **强制使用 KSPACING**：本工作流废弃了传统的 KPOINTS 文件配置。在执行每次计算前，必须确保目标目录下的 `KPOINTS` 文件被删除，以强迫 VASP 读取 `INCAR` 中的 `KSPACING` 标签。
-- **参数绝对一致**：批量计算中，所有的 `ENCUT` 和 `KSPACING` 必须**完全一致**。改变基点截断能会导致 Pulay 应力误差。
-- **静态计算优先**：各个比例下的 VASP 计算必须是**单点静态计算 (ISIF=2 且 NSW=0)**，不能在内部再次进行晶胞体积松弛。
-- **异常点剔除**：若拟合发散或抛物线异常，必须重新检查对应点的 `OUTCAR`。
+- **查询词克制**：遵守 `query_guide.md`，材料名为核；避免一条查询里塞满方法缩写。
+- **可溯源**：每条关键数值尽量对应**可点击的链接或 arXiv id**，避免「某文献说约 3 eV」而无出处。
+- **不编造**：工具未返回的内容不得凭记忆补全具体数值；若未找到，明确写「未检索到可靠来源」。
+- **不替代计算**：文献参数是参考；与用户确认的 **VASP 实际输入**仍以各计算 skill 与 `setup_vasp_inputs`、`run_vasp` 为准。
 
 ---
+
+## 与「ITERATIVE EXECUTION RULE」的关系
+
+本 skill **不涉及**在单脚本中循环提交 VASP。若检索目的是为**下一步**收敛或 EOS 提供参数，真正跑 VASP 时须遵守项目 system prompt 与 **`run_vasp`** skill，逐点提交、逐步核查。

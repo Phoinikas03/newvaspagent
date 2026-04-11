@@ -120,6 +120,7 @@ async def run_single_task(
         duckduckgo_search_tool, google_search_tool,
         visit_webpage_tool, arxiv_search_tool,
     )
+    from result_message import result_message_indicates_failure
 
     workspace = str(data_dir)
     mcp_name = "vasp_agent"
@@ -201,7 +202,7 @@ async def run_single_task(
 
                     elif isinstance(msg, ResultMessage):
                         info["total_turns"] += msg.num_turns
-                        if msg.is_error:
+                        if result_message_indicates_failure(msg):
                             info["status"] = "error"
 
                 if round_tool_use:

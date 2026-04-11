@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import asyncio
 import argparse
@@ -10,13 +11,15 @@ from typing import Any
 
 from claude_agent_sdk import (
     create_sdk_mcp_server, ClaudeAgentOptions, ClaudeSDKClient,
-    AssistantMessage, ResultMessage, TextBlock,
+    AssistantMessage, ResultMessage, TextBlock, ThinkingBlock,
     ToolResultBlock, UserMessage,
 )
 from tool_wrapper import (
     poscar_tool, setup_vasp_inputs_tool,
     duckduckgo_search_tool, google_search_tool, visit_webpage_tool, arxiv_search_tool,
 )
+from result_message import result_message_indicates_failure
+from web_history import parse_log_file_to_ui_events, write_user_turn_log
 
 load_dotenv(Path(__file__).parent / ".env")
 
@@ -24,16 +27,53 @@ os.environ["ANTHROPIC_BASE_URL"] = "http://127.0.0.1:4000"
 os.environ["ANTHROPIC_API_KEY"] = "sk-dummy-key"
 os.environ["NO_PROXY"] = "127.0.0.1,localhost,0.0.0.0"
 
-# 1. 在全局生成统一的启动时间戳
-RUN_TIMESTAMP = datetime.now().strftime('%Y%m%d_%H%M%S')
-
-# 2. 将 WORKSPACE 设定为带有时间戳的子目录；会话日志固定为 WORKSPACE/log.txt
-WORKSPACE = f"/mnt/data_x3/xiazeyu/newvaspagent/runs/{RUN_TIMESTAMP}"
 SESSION_LOG_NAME = "log.txt"
 WEB_PORT = 8888
+RUNS_ROOT = Path(__file__).resolve().parent / "runs"
 
 
-def build_options(workspace: str) -> ClaudeAgentOptions:
+def _parse_last_session_id(log_path: Path) -> str | None:
+    """从已有 log.txt 的 repr 行中提取最后一次出现的 Claude session_id（用于 --resume）。"""
+    if not log_path.is_file():
+        return None
+    try:
+        text = log_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    matches = re.findall(
+        r"session_id='([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})'",
+        text,
+    )
+    return matches[-1] if matches else None
+
+
+def resolve_workspace(run_dir: str | None) -> tuple[Path, str | None]:
+    """
+    解析工作区路径与是否恢复会话。
+    - run_dir 为空：新建 runs/<时间戳>，不恢复。
+    - run_dir 非空：使用 runs/<run_dir>，若存在 log.txt 则解析 session_id 供 SDK resume。
+    """
+    base = RUNS_ROOT.resolve()
+    name = (run_dir or "").strip()
+    if not name:
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        ws = base / ts
+        ws.mkdir(parents=True, exist_ok=True)
+        return ws, None
+    if name in (".", "..") or "/" in name or "\\" in name:
+        raise ValueError("--dir 只能是 runs 下的单级子目录名，不能含路径分隔符")
+    ws = (base / name).resolve()
+    try:
+        ws.relative_to(base)
+    except ValueError:
+        raise ValueError("--dir 解析后不在 runs 目录内")
+    if not ws.is_dir():
+        raise ValueError(f"目录不存在: {ws}")
+    resume = _parse_last_session_id(ws / SESSION_LOG_NAME)
+    return ws, resume
+
+
+def build_options(workspace: str, resume: str | None = None) -> ClaudeAgentOptions:
     mcp_name = "vasp_agent"
     mcp_server = create_sdk_mcp_server(
         name=mcp_name,
@@ -46,10 +86,16 @@ def build_options(workspace: str) -> ClaudeAgentOptions:
             arxiv_search_tool(),
         ],
     )
+    def _cli_stderr(line: str) -> None:
+        """转发 Claude Code CLI 的 stderr，便于排查「exit code 1 / Check stderr」类错误。"""
+        print(f"[claude-code] {line}", file=sys.stderr, flush=True)
+
     return ClaudeAgentOptions(
         cwd=workspace,
+        resume=resume,
         setting_sources=["project"],
         permission_mode="bypassPermissions",
+        stderr=_cli_stderr,
         system_prompt=f"""Your workspace directory is: {workspace}
 All VASP input/output files should be read from and written to this directory.
 
@@ -129,6 +175,7 @@ async def cli_agent_loop(client: ClaudeSDKClient, log_file) -> None:
             continue
 
         print("思考中...\n", flush=True)
+        write_user_turn_log(log_file, user_input)
         await client.query(user_input)
 
         async for msg in client.receive_response():
@@ -167,22 +214,29 @@ async def cli_agent_loop(client: ClaudeSDKClient, log_file) -> None:
                         print(f" [{status_icon} 工具返回结果]\n {content_str}\n", flush=True)
 
             elif msg_type == "ResultMessage" or isinstance(msg, ResultMessage):
-                status = "✓ 完成" if not msg.is_error else "✗ 出错"
-                print(f"\n{status}  轮次: {msg.num_turns}\n", flush=True)
+                failed = result_message_indicates_failure(msg)
+                status = "✗ 出错" if failed else "✓ 完成"
+                extra = f"  subtype={msg.subtype!r}" if failed else ""
+                print(f"\n{status}  轮次: {msg.num_turns}{extra}\n", flush=True)
 
 
-async def cli_main() -> None:
-    ws = Path(WORKSPACE)
+async def cli_main(workspace: str, resume: str | None, log_append: bool) -> None:
+    ws = Path(workspace)
     ws.mkdir(parents=True, exist_ok=True)
     log_path = ws / SESSION_LOG_NAME
 
     print(f"VASP Agent (CLI 模式)  |  输入 quit 或 exit 退出")
-    print(f"工作目录: {WORKSPACE}")
-    print(f"日志写入: {log_path}\n")
+    print(f"工作目录: {workspace}")
+    if resume:
+        print(f"恢复会话: {resume}（自 log.txt 解析）")
+    else:
+        print("新会话（无 resume 或 log 中无 session_id）")
+    print(f"日志写入: {log_path}（{'追加' if log_append else '新建'}）\n")
 
-    log_file = open(log_path, "w", encoding="utf-8")
+    log_mode = "a" if log_append else "w"
+    log_file = open(log_path, log_mode, encoding="utf-8")
     try:
-        async with ClaudeSDKClient(options=build_options(WORKSPACE)) as client:
+        async with ClaudeSDKClient(options=build_options(workspace, resume=resume)) as client:
             await cli_agent_loop(client, log_file)
     finally:
         log_file.close()
@@ -222,6 +276,7 @@ async def web_agent_loop(client: ClaudeSDKClient, log_file, ui) -> None:
             break
 
         await ui.send({"type": "status", "text": "思考中...", "thinking": True})
+        write_user_turn_log(log_file, user_input)
         await client.query(user_input)
 
         async for msg in client.receive_response():
@@ -237,6 +292,10 @@ async def web_agent_loop(client: ClaudeSDKClient, log_file, ui) -> None:
                     
                     if block_type == "TextBlock" or isinstance(block, TextBlock):
                         await ui.send({"type": "agent_text", "text": block.text})
+                    elif block_type == "ThinkingBlock" or isinstance(block, ThinkingBlock):
+                        await ui.send(
+                            {"type": "agent_text", "text": "[思考]\n" + getattr(block, "thinking", "")}
+                        )
                     elif block_type == "ToolUseBlock" or getattr(block, "type", None) == "tool_use":
                         try:
                             input_str = json.dumps(block.input, indent=2, ensure_ascii=False)
@@ -248,26 +307,31 @@ async def web_agent_loop(client: ClaudeSDKClient, log_file, ui) -> None:
                 raw = getattr(msg, "content", None)
                 blocks = raw if isinstance(raw, list) else []
                 for block in blocks:
-                    if not isinstance(block, ToolResultBlock):
-                        continue
-                    tid = getattr(block, "tool_use_id", "") or ""
-                    err = getattr(block, "is_error", None)
-                    is_err = bool(err) if err is not None else False
-                    body = _format_tool_result_content(getattr(block, "content", None))
-                    await ui.send(
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": tid,
-                            "is_error": is_err,
-                            "content_str": body,
-                        }
-                    )
+                    if isinstance(block, ToolResultBlock):
+                        tid = getattr(block, "tool_use_id", "") or ""
+                        err = getattr(block, "is_error", None)
+                        is_err = bool(err) if err is not None else False
+                        body = _format_tool_result_content(getattr(block, "content", None))
+                        await ui.send(
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": tid,
+                                "is_error": is_err,
+                                "content_str": body,
+                            }
+                        )
+                    elif isinstance(block, TextBlock):
+                        await ui.send(
+                            {"type": "agent_text", "text": "[上下文]\n" + block.text}
+                        )
 
             elif msg_type == "ResultMessage" or isinstance(msg, ResultMessage):
+                failed = result_message_indicates_failure(msg)
                 await ui.send({
                     "type": "result",
                     "turns": getattr(msg, "num_turns", 0),
-                    "error": getattr(msg, "is_error", False),
+                    "error": failed,
+                    "subtype": getattr(msg, "subtype", None) or "",
                     # SDK 汇总的最终文本；网页端流式 TextBlock 若因 Markdown 解析失败未显示，可依赖此项
                     "summary": getattr(msg, "result", None) or "",
                 })
@@ -276,22 +340,33 @@ async def web_agent_loop(client: ClaudeSDKClient, log_file, ui) -> None:
                 await ui.send({"type": "done"})
 
 
-async def web_main() -> None:
+async def web_main(workspace: str, resume: str | None, log_append: bool, port: int = WEB_PORT) -> None:
     from web import WebUI
 
-    ws = Path(WORKSPACE)
+    ws = Path(workspace)
     ws.mkdir(parents=True, exist_ok=True)
     log_path = ws / SESSION_LOG_NAME
 
-    ui = WebUI(port=WEB_PORT)
+    prior_events = parse_log_file_to_ui_events(
+        log_path,
+        format_tool_result=_format_tool_result_content,
+        result_failed=result_message_indicates_failure,
+    )
+    ui = WebUI(port=port)
+    ui.extend_history(prior_events)
     await ui.start()
-    print(f"网页界面: http://localhost:{WEB_PORT}")
-    print(f"工作目录: {WORKSPACE}")
-    print(f"日志写入: {log_path}\n")
+    print(f"网页界面: http://localhost:{port}")
+    print(f"工作目录: {workspace}")
+    if resume:
+        print(f"恢复会话: {resume}")
+    else:
+        print("新会话（无 resume 或 log 中无 session_id）")
+    print(f"日志写入: {log_path}（{'追加' if log_append else '新建'}）\n")
 
-    log_file = open(log_path, "w", encoding="utf-8")
+    log_mode = "a" if log_append else "w"
+    log_file = open(log_path, log_mode, encoding="utf-8")
     try:
-        async with ClaudeSDKClient(options=build_options(WORKSPACE)) as client:
+        async with ClaudeSDKClient(options=build_options(workspace, resume=resume)) as client:
             async def _notify_log():
                 while ui._ws is None:
                     await asyncio.sleep(0.5)
@@ -316,12 +391,34 @@ def parse_args() -> argparse.Namespace:
         default="cli",
         help="交互模式：cli（终端，默认）或 web（网页）",
     )
+    parser.add_argument(
+        "--dir",
+        type=str,
+        default="",
+        metavar="NAME",
+        help="runs 下的子目录名；省略或空则新建时间戳目录并开始新会话；指定则使用该目录并尝试从 log.txt 恢复会话",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=WEB_PORT,
+        metavar="N",
+        help=f"网页端口（仅 web 模式，默认 {WEB_PORT}）",
+    )
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     args = parse_args()
+    try:
+        ws_path, resume = resolve_workspace(args.dir)
+    except ValueError as e:
+        print(f"错误: {e}", file=sys.stderr)
+        sys.exit(2)
+    workspace_str = str(ws_path)
+    log_append = bool(args.dir and str(args.dir).strip())
+
     if args.mode == "web":
-        asyncio.run(web_main())
+        asyncio.run(web_main(workspace_str, resume, log_append, args.port))
     else:
-        asyncio.run(cli_main())
+        asyncio.run(cli_main(workspace_str, resume, log_append))
