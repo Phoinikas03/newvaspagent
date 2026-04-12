@@ -1,7 +1,7 @@
 ---
 name: run-vasp
 description: "环境与硬件感知下编排 VASP：探针 mpirun/vasp_std/vasp_gpu、STRICT HARDWARE ALIGNMENT（GPU 与 CPU 共存 / Slurm 分叉）、GPU 映射（通常 1 rank↔1 GPU）、ITERATIVE 分批调用 vasp_runner、执行前向用户展示完整命令并取得同意。凡在本工作区使用 mpirun、vasp_std、vasp_gpu、Slurm/PBS 提交或 vasp_runner.py 时必须加载本 skill；lattice_constant、relax、bandgap、adsorption_energy、literature、supercell 等材料类 skill 在真正启动 VASP 前也必须先加载本 skill。"
-version: "1.0.0"
+version: "1.0.1"
 ---
 
 # Skill: Run VASP (Intelligent Orchestrator)
@@ -46,7 +46,10 @@ version: "1.0.0"
 
 ### Step 2: 环境侦察 (Environment Probing)
 - 运行探针：`python .claude/skills/run_vasp/scripts/probe_env.py`
-- **与项目 system_prompt 对齐的补充探测**（探针未覆盖或需人工核对时，用 Bash 显式执行）：`lscpu`（CPU）、`nvidia-smi -L`（GPU 列表）、Slurm 用 `sinfo`、PBS 用 `qstat`、`hostname`（判断是否登录节点）。
+- **与项目 system_prompt 对齐的补充探测**（探针未覆盖或需人工核对时）：
+  - **优先**已跑 `probe_env.py`：调度器由 **`sbatch` / `qsub` 是否在 PATH** 判定（与脚本一致），**不依赖** `sinfo`/`qstat`。
+  - 若再用 Bash 补充 `lscpu`、`nvidia-smi -L`、`hostname`：**禁止**把 `sinfo`/`qstat` 与上述命令用 **`&&`** 串成一条——裸机工作站上常无 `sinfo`，会导致整条命令失败（如 exit 127），并可能拖累同轮**并行**的其它工具（「Sibling tool call errored」）。
+  - 若需 Slurm/PBS 详情：仅当 `command -v sinfo` / `command -v qstat` 成功后再执行（如 `sinfo -N`）；否则跳过。稳妥的一行示例：`lscpu; nvidia-smi -L 2>/dev/null || true; hostname; command -v sinfo >/dev/null && sinfo -N || true`
 - 分析 JSON 输出，至少关注：
   - **资源与调度**：`cpu_cores_total`、`gpu_info`、`scheduler`（`slurm` / `pbs` / `none`）、`is_login_node`
   - **可执行依赖（主动排雷）**：`dependencies` 对象

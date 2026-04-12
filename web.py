@@ -129,13 +129,44 @@ _HTML = """<!DOCTYPE html>
   .tool-header:hover { background: #1f2d42; }
   .tool-name { font-weight: 600; font-family: monospace; }
   .tool-toggle { margin-left: auto; font-size: 11px; color: var(--muted); }
-  .tool-body {
+  .tool-group-body {
     display: none; padding: 10px 14px;
+    border-top: 1px solid var(--border);
+  }
+  .tool-group-body.open { display: block; }
+  .tool-section-label {
+    font-size: 11px; color: var(--muted); margin: 8px 0 4px;
+    font-family: var(--font);
+  }
+  .tool-section-label:first-child { margin-top: 0; }
+  .tool-input-pre {
+    margin: 0;
     font-family: 'Consolas','JetBrains Mono',monospace;
-    font-size: 12px; color: var(--muted); border-top: 1px solid var(--border);
+    font-size: 12px; color: var(--muted);
     white-space: pre-wrap; word-break: break-all;
   }
-  .tool-body.open { display: block; }
+  .tool-result-slot .tool-result-body-inner {
+    margin: 0; max-height: 480px; overflow-y: auto;
+    font-family: 'Consolas','JetBrains Mono',monospace;
+    font-size: 12px; color: var(--text);
+    white-space: pre-wrap; word-break: break-all;
+  }
+  .tool-card.err {
+    border-color: var(--error);
+    box-shadow: 0 0 0 1px rgba(248, 81, 73, 0.2);
+  }
+  .skill-context-details {
+    margin: 10px 0; border: 1px solid var(--border); border-radius: 8px;
+    background: #12151c; overflow: hidden;
+  }
+  .skill-context-details > summary {
+    cursor: pointer; color: var(--muted); user-select: none;
+    padding: 8px 12px; font-size: 13px;
+  }
+  .skill-context-details[open] > summary {
+    color: var(--accent); border-bottom: 1px solid var(--border);
+  }
+  .skill-context-details .md-content { padding: 10px 12px; }
 
   .tool-result-card {
     margin: 12px 0; border: 1px solid var(--border); border-radius: var(--radius);
@@ -218,6 +249,8 @@ const statusBadge = document.getElementById('status-badge');
 const logPathEl = document.getElementById('log-path');
 
 let curBubble = null, curMd = null, toolsStackEl = null, pendingText = '';
+/** @type {Record<string, HTMLElement>} 按 tool_use_id 合并「请求+返回」到同一卡片 */
+let toolCardByUseId = {};
 
 const ws = new WebSocket(`ws://${location.host}/ws`);
 ws.onopen  = () => setStatus('已连接', false);
@@ -237,8 +270,8 @@ ws.onmessage = (ev) => {
 
 function dispatch(d, replay) {
   if      (d.type === 'user_message') appendUserMsg(d.text);
-  else if (d.type === 'agent_text')   appendText(d.text);
-  else if (d.type === 'tool_use')     appendTool(d.name, d.input_str || '');
+  else if (d.type === 'agent_text')   appendText(d.text, d);
+  else if (d.type === 'tool_use')     appendTool(d.name, d.input_str || '', d.tool_use_id);
   else if (d.type === 'tool_result')  appendToolResult(d);
   else if (d.type === 'result')       appendResult(d);
   else if (d.type === 'log_path')     logPathEl.textContent = d.path;
@@ -265,6 +298,7 @@ function renderMarkdownTo(el, md) {
 
 function ensureAgentBubble() {
   if (curBubble) return;
+  toolCardByUseId = {};
   const row = document.createElement('div');
   row.className = 'msg agent';
   row.innerHTML = '<div class="msg-label">Agent</div>';
@@ -282,31 +316,70 @@ function ensureAgentBubble() {
   pendingText = '';
 }
 
-function appendText(text) {
+function appendText(text, meta) {
   ensureAgentBubble();
+  meta = meta || {};
+  if (meta.collapsed) {
+    const det = document.createElement('details');
+    det.className = 'skill-context-details';
+    det.open = false;
+    const sm = document.createElement('summary');
+    sm.textContent = meta.collapsed_label || 'Skill 正文（点击展开）';
+    const body = document.createElement('div');
+    body.className = 'md-content';
+    renderMarkdownTo(body, text);
+    det.appendChild(sm);
+    det.appendChild(body);
+    curBubble.insertBefore(det, curMd);
+    scrollBottom();
+    return;
+  }
   pendingText += text;
   renderMarkdownTo(curMd, pendingText);
   scrollBottom();
 }
 
-function appendTool(name, inputStr) {
+function appendTool(name, inputStr, toolUseId) {
   ensureAgentBubble();
-  const id = 'tool-' + Math.random().toString(36).slice(2);
+  const innerId = 'g-' + Math.random().toString(36).slice(2);
   const card = document.createElement('div');
   card.className = 'tool-card';
+  if (toolUseId) {
+    toolCardByUseId[String(toolUseId)] = card;
+  }
   card.innerHTML = `
-    <div class="tool-header" onclick="toggleTool('${id}')">
+    <div class="tool-header" onclick="toggleTool('${innerId}')">
       <span>🔧</span>
       <span class="tool-name">${esc(name)}</span>
-      <span class="tool-toggle" id="${id}-btn">▼ 收起</span>
+      <span class="tool-toggle" id="${innerId}-btn">▼ 收起</span>
     </div>
-    <pre class="tool-body open" id="${id}">${esc(inputStr)}</pre>`;
+    <div class="tool-group-body open" id="${innerId}">
+      <div class="tool-section-label">请求</div>
+      <pre class="tool-input-pre">${esc(inputStr)}</pre>
+      <div class="tool-result-slot" style="display:none">
+        <div class="tool-section-label">返回</div>
+        <pre class="tool-result-body-inner"></pre>
+      </div>
+    </div>`;
   toolsStackEl.appendChild(card);
   scrollBottom();
 }
 
 function appendToolResult(d) {
   ensureAgentBubble();
+  const tid = d.tool_use_id != null ? String(d.tool_use_id) : '';
+  if (tid && toolCardByUseId[tid]) {
+    const card = toolCardByUseId[tid];
+    const slot = card.querySelector('.tool-result-slot');
+    const inner = card.querySelector('.tool-result-body-inner');
+    if (slot && inner) {
+      inner.textContent = d.content_str != null ? String(d.content_str) : '';
+      slot.style.display = 'block';
+      card.classList.toggle('err', !!d.is_error);
+      scrollBottom();
+      return;
+    }
+  }
   const card = document.createElement('div');
   card.className = 'tool-result-card' + (d.is_error ? ' err' : '');
   const head = document.createElement('div');
@@ -328,6 +401,7 @@ function appendToolResult(d) {
 function toggleTool(id) {
   const body = document.getElementById(id);
   const btn  = document.getElementById(id + '-btn');
+  if (!body || !btn) return;
   btn.textContent = body.classList.toggle('open') ? '▼ 收起' : '▶ 展开';
 }
 
