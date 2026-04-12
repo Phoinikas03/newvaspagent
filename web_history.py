@@ -21,6 +21,16 @@ from claude_agent_sdk.types import (
 USER_LOG_KEY = "_vasp_agent_user"
 
 
+def is_skill_injection_context_text(text: str) -> bool:
+    """
+    Skill 工具除 ToolResultBlock 外，还会在单独的 UserMessage/TextBlock 里注入整份 SKILL.md。
+    正文通常以「Base directory for this skill:」开头（与 CLI Skill 加载一致）。
+    """
+    if not text or not isinstance(text, str):
+        return False
+    return text.lstrip().startswith("Base directory for this skill:")
+
+
 def write_user_turn_log(log_file, text: str) -> None:
     """在发起 query 前写入一行，便于网页重载后还原「用户说了什么」。"""
     line = json.dumps({USER_LOG_KEY: "user", "text": text}, ensure_ascii=False)
@@ -95,6 +105,8 @@ def sdk_message_to_ui_events(
                     {"type": "agent_text", "text": "[思考]\n" + getattr(block, "thinking", "")}
                 )
             elif bt == "ToolUseBlock" or getattr(block, "type", None) == "tool_use":
+                tname = getattr(block, "name", "?")
+                tid = getattr(block, "id", "") or ""
                 try:
                     input_str = json.dumps(block.input, indent=2, ensure_ascii=False)
                 except Exception:
@@ -102,8 +114,9 @@ def sdk_message_to_ui_events(
                 events.append(
                     {
                         "type": "tool_use",
-                        "name": getattr(block, "name", "?"),
+                        "name": tname,
                         "input_str": input_str,
+                        "tool_use_id": tid,
                     }
                 )
 
@@ -125,7 +138,17 @@ def sdk_message_to_ui_events(
                     }
                 )
             elif isinstance(block, TextBlock):
-                events.append({"type": "agent_text", "text": "[上下文]\n" + block.text})
+                if is_skill_injection_context_text(block.text):
+                    events.append(
+                        {
+                            "type": "agent_text",
+                            "text": block.text,
+                            "collapsed": True,
+                            "collapsed_label": "Skill 正文（点击展开）",
+                        }
+                    )
+                else:
+                    events.append({"type": "agent_text", "text": "[上下文]\n" + block.text})
 
     elif msg_type == "ResultMessage" or isinstance(msg, ResultMessage):
         failed = result_failed(msg)
@@ -139,6 +162,32 @@ def sdk_message_to_ui_events(
             }
         )
 
+    return events
+
+
+def _prepend_replay_notice_if_needed(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """若 log 中无用户行或前半段缺用户行，在重放列表前加一条说明，避免误以为网页坏了。"""
+    if not events:
+        return events
+    has_user = any(e.get("type") == "user_message" for e in events)
+    if not has_user:
+        notice = {
+            "type": "agent_text",
+            "text": (
+                "⚠️ **提示**：本 log.txt 中**没有**记录用户输入行（`_vasp_agent_user`），"
+                "无法显示「You」气泡。当前版本会在每轮对话前写入该行；**继续本会话后**新产生的输入会出现在记录与重放中。"
+            ),
+        }
+        return [notice] + events
+    if events[0].get("type") != "user_message":
+        notice = {
+            "type": "agent_text",
+            "text": (
+                "⚠️ **提示**：本记录**前半段**缺少用户输入行（旧版或未写入），"
+                "故开头几轮不会显示「You」；后文若出现用户气泡，为当时已启用记录后的对话。"
+            ),
+        }
+        return [notice] + events
     return events
 
 
@@ -175,15 +224,20 @@ def parse_log_file_to_ui_events(
                 obj = json.loads(line)
             except json.JSONDecodeError:
                 obj = None
-            if isinstance(obj, dict) and obj.get(USER_LOG_KEY) == "user":
-                events.append({"type": "user_message", "text": obj.get("text", "")})
+            # 与 write_user_turn_log 一致；放宽为「含 _vasp_agent_user 与 text」即可解析
+            if isinstance(obj, dict) and USER_LOG_KEY in obj and "text" in obj:
+                events.append({"type": "user_message", "text": str(obj.get("text", ""))})
                 continue
 
             msg = _eval_sdk_message(line)
             if msg is None:
                 continue
             events.extend(
-                sdk_message_to_ui_events(msg, format_tool_result=fmt, result_failed=result_failed)
+                sdk_message_to_ui_events(
+                    msg,
+                    format_tool_result=fmt,
+                    result_failed=result_failed,
+                )
             )
 
-    return events
+    return _prepend_replay_notice_if_needed(events)
