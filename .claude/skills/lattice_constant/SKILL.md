@@ -1,6 +1,6 @@
 ---
 name: "vasp-lattice-constant-eos"
-description: "执行 VASP 平衡晶格常数计算和状态方程 (EOS) 拟合。EOS 前须征得用户同意后，再通过 encut_kspacing_convergence 做 ENCUT/KSPACING 收敛；否则采用用户指定或模板参数并注明。随后各向同性缩放、批量静态计算、拟合 EOS 得平衡晶格常数与体积。"
+description: "执行 VASP 平衡晶格常数计算和状态方程 (EOS) 拟合。EOS 前须征得用户同意后，再通过 convergence 做 ENCUT/KSPACING 收敛；否则采用用户指定或模板参数并注明。随后各向同性缩放、批量静态计算、拟合 EOS 得平衡晶格常数与体积。"
 version: "1.2.0"
 ---
 
@@ -17,17 +17,17 @@ lattice_constant/
 │   ├── fit_eos.py                 ← 提取批量计算能量，拟合 EOS (如 Birch-Murnaghan) 并输出结果 JSON
 │   └── check_convergence.py       ← 检查单次 VASP 计算 OUTCAR 收敛状态
 ├── references/
-│   ├── convergence_rules.md       ← 占位：指向 encut_kspacing_convergence/references/convergence_rules.md
+│   ├── convergence_rules.md       ← 占位：指向 convergence/references/convergence_rules.md
 │   └── troubleshooting.md         ← EOS 拟合与计算异常
 └── templates/
     └── INCAR_static               ← 高精度静态计算 INCAR 模板（填入收敛得到的 ENCUT/KSPACING）
 
-**截断能与 K 点收敛**的完整准则与步骤见独立 skill **`encut_kspacing_convergence`**（`name`: `vasp-encut-kspacing-convergence`）。
+**截断能与 K 点收敛**的完整准则与步骤见独立 skill **`convergence`**（`name`: `vasp-convergence`）。
 
 ## 可用工具
 
 - `duckduckgo_search` / `Google Search`：搜索实验晶格常数、空间群信息
-- `Skill` (`encut_kspacing_convergence`)：**ENCUT / KSPACING** 收敛测试（1 meV/atom），产出 **`Convergence_Report.md`**
+- `Skill` (`convergence`)：**ENCUT / KSPACING** 收敛测试（1 meV/atom），产出 **`Convergence_Report.md`**
 - `Skill` (`literature`)：检索特定材料的可靠实验晶格常数及标准 EOS 拟合文献
 - `get_poscar_from_md`：根据特定材料生成或获取初始 POSCAR
 - `setup_vasp_inputs`：生成 POTCAR；若 **INCAR** 含 **`KSPACING`** 则**不**生成 **KPOINTS**
@@ -54,17 +54,17 @@ lattice_constant/
 
 ### 2. 截断能与 K 点收敛（前置：独立 Skill + 用户确认）
 
-**不在本文件中展开细则。** 在载入 **`encut_kspacing_convergence`** 之前：
+**不在本文件中展开细则。** 在载入 **`convergence`** 之前：
 
 1. **询问用户**是否要进行 **ENCUT/KSPACING 收敛测试**（多步静态计算、机时成本；EOS 精度通常依赖合理 **ENCUT/K**），**停止并等待回复**。**禁止**在未获用户同意时自动开始收敛或假定执行。
-2. 若用户**同意**，再载入并执行 **`Skill: encut_kspacing_convergence`**（YAML `name`: `vasp-encut-kspacing-convergence`；该 skill 内含执行前的用户确认），完成：
+2. 若用户**同意**，再载入并执行 **`Skill: convergence`**（YAML `name`: `vasp-convergence`；该 skill 内含执行前的用户确认），完成：
    - 静态单点（`NSW=0`）下的 **ENCUT** 与 **`KSPACING`** 扫描；
    - **`Convergence_Report.md`**（含选定 **ENCUT**、**KSPACING** 与能量表）。
 3. 若用户**拒绝**或工作区已有可信 **`Convergence_Report.md`**：可**询问**是否**复用**现有报告；否则将用户**指定**或模板中的 **ENCUT/KSPACING** 用于下文，并在说明中注明**未做**或**未重做**系统收敛。
 
 将最终采用的 **ENCUT**、**KSPACING** 填入 **`templates/INCAR_static`** 及所有 **`scale_*`** 子目录的 **INCAR**。
 
-若用户**仅**需要收敛参数、不需要平衡晶格常数，**只执行 `encut_kspacing_convergence` 即可**，无需继续本 skill 第 3 步及以后。
+若用户**仅**需要收敛参数、不需要平衡晶格常数，**只执行 `convergence` 即可**，无需继续本 skill 第 3 步及以后。
 
 ---
 
@@ -83,7 +83,7 @@ lattice_constant/
 **目标**：获取所有不同体积/缩放比例下系统的精确总能量。
 
 对每个 `scale_x.xx` 子文件夹准备输入并提交计算（各目录可**并行**提交多个独立任务，**禁止**单个脚本在同一进程内 `for` 串行跑完所有 scale）：
-1. 复制模板与配置：将 `templates/INCAR_static` 拷贝至当前子目录，并填入 **`encut_kspacing_convergence`** 得到的 **`ENCUT`** 与 **`KSPACING`**。
+1. 复制模板与配置：将 `templates/INCAR_static` 拷贝至当前子目录，并填入 **`convergence`** 得到的 **`ENCUT`** 与 **`KSPACING`**。
 2. 调用 `setup_vasp_inputs` 准备与收敛测试一致的 POTCAR；**INCAR** 须含与收敛测试相同的 **`KSPACING`**，以便不生成 **KPOINTS**。
 3. 按 Skill `run_vasp` 与 orchestration 规则，用 Bash 或 `TaskOutput` 在该子目录**单独**提交并完成一次 VASP 计算（一点一任务）。
 4. 该目录计算结束后，`Bash`：`python scripts/check_convergence.py .`
@@ -119,7 +119,7 @@ lattice_constant/
 
 ## 核心原则
 
-- **收敛测试须用户确认**：载入 **`encut_kspacing_convergence`** 前**必须**询问用户是否进行；**禁止**自动开始收敛测试。
+- **收敛测试须用户确认**：载入 **`convergence`** 前**必须**询问用户是否进行；**禁止**自动开始收敛测试。
 - **禁止单作业内串行多点 VASP**：除 `generate_scaled_poscars.py`、`fit_eos.py`、`check_convergence.py` 等明确允许的脚本外，不得用**一个** Bash/Python 脚本或**一次**作业提交，在**同一进程/同一作业**内循环或顺序执行多个 VASP。**允许**将多个单点 VASP 作为多个独立任务**并行**提交；每个任务仍是一点一算、一目录一输入，结束后分别用 `check_convergence.py` 等核查。
 - **参数绝对一致**：在第 4 步的批量计算中，所有子任务的 `ENCUT`、`POTCAR` 类别和 K 点网格划分方式必须**完全一致**。改变基点截断能会导致 Pulay 应力带来的巨大误差。
 - **静态计算优先**：EOS 拟合过程中，各个比例下的 VASP 计算必须是**单点静态计算 (ISIF=2 且 NSW=0)**，不能在内部再次进行晶胞体积松弛，否则能量-体积对应关系将失效。

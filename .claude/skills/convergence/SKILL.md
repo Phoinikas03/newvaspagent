@@ -1,5 +1,5 @@
 ---
-name: "vasp-encut-kspacing-convergence"
+name: "vasp-convergence"
 description: "对固定几何的单胞执行 VASP 静态单点能（NSW=0）下的截断能 ENCUT 与 INCAR 中 KSPACING 收敛测试，目标相邻步能量差 ≤1 meV/atom，输出 Convergence_Report.md 与推荐生产参数。适用于 EOS、带隙扫描、一般静态能量对比等任意需要先收敛 ENCUT/K 点的前置步骤。"
 version: "1.1.0"
 ---
@@ -11,7 +11,7 @@ version: "1.1.0"
 ## 目录结构
 
 ```
-encut_kspacing_convergence/
+convergence/
 ├── SKILL.md                          ← 本文件
 ├── references/
 │   └── convergence_rules.md          ← 扫描序列、1 meV/atom 判据、注意事项
@@ -99,7 +99,7 @@ convergence_test/
 每个子目录内：放入对应 **POSCAR**、**INCAR**（该点上的 **ENCUT** 或 **KSPACING**），调用 **`setup_vasp_inputs`**（保证 **KSPACING** 在 INCAR 中、且无多余 **KPOINTS**），再 **`run_vasp`**。算完后：
 
 ```bash
-python /path/to/encut_kspacing_convergence/scripts/check_convergence.py .
+python /path/to/convergence/scripts/check_convergence.py .
 ```
 
 若 `electronic_converged` 为 false，勿用于收敛判定；先按 `references/convergence_rules.md` 与项目内其它 troubleshooting 调整 **NELM** / **ALGO** 等后重算该点。
