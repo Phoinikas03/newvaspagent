@@ -4,7 +4,14 @@
 这里测试可复用的实现 _impl()，与 MCP 工具内部调用的是同一套逻辑。
 """
 import asyncio
-from tool import (
+import sys
+from pathlib import Path
+
+_REPO = Path(__file__).resolve().parent.parent
+if str(_REPO) not in sys.path:
+    sys.path.insert(0, str(_REPO))
+
+from src.tool import (
     get_poscar_impl,
     duckduckgo_search_impl, 
     google_search_impl, 

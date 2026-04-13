@@ -10,7 +10,7 @@
 
 - **Agent → LiteLLM**：``BASE_URL``、``API_KEY``（可被命令行 ``--base-url`` / ``--api-key`` 覆盖）
 
-可选 **仅作文档、与 litellm yaml 对齐**（本模块不读取）：``UPSTREAM_MODEL``、``UPSTREAM_API_BASE``、``UPSTREAM_API_KEY``
+**自启 LiteLLM**（见 ``litellm_autostart.py``）：若 ``BASE_URL`` 为本机且端口未监听，会尝试用 ``UPSTREAM_MODEL``、``UPSTREAM_API_BASE``、``UPSTREAM_API_KEY`` 生成配置并 ``subprocess`` 启动 ``litellm``；可用 ``--no-litellm-autostart`` 关闭。
 
 仍兼容旧名 ``ANTHROPIC_BASE_URL`` / ``ANTHROPIC_API_KEY``。
 """
