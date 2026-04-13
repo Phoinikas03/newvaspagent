@@ -43,6 +43,20 @@ _HTML = """<!DOCTYPE html>
     background: var(--bg); color: var(--text);
     font-family: var(--font); font-size: 15px;
     display: flex; flex-direction: column;
+    overflow: hidden;
+  }
+  #main-row {
+    flex: 1;
+    display: flex;
+    min-height: 0;
+    align-items: stretch;
+  }
+  #chat-column {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
   }
   #header {
     background: var(--surface); border-bottom: 1px solid var(--border);
@@ -65,6 +79,7 @@ _HTML = """<!DOCTYPE html>
   #chat-container {
     flex: 1; overflow-y: auto; padding: 20px;
     display: flex; flex-direction: column; gap: 16px;
+    min-height: 0;
   }
   #chat-container::-webkit-scrollbar { width: 6px; }
   #chat-container::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
@@ -226,6 +241,87 @@ _HTML = """<!DOCTYPE html>
   }
   #send-btn:hover { background: #79c0ff; }
   #send-btn:disabled { background: #21262d; color: var(--muted); cursor: not-allowed; }
+
+  /* --- 右侧 Todo 栏 --- */
+  #todo-panel {
+    width: min(320px, 38vw);
+    flex-shrink: 0;
+    border-left: 1px solid var(--border);
+    background: var(--surface);
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  #todo-panel-header {
+    padding: 12px 14px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--muted);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  #todo-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 10px 12px 16px;
+    font-size: 13px;
+    line-height: 1.45;
+  }
+  #todo-list::-webkit-scrollbar { width: 5px; }
+  #todo-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  .todo-empty {
+    color: var(--muted);
+    font-size: 12px;
+    padding: 8px 4px;
+  }
+  .todo-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 8px 4px;
+    border-bottom: 1px solid #21262d;
+  }
+  .todo-item:last-child { border-bottom: none; }
+  .todo-ic {
+    flex-shrink: 0;
+    margin-top: 2px;
+    width: 18px;
+    height: 18px;
+    box-sizing: border-box;
+  }
+  .todo-ic-done {
+    border-radius: 50%;
+    background: var(--success);
+    color: #0d1117;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1;
+  }
+  .todo-ic-done::after { content: '✓'; }
+  .todo-ic-pend {
+    border-radius: 50%;
+    border: 2px solid var(--muted);
+    background: transparent;
+  }
+  .todo-ic-run {
+    border-radius: 50%;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    animation: todo-spin 0.75s linear infinite;
+  }
+  @keyframes todo-spin {
+    to { transform: rotate(360deg); }
+  }
+  .todo-label {
+    flex: 1;
+    min-width: 0;
+    color: var(--text);
+    word-break: break-word;
+  }
+  .todo-item.todo-muted .todo-label { color: var(--muted); }
 </style>
 </head>
 <body>
@@ -234,10 +330,18 @@ _HTML = """<!DOCTYPE html>
   <span id="status-badge">就绪</span>
   <span id="log-path"></span>
 </div>
-<div id="chat-container"></div>
-<div id="input-area">
-  <textarea id="input" rows="1" placeholder="输入问题，Enter 发送，Shift+Enter 换行"></textarea>
-  <button id="send-btn">发送</button>
+<div id="main-row">
+  <div id="chat-column">
+    <div id="chat-container"></div>
+    <div id="input-area">
+      <textarea id="input" rows="1" placeholder="输入问题，Enter 发送，Shift+Enter 换行"></textarea>
+      <button id="send-btn">发送</button>
+    </div>
+  </div>
+  <aside id="todo-panel">
+    <div id="todo-panel-header">任务列表</div>
+    <div id="todo-list"><div class="todo-empty">暂无任务</div></div>
+  </aside>
 </div>
 <script>
 marked.setOptions({ breaks: true, gfm: true });
@@ -247,6 +351,7 @@ const inputEl = document.getElementById('input');
 const sendBtn = document.getElementById('send-btn');
 const statusBadge = document.getElementById('status-badge');
 const logPathEl = document.getElementById('log-path');
+const todoListEl = document.getElementById('todo-list');
 
 let curBubble = null, curMd = null, toolsStackEl = null, pendingText = '';
 /** @type {Record<string, HTMLElement>} 按 tool_use_id 合并「请求+返回」到同一卡片 */
@@ -259,8 +364,19 @@ ws.onerror = () => setStatus('连接错误', false);
 ws.onmessage = (ev) => {
   const d = JSON.parse(ev.data);
   if (d.type === 'history') {
-    d.events.forEach(e => dispatch(e, true));
-    setStatus('就绪', false);
+    let lastStatus = null;
+    d.events.forEach((e) => {
+      if (e.type === 'status') lastStatus = e;
+      dispatch(e, true);
+    });
+    const lastEv = d.events.length ? d.events[d.events.length - 1] : null;
+    if (lastEv && lastEv.type === 'result') {
+      setStatus('就绪', false);
+    } else if (lastStatus) {
+      setStatus(lastStatus.text, lastStatus.thinking ?? false);
+    } else {
+      setStatus('就绪', false);
+    }
     sendBtn.disabled = false;
     scrollBottom();
     return;
@@ -275,8 +391,30 @@ function dispatch(d, replay) {
   else if (d.type === 'tool_result')  appendToolResult(d);
   else if (d.type === 'result')       appendResult(d);
   else if (d.type === 'log_path')     logPathEl.textContent = d.path;
-  else if (!replay && d.type === 'status') setStatus(d.text, d.thinking ?? false);
+  else if (d.type === 'status')       setStatus(d.text, d.thinking ?? false);
+  else if (d.type === 'todo_update') renderTodoPanel(d.todos);
   else if (!replay && d.type === 'done')   sendBtn.disabled = false;
+}
+
+function renderTodoPanel(todos) {
+  const list = Array.isArray(todos) ? todos : [];
+  if (!list.length) {
+    todoListEl.innerHTML = '<div class="todo-empty">暂无任务</div>';
+    return;
+  }
+  todoListEl.innerHTML = list.map((t) => {
+    const st = t.status;
+    let ic = '';
+    if (st === 'completed') {
+      ic = '<span class="todo-ic todo-ic-done" title="已完成"></span>';
+    } else if (st === 'in_progress') {
+      ic = '<span class="todo-ic todo-ic-run" title="进行中"></span>';
+    } else {
+      ic = '<span class="todo-ic todo-ic-pend" title="待处理"></span>';
+    }
+    const muted = (st === 'pending') ? ' todo-muted' : '';
+    return `<div class="todo-item${muted}">${ic}<span class="todo-label">${esc(t.label || '')}</span></div>`;
+  }).join('');
 }
 
 function setStatus(text, thinking) {
@@ -347,13 +485,17 @@ function appendTool(name, inputStr, toolUseId) {
   if (toolUseId) {
     toolCardByUseId[String(toolUseId)] = card;
   }
+  /* 右侧已有任务列表时，主对话里的 TodoWrite 默认折叠 */
+  const todoWriteCollapsed = name === 'TodoWrite';
+  const bodyClass = todoWriteCollapsed ? 'tool-group-body' : 'tool-group-body open';
+  const toggleLabel = todoWriteCollapsed ? '▶ 展开' : '▼ 收起';
   card.innerHTML = `
     <div class="tool-header" onclick="toggleTool('${innerId}')">
       <span>🔧</span>
       <span class="tool-name">${esc(name)}</span>
-      <span class="tool-toggle" id="${innerId}-btn">▼ 收起</span>
+      <span class="tool-toggle" id="${innerId}-btn">${toggleLabel}</span>
     </div>
-    <div class="tool-group-body open" id="${innerId}">
+    <div class="${bodyClass}" id="${innerId}">
       <div class="tool-section-label">请求</div>
       <pre class="tool-input-pre">${esc(inputStr)}</pre>
       <div class="tool-result-slot" style="display:none">
@@ -460,6 +602,7 @@ function send() {
   setStatus('思考中...', true);
   curBubble = curMd = toolsStackEl = null;
   pendingText = '';
+  renderTodoPanel([]);
 }
 
 inputEl.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
@@ -475,7 +618,16 @@ sendBtn.addEventListener('click', send);
 # WebUI class
 # ---------------------------------------------------------------------------
 
-_HISTORY_TYPES = {"user_message", "agent_text", "tool_use", "tool_result", "result", "log_path"}
+_HISTORY_TYPES = {
+    "user_message",
+    "agent_text",
+    "tool_use",
+    "tool_result",
+    "result",
+    "log_path",
+    "status",
+    "todo_update",
+}
 
 
 class WebUI:

@@ -20,6 +20,62 @@ from claude_agent_sdk.types import (
 # 与 log 中其它行区分：单行 JSON
 USER_LOG_KEY = "_vasp_agent_user"
 
+# TodoWrite 的 activeForm/content 可能很长，状态栏截断以免撑破布局
+TODO_STATUS_MAX_LEN = 120
+
+
+def todo_write_in_progress_label(tool_input: Any) -> str | None:
+    """
+    从 TodoWrite 的 input 中取出当前 in_progress 项的简短说明，用于 Web 状态栏与 log 重放。
+    解决：模型在长回合里先写了「第一步」正文，随后已开始 surface/absorbed，但正文未更新时界面看起来像卡在第一步。
+    """
+    if not isinstance(tool_input, dict):
+        return None
+    todos = tool_input.get("todos")
+    if not isinstance(todos, list):
+        return None
+    for t in todos:
+        if not isinstance(t, dict):
+            continue
+        if t.get("status") != "in_progress":
+            continue
+        label = (t.get("activeForm") or t.get("content") or "").strip()
+        if not label:
+            continue
+        if len(label) > TODO_STATUS_MAX_LEN:
+            label = label[: TODO_STATUS_MAX_LEN - 1] + "…"
+        return label
+    return None
+
+
+_VALID_TODO_STATUSES = frozenset({"completed", "in_progress", "pending"})
+TODO_LABEL_MAX_LEN = 200
+
+
+def todo_write_items_for_ui(tool_input: Any) -> list[dict[str, str]]:
+    """
+    将 TodoWrite 的 input 转为右侧 Todo 栏用的结构化列表。
+    每项: {"label": str, "status": "completed"|"in_progress"|"pending"}
+    """
+    out: list[dict[str, str]] = []
+    if not isinstance(tool_input, dict):
+        return out
+    todos = tool_input.get("todos")
+    if not isinstance(todos, list):
+        return out
+    for t in todos:
+        if not isinstance(t, dict):
+            continue
+        raw = t.get("status")
+        status = raw if raw in _VALID_TODO_STATUSES else "pending"
+        label = (t.get("activeForm") or t.get("content") or "").strip()
+        if not label:
+            continue
+        if len(label) > TODO_LABEL_MAX_LEN:
+            label = label[: TODO_LABEL_MAX_LEN - 1] + "…"
+        out.append({"label": label, "status": status})
+    return out
+
 
 def is_skill_injection_context_text(text: str) -> bool:
     """
@@ -36,6 +92,12 @@ def write_user_turn_log(log_file, text: str) -> None:
     line = json.dumps({USER_LOG_KEY: "user", "text": text}, ensure_ascii=False)
     log_file.write(line + "\n")
     log_file.flush()
+    try:
+        from src.conversation_store import append_turn
+
+        append_turn(Path(log_file.name).parent, "user", text)
+    except OSError:
+        pass
 
 
 def _format_tool_result_content(content: Any) -> str:
@@ -119,6 +181,23 @@ def sdk_message_to_ui_events(
                         "tool_use_id": tid,
                     }
                 )
+                if tname == "TodoWrite":
+                    tw_in = getattr(block, "input", None) or {}
+                    events.append(
+                        {
+                            "type": "todo_update",
+                            "todos": todo_write_items_for_ui(tw_in),
+                        }
+                    )
+                    label = todo_write_in_progress_label(tw_in)
+                    if label:
+                        events.append(
+                            {
+                                "type": "status",
+                                "text": f"进行中: {label}",
+                                "thinking": True,
+                            }
+                        )
 
     elif msg_type == "UserMessage" or isinstance(msg, UserMessage):
         raw = getattr(msg, "content", None)
@@ -202,7 +281,7 @@ def parse_log_file_to_ui_events(
     """
     fmt = format_tool_result or _format_tool_result_content
     if result_failed is None:
-        from result_message import result_message_indicates_failure
+        from src.result_message import result_message_indicates_failure
 
         result_failed = result_message_indicates_failure
 

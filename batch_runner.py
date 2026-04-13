@@ -115,12 +115,12 @@ async def run_single_task(
         create_sdk_mcp_server, ClaudeAgentOptions, ClaudeSDKClient,
         AssistantMessage, ResultMessage, TextBlock,
     )
-    from tool_wrapper import (
+    from src.tool_wrapper import (
         poscar_tool, setup_vasp_inputs_tool,
         duckduckgo_search_tool, google_search_tool,
         visit_webpage_tool, arxiv_search_tool,
     )
-    from result_message import result_message_indicates_failure
+    from src.result_message import result_message_indicates_failure
 
     workspace = str(data_dir)
     mcp_name = "vasp_agent"
