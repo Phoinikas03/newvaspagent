@@ -10,10 +10,15 @@ from pathlib import Path
 from dotenv import load_dotenv
 from typing import Any
 
+_ROOT = Path(__file__).resolve().parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
 from claude_agent_sdk import (
     create_sdk_mcp_server, ClaudeAgentOptions, ClaudeSDKClient,
     AssistantMessage, ResultMessage, SystemMessage, TextBlock,
     ThinkingBlock, ToolResultBlock, UserMessage,
+    ProcessError,
 )
 from claude_agent_sdk.types import StreamEvent
 from tool_wrapper import (
@@ -26,16 +31,21 @@ from web_history import (
     parse_log_file_to_ui_events,
     write_user_turn_log,
 )
+from litellm_env import configure_anthropic_for_litellm
 
 load_dotenv(Path(__file__).parent / ".env")
 
-os.environ["ANTHROPIC_BASE_URL"] = "http://127.0.0.1:4000"
-os.environ["ANTHROPIC_API_KEY"] = "sk-dummy-key"
-os.environ["NO_PROXY"] = "127.0.0.1,localhost,0.0.0.0"
-
 SESSION_LOG_NAME = "log.txt"
+CLAUDE_STDERR_LOG = "claude_stderr.log"
 WEB_PORT = 8888
 RUNS_ROOT = Path(__file__).resolve().parent / "runs"
+
+# Web：ResultMessage.result 为空且本轮最后一条工具返回 is_error 时，避免界面无文字说明
+EMPTY_RESULT_WITH_TOOL_ERROR_FALLBACK = (
+    "[系统提示] 本轮在工具执行阶段出现错误，且模型未返回结束摘要。"
+    "请查看上文的工具报错；若涉及 `.claude/skills/` 下脚本，请先在仓库根目录执行"
+    "（system_prompt 中的 SKILL & `.claude` PATH RULE：`cd` 到 Repository root 再运行）。"
+)
 
 
 def _parse_last_session_id(log_path: Path) -> str | None:
@@ -79,6 +89,29 @@ def resolve_workspace(run_dir: str | None) -> tuple[Path, str | None]:
     return ws, resume
 
 
+def _print_process_error_help(workspace: str, resume: str | None) -> None:
+    """CLI 子进程 exit 1 时补充说明（SDK 不把 stderr 放进异常对象）。"""
+    p = Path(workspace) / CLAUDE_STDERR_LOG
+    api = os.environ.get("ANTHROPIC_BASE_URL", "")
+    print("\n[vasp-agent] Claude Code CLI 初始化失败（进程 exit 1）。", file=sys.stderr)
+    print(f"  ANTHROPIC_BASE_URL={api or '(未设置)'}", file=sys.stderr)
+    if p.is_file():
+        print(f"  stderr 已写入: {p}", file=sys.stderr)
+        try:
+            tail = p.read_text(encoding="utf-8", errors="replace")[-6000:]
+            print("  --- claude_stderr.log 尾部 ---", file=sys.stderr)
+            print(tail, file=sys.stderr)
+        except OSError as ex:
+            print(f"  （读取失败: {ex}）", file=sys.stderr)
+    print(
+        "  常见原因: ① LiteLLM 未在 BASE_URL 监听；② resume 的 session 已失效。\n"
+        "  试: curl -sS \"${ANTHROPIC_BASE_URL}/v1/models\" ；或加 --no-resume 跳过恢复会话。",
+        file=sys.stderr,
+    )
+    if resume:
+        print(f"  当前 resume session_id: {resume}", file=sys.stderr)
+
+
 def build_options(workspace: str, resume: str | None = None) -> ClaudeAgentOptions:
     repo_root = str(RUNS_ROOT.parent.resolve())
     mcp_name = "vasp_agent"
@@ -93,9 +126,19 @@ def build_options(workspace: str, resume: str | None = None) -> ClaudeAgentOptio
             arxiv_search_tool(),
         ],
     )
+    _stderr_first = True
+
     def _cli_stderr(line: str) -> None:
         """转发 Claude Code CLI 的 stderr，便于排查「exit code 1 / Check stderr」类错误。"""
+        nonlocal _stderr_first
         print(f"[claude-code] {line}", file=sys.stderr, flush=True)
+        err_path = Path(workspace) / CLAUDE_STDERR_LOG
+        try:
+            with err_path.open("w" if _stderr_first else "a", encoding="utf-8") as ef:
+                ef.write(line + "\n")
+            _stderr_first = False
+        except OSError:
+            pass
 
     return ClaudeAgentOptions(
         cwd=workspace,
@@ -298,8 +341,12 @@ async def cli_main(workspace: str, resume: str | None, log_append: bool) -> None
     log_mode = "a" if log_append else "w"
     log_file = open(log_path, log_mode, encoding="utf-8")
     try:
-        async with ClaudeSDKClient(options=build_options(workspace, resume=resume)) as client:
-            await cli_agent_loop(client, log_file)
+        try:
+            async with ClaudeSDKClient(options=build_options(workspace, resume=resume)) as client:
+                await cli_agent_loop(client, log_file)
+        except ProcessError:
+            _print_process_error_help(workspace, resume)
+            raise
     finally:
         log_file.close()
 
@@ -331,7 +378,9 @@ def _format_tool_result_content(content: Any) -> str:
     return str(content)
 
 
-async def _dispatch_message_to_web(msg: Any, ui: Any) -> None:
+async def _dispatch_message_to_web(
+    msg: Any, ui: Any, session_state: dict[str, Any] | None = None,
+) -> None:
     """将单条 SDK 消息推到网页（StreamEvent 仅忽略 UI；SystemMessage 仅展示任务相关）。"""
     if isinstance(msg, StreamEvent):
         return
@@ -382,6 +431,8 @@ async def _dispatch_message_to_web(msg: Any, ui: Any) -> None:
                 tid = getattr(block, "tool_use_id", "") or ""
                 err = getattr(block, "is_error", None)
                 is_err = bool(err) if err is not None else False
+                if session_state is not None:
+                    session_state["last_tool_error"] = is_err
                 body = _format_tool_result_content(getattr(block, "content", None))
                 await ui.send(
                     {
@@ -408,6 +459,11 @@ async def _dispatch_message_to_web(msg: Any, ui: Any) -> None:
         return
 
     if isinstance(msg, ResultMessage):
+        result_text = (getattr(msg, "result", None) or "").strip()
+        if session_state is not None and not result_text and session_state.get("last_tool_error"):
+            await ui.send({"type": "agent_text", "text": EMPTY_RESULT_WITH_TOOL_ERROR_FALLBACK})
+        if session_state is not None:
+            session_state["last_tool_error"] = False
         failed = result_message_indicates_failure(msg)
         await ui.send({
             "type": "result",
@@ -420,12 +476,14 @@ async def _dispatch_message_to_web(msg: Any, ui: Any) -> None:
         await ui.send({"type": "done"})
 
 
-async def _web_sdk_receive_loop(client: ClaudeSDKClient, log_file, ui: Any) -> None:
+async def _web_sdk_receive_loop(
+    client: ClaudeSDKClient, log_file, ui: Any, session_state: dict[str, Any],
+) -> None:
     """后台持续 consume receive_messages()，与主协程中仅负责 query(用户输入) 分离。"""
     try:
         async for msg in client.receive_messages():
             _append_sdk_log_line(log_file, msg)
-            await _dispatch_message_to_web(msg, ui)
+            await _dispatch_message_to_web(msg, ui, session_state)
     except asyncio.CancelledError:
         raise
     except Exception as e:
@@ -433,8 +491,10 @@ async def _web_sdk_receive_loop(client: ClaudeSDKClient, log_file, ui: Any) -> N
         raise
 
 
-async def web_agent_loop(client: ClaudeSDKClient, log_file, ui) -> None:
-    drain = asyncio.create_task(_web_sdk_receive_loop(client, log_file, ui))
+async def web_agent_loop(
+    client: ClaudeSDKClient, log_file, ui, session_state: dict[str, Any],
+) -> None:
+    drain = asyncio.create_task(_web_sdk_receive_loop(client, log_file, ui, session_state))
     try:
         while True:
             user_input = await ui.input_queue.get()
@@ -443,6 +503,7 @@ async def web_agent_loop(client: ClaudeSDKClient, log_file, ui) -> None:
 
             await ui.send({"type": "status", "text": "思考中...", "thinking": True})
             write_user_turn_log(log_file, user_input)
+            session_state["last_tool_error"] = False
             await client.query(user_input)
     finally:
         drain.cancel()
@@ -476,14 +537,19 @@ async def web_main(workspace: str, resume: str | None, log_append: bool, port: i
     log_mode = "a" if log_append else "w"
     log_file = open(log_path, log_mode, encoding="utf-8")
     try:
-        async with ClaudeSDKClient(options=build_options(workspace, resume=resume)) as client:
-            async def _notify_log():
-                while ui._ws is None:
-                    await asyncio.sleep(0.5)
-                await ui.send({"type": "log_path", "path": str(log_path)})
-            asyncio.create_task(_notify_log())
+        try:
+            async with ClaudeSDKClient(options=build_options(workspace, resume=resume)) as client:
+                async def _notify_log():
+                    while ui._ws is None:
+                        await asyncio.sleep(0.5)
+                    await ui.send({"type": "log_path", "path": str(log_path)})
+                asyncio.create_task(_notify_log())
 
-            await web_agent_loop(client, log_file, ui)
+                web_session_state: dict[str, Any] = {"last_tool_error": False}
+                await web_agent_loop(client, log_file, ui, web_session_state)
+        except ProcessError:
+            _print_process_error_help(workspace, resume)
+            raise
     finally:
         log_file.close()
         await ui.stop()
@@ -515,11 +581,35 @@ def parse_args() -> argparse.Namespace:
         metavar="N",
         help=f"网页端口（仅 web 模式，默认 {WEB_PORT}）",
     )
+    parser.add_argument(
+        "--base-url",
+        type=str,
+        default=None,
+        metavar="URL",
+        help="LiteLLM（或其它 Anthropic 兼容服务）的 base URL；默认读 .env 中 BASE_URL（或 ANTHROPIC_BASE_URL），缺省为 http://127.0.0.1:4000",
+    )
+    parser.add_argument(
+        "--api-key",
+        type=str,
+        default=None,
+        metavar="KEY",
+        help="转发用的 API Key；默认读 .env 中 API_KEY（或 ANTHROPIC_API_KEY），可与 litellm 配置的 sk- 一致",
+    )
+    parser.add_argument(
+        "--no-resume",
+        action="store_true",
+        help="仍使用 --dir 对应工作区，但不从 log.txt 恢复会话（用于 session 失效或调试）",
+    )
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     args = parse_args()
+    applied_url, _ = configure_anthropic_for_litellm(
+        base_url=args.base_url,
+        api_key=args.api_key,
+    )
+    print(f"[llm] ANTHROPIC_BASE_URL={applied_url}", flush=True)
     try:
         ws_path, resume = resolve_workspace(args.dir)
     except ValueError as e:
@@ -527,6 +617,8 @@ if __name__ == "__main__":
         sys.exit(2)
     workspace_str = str(ws_path)
     log_append = bool(args.dir and str(args.dir).strip())
+    if args.no_resume:
+        resume = None
 
     if args.mode == "web":
         asyncio.run(web_main(workspace_str, resume, log_append, args.port))
