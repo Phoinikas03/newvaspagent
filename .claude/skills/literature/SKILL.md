@@ -1,6 +1,6 @@
 ---
 name: "vasp-literature-retrieval"
-description: "为计算材料学任务结构化检索与整理文献：实验晶格常数、带隙、DFT/HSE/VASP 参数、DFT+U、EOS 方法等。在 relax、bandgap、lattice_constant、encut_kspacing_convergence 等技能要求「先查文献」或本地 references 未覆盖时触发；统一使用本 skill 规定的检索顺序与 arXiv 查询规范，输出带引用的摘要并可写入用户指定的工作区 Markdown。"
+description: "为计算材料学任务结构化检索与整理文献：实验晶格常数、带隙、DFT/HSE/VASP 参数、DFT+U、EOS 方法等。在 relax、bandgap、lattice_constant、convergence 等技能要求「先查文献」或本地 references 未覆盖时触发；统一使用本 skill 规定的检索顺序与 arXiv 查询规范，输出带引用的摘要并可写入用户指定的工作区 Markdown。"
 version: "1.0.0"
 ---
 
@@ -69,7 +69,7 @@ literature/
 
 ### 5. 与其它 Skill 的衔接
 
-- **`encut_kspacing_convergence`**：本 skill **不**替代收敛测试；仅提供文献中的 ENCUT/K 点经验作**初值参考**，真正收敛仍以该 skill 与 `Convergence_Report.md` 为准。
+- **`convergence`**：本 skill **不**替代收敛测试；仅提供文献中的 ENCUT/K 点经验作**初值参考**，真正收敛仍以该 skill 与 `Convergence_Report.md` 为准。
 - **`lattice_constant`**：实验晶格常数对比值优先通过本 skill 或 Materials Project 实验数据交叉核对。
 - **`relax` / `bandgap`**：当 `references/incar_params.md`、`hse_params.md` 等未覆盖时，用本 skill 补参数与实验带隙引用。
 

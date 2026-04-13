@@ -15,6 +15,6 @@
 
 - 约定 `E_ads = E(adsorbed) - E(CO) - E(surface)`：放热吸附常为**负值**（与具体文献约定一致即可，须在报告中写明）。
 
-## 与 encut_kspacing_convergence 的关系
+## 与 convergence 的关系
 
 - 若需发表级能量差精度，应对**同一套结构约定**先做 **ENCUT/KSPACING** 收敛（静态单点，`NSW=0`），再将参数用于三步几何优化；须**征得用户同意**后再启动收敛扫描（见独立 skill）。

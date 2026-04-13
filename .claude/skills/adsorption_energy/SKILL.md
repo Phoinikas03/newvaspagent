@@ -33,7 +33,7 @@ adsorption_energy/
 - `get_poscar_from_md`：获取体相或原型结构（表面 slab 常需用户或 `Skill`（`supercell`）进一步处理）
 - `Skill`（`supercell`）：构建超胞或 slab（若任务涉及）
 - `Skill`（`relax`）：若用户仅有未松弛的体相，可先松弛再切表面（依用户目标决定）
-- `Skill`（`encut_kspacing_convergence`）：在固定几何下做 **ENCUT/KSPACING** 收敛（`NSW=0`），供三步优化 **共用** 同一截断能与 K 点密度；**须先征得用户同意**再执行（见该 skill §0）
+- `Skill`（`convergence`）：在固定几何下做 **ENCUT/KSPACING** 收敛（`NSW=0`），供三步优化 **共用** 同一截断能与 K 点密度；**须先征得用户同意**再执行（见该 skill §0）
 - `setup_vasp_inputs`：生成 POTCAR；若 **INCAR** 含 **`KSPACING`** 则**不**生成 **KPOINTS**
 - `Skill`（`run_vasp`）：**任何** `mpirun` / `vasp_std` / `vasp_gpu` 前必须载入并按 GPU/CPU 规则执行
 - `Write` / `Edit`、`Bash`、`Read` / `Grep`
@@ -64,7 +64,7 @@ adsorption_energy/
 若用户需要与文献或发表级计算可比的 **ENCUT** 与 **KSPACING**：
 
 1. **先询问**是否进行收敛测试（多步静态、`NSW=0`、机时成本），**停止并等待回复**。
-2. 仅当用户**同意**后，载入 **`Skill: encut_kspacing_convergence`**，对**代表体系**（如已弛豫的 slab POSCAR）做收敛，得到 **`Convergence_Report.md`**。
+2. 仅当用户**同意**后，载入 **`Skill: convergence`**，对**代表体系**（如已弛豫的 slab POSCAR）做收敛，得到 **`Convergence_Report.md`**。
 3. 将选定的 **ENCUT**、**KSPACING** 用于**全部三步**几何优化 **INCAR**，并在说明文档中记录。
 
 若用户拒绝，使用模板或用户指定数值，并在 **`adsorption_INCAR_notes.md`** 中注明未做系统收敛。
@@ -140,5 +140,5 @@ python .claude/skills/adsorption_energy/scripts/extract_absorption_energy.py \
 - **参数可比**：默认 **ENCUT、KSPACING/ K 点、泛函、POTCAR** 在三步间一致；**真空与 slab 设定**在表面与吸附两步间一致。
 - **禁止 monolithic 无核查批跑**：不得用单个 `for` 循环连续提交三步而不做逐步收敛检查。
 - **run_vasp 前置**：任何 VASP 启动前必须载入 **`run_vasp`** 并遵守硬件与确认规则。
-- **收敛前置需同意**：正式使用前若要做 **ENCUT/KSPACING** 系统收敛，**须用户明确同意**后再载入 **`encut_kspacing_convergence`**。
+- **收敛前置需同意**：正式使用前若要做 **ENCUT/KSPACING** 系统收敛，**须用户明确同意**后再载入 **`convergence`**。
 - **参数先查本地**：先查 **`references/incar_adsorption.md`** 与 **`troubleshooting.md`**；疑难再 **`literature`** 或联网。

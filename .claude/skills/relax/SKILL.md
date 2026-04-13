@@ -30,7 +30,7 @@ relax/
 - `duckduckgo_search` / `google_search`：搜索文档、参数建议、报错解决方案
 - `visit_webpage`：提取网页全文
 - `Skill` (`literature`)：检索特定材料的 DFT 计算参数文献及实验对比值
-- `Skill` (`encut_kspacing_convergence`)：对**固定 POSCAR** 做静态单点（`NSW=0`）**ENCUT** 与 **`KSPACING`** 收敛测试（1 meV/atom），产出 **`Convergence_Report.md`**。在需要严格确定截断能与 K 点网格、或与后续静态/EOS/带隙计算参数对齐时使用；**不**替代本 skill 中的离子松弛
+- `Skill` (`convergence`)：对**固定 POSCAR** 做静态单点（`NSW=0`）**ENCUT** 与 **`KSPACING`** 收敛测试（1 meV/atom），产出 **`Convergence_Report.md`**。在需要严格确定截断能与 K 点网格、或与后续静态/EOS/带隙计算参数对齐时使用；**不**替代本 skill 中的离子松弛
 - `setup_vasp_inputs`：生成 POTCAR 与 POSCAR 拷贝；若 **INCAR** 中含 **`KSPACING`** 则仅用 INCAR 定义 K 点、**不**生成 **KPOINTS**；否则按 `kpoints_density` 生成 **KPOINTS**
 - `Write` / `Edit`：生成和修改工作区文件
 - `Bash`：文件管理、运行后处理脚本
@@ -70,7 +70,7 @@ relax/
    - **材料体系**：化学式或材料名（如 `"BiFeO3"`）
    - **写入目标**：将返回的引用块追加写入本工作区的 `INCAR_explanation.md`
 
-3. **（可选）ENCUT / KSPACING 收敛**：若希望与文献或后续计算（EOS、带隙、静态能量）**严格可比**的 **ENCUT** 与 **KSPACING**，在写入松弛用 INCAR **之前**，**必须先询问用户**是否要进行 **ENCUT/KSPACING 收敛测试**（说明多步静态计算、耗时与机时），**停止并等待回复**。**不得**在未获用户同意时假定执行或自动载入收敛 skill。若用户**同意**，再载入 **`Skill: encut_kspacing_convergence`**（该 skill 内含执行前的用户确认流程），对**当前 POSCAR** 做静态单点收敛，将 **`Convergence_Report.md`** 中的参数填入松弛 **INCAR**。若用户**拒绝**或只关心几何优化，使用模板默认 **ENCUT/KSPACING**，并在 **`INCAR_explanation.md`** 中注明未做系统收敛。
+3. **（可选）ENCUT / KSPACING 收敛**：若希望与文献或后续计算（EOS、带隙、静态能量）**严格可比**的 **ENCUT** 与 **KSPACING**，在写入松弛用 INCAR **之前**，**必须先询问用户**是否要进行 **ENCUT/KSPACING 收敛测试**（说明多步静态计算、耗时与机时），**停止并等待回复**。**不得**在未获用户同意时假定执行或自动载入收敛 skill。若用户**同意**，再载入 **`Skill: convergence`**（该 skill 内含执行前的用户确认流程），对**当前 POSCAR** 做静态单点收敛，将 **`Convergence_Report.md`** 中的参数填入松弛 **INCAR**。若用户**拒绝**或只关心几何优化，使用模板默认 **ENCUT/KSPACING**，并在 **`INCAR_explanation.md`** 中注明未做系统收敛。
 
 ---
 
@@ -148,7 +148,7 @@ python scripts/analyze_result.py .
 
 - **禁止 monolithic 循环批量跑 VASP**：不得编写带 `for`/`while` 的 Bash/Python 一次提交多次松弛或多组参数；每次计算或续算均须单独提交并核查后再进行下一步。
 - **参数先查本地**：先查 `references/incar_params.md` 和 `troubleshooting.md`；本地未覆盖时调用 `Skill: literature` 检索，而非直接调用 `arxiv_search` 或搜索工具，确保结果结构化且带引用。
-- **ENCUT/K 点收敛**：需要生产级 **ENCUT** 与 **KSPACING**（1 meV/atom）时，**须先征得用户同意**再进入 **`encut_kspacing_convergence`**；该流程为**静态单点**，与离子步松弛分离，完成后将参数并入松弛 **INCAR**。
+- **ENCUT/K 点收敛**：需要生产级 **ENCUT** 与 **KSPACING**（1 meV/atom）时，**须先征得用户同意**再进入 **`convergence`**；该流程为**静态单点**，与离子步松弛分离，完成后将参数并入松弛 **INCAR**。
 - **物理严谨性**：时刻关注材料的电子结构分类（金属/半导体、磁性/非磁性），确保 ISMEAR/MAGMOM 等参数设置合理。
 - **续算而非重算**：离子步未收敛时，将 CONTCAR 复制为 POSCAR 续算，而不是从头开始。
 - **步骤透明**：每完成一个重要节点（获取结构、生成 INCAR、完成收敛检查），向用户简要汇报进度。

@@ -33,9 +33,8 @@ from webui.web_history import (
     todo_write_items_for_ui,
     write_user_turn_log,
 )
-from src.litellm_env import configure_anthropic_for_litellm
 from src.conversation_store import PERSIST_FILENAME, load_persist_context_for_prompt, persist_on_sdk_message
-from src.litellm_autostart import maybe_start_litellm
+from src.litellm_proxy import configure_anthropic_for_litellm, maybe_start_litellm
 
 load_dotenv(REPO_ROOT / ".env")
 

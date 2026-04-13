@@ -29,7 +29,7 @@ bandgap/
 - `duckduckgo_search` / `google_search`：搜索文档、论坛、参数建议
 - `visit_webpage`：提取网页全文
 - `Skill` (`literature`)：仅在**用户明确要求**时用于检索（见下文 **literature 调用规则**）
-- `Skill` (`encut_kspacing_convergence`)：对**固定结构**做 **ENCUT** 与 **`KSPACING`** 收敛（1 meV/atom，`NSW=0`），产出 **`Convergence_Report.md`**。PBE/HSE 共用同一套 **ENCUT** 与 **KSPACING** 前，若尚未收敛，**应优先**通过本 skill 确定参数，再写入 **`INCAR_pbe_scf`** / **`INCAR_hse`**
+- `Skill` (`convergence`)：对**固定结构**做 **ENCUT** 与 **`KSPACING`** 收敛（1 meV/atom，`NSW=0`），产出 **`Convergence_Report.md`**。PBE/HSE 共用同一套 **ENCUT** 与 **KSPACING** 前，若尚未收敛，**应优先**通过本 skill 确定参数，再写入 **`INCAR_pbe_scf`** / **`INCAR_hse`**
 - `get_poscar_from_md`：根据 Materials Project ID 获取 POSCAR
 - `setup_vasp_inputs`：生成 POTCAR 与 POSCAR 拷贝；若 **INCAR** 中含 **`KSPACING`** 则**不**生成 **KPOINTS**
 - Skill（`run_vasp`）：按该 skill 与系统 orchestration 规则运行 VASP（MCP 工具 `run_vasp` 已移除）
@@ -57,7 +57,7 @@ bandgap/
 
 若用户只有未优化的初始结构，建议先调用 `Skill`（`relax`）执行结构松弛。
 
-**与 `encut_kspacing_convergence` 的配合**：带隙计算依赖可靠的 **ENCUT** 与 **KSPACING**。若当前工作区**尚无**针对该松弛后结构的 **`Convergence_Report.md`**（或需重新收敛），在进入下方 **§3 PBE** 之前，**必须先询问用户**是否要进行 **ENCUT/KSPACING 收敛测试**（说明多步静态计算与机时），**停止并等待回复**。**不得**在未获用户同意时自动开始收敛。若用户**同意**，再载入 **`Skill: encut_kspacing_convergence`**（内含执行前确认），以**最终用于 PBE 的 POSCAR** 做静态收敛，再将 **ENCUT**、**KSPACING** 用于 PBE 与 HSE（两阶段必须一致）。若用户**拒绝**或仅做探索性计算，使用模板/初值 **ENCUT/KSPACING**，并在 **`HSE_INCAR_explanation.md`**（或等价说明）中注明未做系统收敛。
+**与 `convergence` 的配合**：带隙计算依赖可靠的 **ENCUT** 与 **KSPACING**。若当前工作区**尚无**针对该松弛后结构的 **`Convergence_Report.md`**（或需重新收敛），在进入下方 **§3 PBE** 之前，**必须先询问用户**是否要进行 **ENCUT/KSPACING 收敛测试**（说明多步静态计算与机时），**停止并等待回复**。**不得**在未获用户同意时自动开始收敛。若用户**同意**，再载入 **`Skill: convergence`**（内含执行前确认），以**最终用于 PBE 的 POSCAR** 做静态收敛，再将 **ENCUT**、**KSPACING** 用于 PBE 与 HSE（两阶段必须一致）。若用户**拒绝**或仅做探索性计算，使用模板/初值 **ENCUT/KSPACING**，并在 **`HSE_INCAR_explanation.md`**（或等价说明）中注明未做系统收敛。
 
 ---
 
@@ -76,7 +76,7 @@ bandgap/
 
 **目标**：获得高质量波函数（`WAVECAR`）和电荷密度（`CHGCAR`），供 HSE 续算使用。
 
-1. `Read templates/INCAR_pbe_scf`，按材料调整 **`ENCUT`** 与 **`KSPACING`**：优先采用 **`encut_kspacing_convergence`** 给出的收敛值；若无报告，可用 POTCAR 中最大 ENMAX × 1.3 作为 **ENCUT** 初值、模板 **KSPACING**，并在文档中说明未做系统收敛。**`KSPACING`**（及 **`KGAMMA`**）在 PBE 与后续 HSE 中必须一致
+1. `Read templates/INCAR_pbe_scf`，按材料调整 **`ENCUT`** 与 **`KSPACING`**：优先采用 **`convergence`** 给出的收敛值；若无报告，可用 POTCAR 中最大 ENMAX × 1.3 作为 **ENCUT** 初值、模板 **KSPACING**，并在文档中说明未做系统收敛。**`KSPACING`**（及 **`KGAMMA`**）在 PBE 与后续 HSE 中必须一致
 2. `Write INCAR`（覆写）
 3. `Bash`：`cp INCAR INCAR_pbe`（保留历史版本，不可省略）
 4. 调用 `setup_vasp_inputs` 准备 POTCAR（含 **`KSPACING`** 时不生成 **KPOINTS**）
@@ -144,6 +144,6 @@ bandgap/
 - **禁止 monolithic 循环批量跑 VASP**：不得编写带 `for`/`while` 的 Bash/Python 一次提交多阶段或多组 INCAR 的 VASP；须逐次提交并逐步核查（与本 skill 第 3、4 步顺序一致）。
 - **WAVECAR 连续性**：`ISTART=1` 是 HSE 阶段热启动的关键，绝不能在 HSE 阶段设 `ISTART=0`。
 - **ENCUT 一致性**：PBE 和 HSE 两阶段的 `ENCUT` 必须完全相同，否则 WAVECAR 无法读取。
-- **ENCUT / KSPACING 收敛**：正式带隙对比或发表级计算前，宜对松弛后结构做收敛；**须先征得用户同意**再载入 **`encut_kspacing_convergence`**，再贯穿 PBE 与 HSE；若用户选择不做，须在说明文档中声明风险。
+- **ENCUT / KSPACING 收敛**：正式带隙对比或发表级计算前，宜对松弛后结构做收敛；**须先征得用户同意**再载入 **`convergence`**，再贯穿 PBE 与 HSE；若用户选择不做，须在说明文档中声明风险。
 - **历史文件追溯**：`INCAR_pbe` 和 `INCAR_hse` 必须在工作区中同时存在，不允许静默覆盖。
 - **参数先查本地**：先查 `references/hse_params.md` 和 `references/troubleshooting.md`。本地未覆盖且**用户同意**用文献补 HSE 参数时，再按 §2 调用 `Skill: literature`。**实验带隙对比**仅在用户明确要求时调用 literature（见上文 **literature 调用规则**）；不得用 `arxiv_search` / `google_search` 替代用户未请求的实验对比。
