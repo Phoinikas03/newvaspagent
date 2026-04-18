@@ -21,9 +21,11 @@
 from __future__ import annotations
 
 import atexit
+from contextlib import suppress
 import importlib.util
 import json
 import os
+import signal
 import socket
 import subprocess
 import sys
@@ -230,17 +232,39 @@ def _build_yaml(model: str, api_base: str, api_key: str) -> str:
     )
 
 
-def _register_cleanup(proc: subprocess.Popen) -> None:
-    def _cleanup() -> None:
-        if proc.poll() is not None:
-            return
-        proc.terminate()
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
+# 自启 LiteLLM 子进程（``start_new_session=True`` 与父进程脱组，不能依赖「父进程退出内核顺带杀子」）
+_AUTOSTART_LITELLM_PROC: subprocess.Popen | None = None
+_AUTOSTART_CLEANUP_REGISTERED = False
 
-    atexit.register(_cleanup)
+
+def _kill_autostart_litellm_child() -> None:
+    global _AUTOSTART_LITELLM_PROC
+    proc = _AUTOSTART_LITELLM_PROC
+    _AUTOSTART_LITELLM_PROC = None
+    if proc is None or proc.poll() is not None:
+        return
+    proc.terminate()
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+
+
+def _register_autostart_cleanup(proc: subprocess.Popen) -> None:
+    global _AUTOSTART_LITELLM_PROC, _AUTOSTART_CLEANUP_REGISTERED
+    _AUTOSTART_LITELLM_PROC = proc
+    if _AUTOSTART_CLEANUP_REGISTERED:
+        return
+    _AUTOSTART_CLEANUP_REGISTERED = True
+    atexit.register(_kill_autostart_litellm_child)
+
+    def _on_sigterm(_signum: int, _frame: object) -> None:
+        """systemd/docker 等发 SIGTERM 时，先杀子进程再退出（仅 atexit 时子进程可能仍短暂存活）。"""
+        _kill_autostart_litellm_child()
+        sys.exit(143)
+
+    with suppress(AttributeError, ValueError, OSError):
+        signal.signal(signal.SIGTERM, _on_sigterm)
 
 
 def _litellm_package_available() -> bool:
@@ -384,7 +408,7 @@ def maybe_start_litellm(base_url: str, *, disable: bool = False) -> None:
         print(f"[llm] 启动 LiteLLM 失败: {e}", file=sys.stderr, flush=True)
         return
 
-    _register_cleanup(proc)
+    _register_autostart_cleanup(proc)
 
     deadline = time.monotonic() + 20.0
     while time.monotonic() < deadline:

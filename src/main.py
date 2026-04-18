@@ -597,7 +597,9 @@ async def web_main(
     ui = WebUI(port=port)
     ui.extend_history(prior_events)
     await ui.start()
-    print(f"网页界面: http://localhost:{port}")
+    if ui.port != port:
+        print(f"[web] 端口 {port} 已被占用，已改用 {ui.port}", flush=True)
+    print(f"网页界面: http://localhost:{ui.port}")
     print(f"工作目录: {workspace}")
     if resume:
         print(f"恢复会话: {resume}")

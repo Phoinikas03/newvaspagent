@@ -8,11 +8,21 @@ Exposes a single WebUI class that:
 """
 
 import asyncio
+import errno
 import json
 from aiohttp import web
 import aiohttp
 
 WEB_PORT = 8888
+# 首选端口被占用时，依次尝试 base+1 …（与 LiteLLM 4000 起扫端口思路一致）
+WEB_PORT_TRY_COUNT = 64
+
+
+def _is_address_in_use(err: OSError) -> bool:
+    if err.errno == errno.EADDRINUSE:
+        return True
+    w = getattr(errno, "WSAEADDRINUSE", None)
+    return w is not None and err.errno == w
 
 # ---------------------------------------------------------------------------
 # HTML / CSS / JS
@@ -644,7 +654,22 @@ class WebUI:
         app.router.add_get("/ws", self._ws_handler)
         self._runner = web.AppRunner(app)
         await self._runner.setup()
-        await web.TCPSite(self._runner, "0.0.0.0", self.port).start()
+        requested = int(self.port)
+        last: OSError | None = None
+        for p in range(requested, requested + WEB_PORT_TRY_COUNT):
+            try:
+                await web.TCPSite(self._runner, "0.0.0.0", p).start()
+                self.port = p
+                return
+            except OSError as e:
+                if not _is_address_in_use(e):
+                    raise
+                last = e
+        hi = requested + WEB_PORT_TRY_COUNT - 1
+        raise OSError(
+            errno.EADDRINUSE,
+            f"无法在 {requested}–{hi} 上绑定 Web UI（地址均被占用）",
+        ) from last
 
     async def stop(self) -> None:
         if self._runner:
