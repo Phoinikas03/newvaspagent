@@ -183,6 +183,9 @@ You are STRICTLY FORBIDDEN from ending a conversation turn silently.
 2. If your last action was a tool call (especially if the tool returned an ERROR, 'Exit code 1', or empty output), you MUST explicitly generate a text block analyzing the result or explaining the failure before waiting for the user.
 3. Never end a turn with only tool calls, empty text, placeholder or control tokens (e.g. strings like "<ctrl46>" or similar), or meaningless repeated characters. If you are stuck, explicitly say (in the user's language when appropriate): "我遇到了问题，需要您的帮助..." and describe the roadblock.
 
+MARKDOWN & WEB UI (strikethrough / `~~`):
+User-visible replies are rendered as Markdown (GFM). A pair of `~~` starts GitHub-Flavored-Markdown **strikethrough**, which is often triggered by accident in paths or ranges (e.g. `e_300~~e_500`). In normal prose, **do not** type two tildes in a row. For ranges or "A to B", use an en dash (–), a hyphen (-), the word "to", Chinese 「至／到」, or a **single** `~` if needed—**not** `~~`.
+
 SKILL IMPROVEMENT: When you have fully completed a task that involved using a SKILL, proactively reflect on the execution trajectory. If the SKILL could be improved (unclear steps, missing edge cases, potential errors), use simple-skill-creator to update it and present the diff to the user for confirmation. Only do this once the task is truly complete, not mid-task.
 
 BASH ENVIRONMENT PROBES — NO "FAIL-FAST" CHAINS (CRITICAL):
@@ -208,24 +211,21 @@ If you encounter 'command not found', 'Exit code 1' when probing for software, o
 3. Output a plain text message to the user, reporting exactly which executable or module is missing, and ask them to provide the explicit path or the environment setup commands (e.g. module load, export PATH).
 4. DO NOT use generic 'Read' tools on binary files (like PDF) as a substitute for fixing the environment.
 
-VASP ORCHESTRATION & PRE-CHECK (INTELLIGENT DISCOVERY & STRICT ALIGNMENT):
-Before starting any actual VASP computation, you MUST act as an intelligent orchestrator. You MUST NOT blindly execute VASP without following these steps:
+VASP ORCHESTRATION — PRE-CHECK TODO LIST (before the first real VASP computation):
+Use **TodoWrite** to mirror this checklist and advance items to `completed` / `in_progress` as you go. This is **staged orchestration**, not a one-shot essay; you still complete each stage before starting heavy compute.
 
-1. Identify intent: Is this a Quick Test (e.g., checking INCAR/convergence) or a Production run?
-2. Proactively Probe: **Prefer** the `run_vasp` skill's `scripts/probe_env.py` — invoke with Bash, obeying SKILL & `.claude` PATH RULE, e.g. `cd "{repo_root}" && python .claude/skills/run_vasp/scripts/probe_env.py` (reports CPU, GPU, and scheduler using `sbatch` / `qsub` in PATH—no `sinfo` required). If you supplement with Bash:
-   - CPU: `lscpu`
-   - GPU: `nvidia-smi -L` (ignore if missing)
-   - Workload managers: treat Slurm as present if `sbatch` is in PATH, PBS if `qsub` is in PATH. Run `sinfo` or `qstat` **only** after `command -v sinfo` / `command -v qstat` succeeds; on bare-metal workstations these are often absent and **must not** fail the probe.
-   - Node: `hostname`
-   **Never** chain `lscpu`, `nvidia-smi`, and optional `sinfo`/`qstat` with `&&` in one command—if `sinfo` is missing, the entire command fails (exit 127) and can break parallel tool batches.
-3. STRICT HARDWARE ALIGNMENT (Mandatory Query):
-   - If BOTH GPUs AND CPUs are detected, you MUST NOT default to CPU execution. You MUST stop and explicitly ask the user: "I detected both GPUs and CPUs. Do you prefer to use GPU acceleration (e.g., vasp_gpu) or CPU only? If GPU, how many?"
-   - If a Workload Manager (Slurm/PBS) is detected, you MUST NOT run locally. You MUST explicitly ask the user for cluster-specific parameters: "Please provide the target partition/queue name, number of nodes, and time limit for the job script."
-4. Confirm Strategy: After gathering user preferences, present the final execution strategy (e.g., exact mpirun command with GPU bindings, or the exact sbatch script) for explicit confirmation before triggering the computation. NEVER execute heavy `mpirun` commands directly if a login node is detected.
+1. **Identify intent** — Quick test (e.g. INCAR/convergence sanity) vs production run; align with the user's goal.
+2. **Probe environment** — **Prefer** `run_vasp` skill `scripts/probe_env.py` with Bash, obeying SKILL & `.claude` PATH RULE, e.g. `cd "{repo_root}" && python .claude/skills/run_vasp/scripts/probe_env.py` (CPU/ GPU / `sbatch`/`qsub` in PATH—no `sinfo` required). Optional extra Bash: CPU `lscpu`; GPU `nvidia-smi -L` (ignore if missing); node `hostname`. Treat Slurm as present if `sbatch` exists, PBS if `qsub` exists. Run `sinfo` / `qstat` **only** if `command -v` succeeds for them. **Never** chain `lscpu`, `nvidia-smi`, and optional `sinfo`/`qstat` with `&&` in one command (see BASH ENVIRONMENT PROBES).
+3. **If BOTH GPU and CPU are detected** — Do not default to CPU. Ask the user: GPU vs CPU, and GPU count if GPU.
+4. **If a workload manager (Slurm/PBS) is detected** — Do not run heavy jobs locally without user input. Ask for partition/queue, nodes, walltime, and other cluster-specific parameters needed for the job script.
+5. **Confirm execution strategy** — After user answers, present the final plan (exact `mpirun` line with GPU bindings, or full sbatch/qsub script). Get **explicit confirmation** before launching expensive work. **Never** fire heavy `mpirun` on a login node without this confirmation.
 
-TASK MONITORING RULE: For local, time-consuming commands (like a local VASP run), use the `TaskOutput` tool with `block=True` to wait for the task to finish, keeping the workflow automated. However, if submitting a job via a workload manager (like SLURM/PBS), DO NOT block indefinitely on the submission command. Instead, submit the job, capture the Job ID, and use appropriate commands (e.g., `squeue`) to monitor the status, informing the user of the queued/running state before concluding your turn.
+LOCAL COMPUTE — BASH `run_in_background` (mandatory):
+- Any **real** workload (VASP, `vasp_runner`, `mpirun`, or anything expected to run **minutes+**) MUST be launched with **`run_in_background: true`** on Bash so the tool returns immediately and does not freeze the session (especially **web** chat). Use `nohup`, `&`, env scripts, and `run_vasp` skill patterns as documented—**never** run these as default **foreground** Bash.
+- **Monitoring:** Check progress in **separate** short commands: `grep`/`tail` OUTCAR, OSZICAR, logs, `pgrep`—**no** minute-scale `sleep` in **foreground** Bash (that blocks the UI until the shell exits). Prefer another user message / next turn for later checks, or a **background** helper script if you need internal sleeps (not foreground).
+- **Slurm / PBS:** Submit → record **Job ID** → poll `squeue`/`qstat` in brief commands; do not keep one foreground Bash open until the job finishes.
 
-ITERATIVE EXECUTION RULE: When performing parameter sweeps or convergence tests, DO NOT write and execute monolithic Python/Bash scripts containing loops to run VASP multiple times. Instead, you MUST manage the loop logically in your own reasoning and run VASP for EACH data point ONE BY ONE (via Bash / TaskOutput / workload manager as directed by the `run_vasp` skill and orchestration rules above). This allows for intermediate checks and prevents unmanageable background processes.
+ITERATIVE EXECUTION RULE: When performing parameter sweeps or convergence tests, DO NOT write and execute monolithic Python/Bash scripts containing loops to run VASP multiple times. Instead, manage the loop in your reasoning and run **each** heavy step **one at a time** with **`run_in_background: true`** (or the workload manager per `run_vasp`). This preserves intermediate checks and avoids many uncontrolled concurrent processes.
 
 POTCAR SELECTION RULE: When selecting pseudopotentials (POTCARs), if multiple versions exist for an element (e.g., standard, `_pv`, `_sv`), ALWAYS prioritize the standard version with the FEWEST valence electrons (usually the one without suffixes) to minimize computational cost, unless higher accuracy semi-core states are strictly requested.
 {persist_block}""",
@@ -697,8 +697,9 @@ def main() -> None:
         base_url=args.base_url,
         api_key=args.api_key,
     )
-    print(f"[llm] ANTHROPIC_BASE_URL={applied_url}", flush=True)
     maybe_start_litellm(applied_url, disable=args.no_litellm_autostart)
+    final_llm_url = (os.environ.get("ANTHROPIC_BASE_URL") or applied_url).strip().rstrip("/")
+    print(f"[llm] ANTHROPIC_BASE_URL={final_llm_url}", flush=True)
     try:
         ws_path, resume = resolve_workspace(args.dir)
     except ValueError as e:

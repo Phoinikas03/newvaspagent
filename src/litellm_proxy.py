@@ -7,14 +7,15 @@
    并合并 ``NO_PROXY``，避免本机地址被系统代理劫持。
 
 2. **``maybe_start_litellm``**（按需子进程）  
-   当 ``BASE_URL`` 指向本机且端口未监听、且配置了 ``UPSTREAM_*`` 时，写 ``litellm_autostart_config.yaml``，
-   并 ``python -m src.litellm_proxy`` 拉起 LiteLLM，把 **Anthropic 协议** 转为 **上游**（OpenAI 兼容等）。
+   当 ``BASE_URL`` 指向本机、且配置了 ``UPSTREAM_*`` 时，从 **4000** 起寻找第一个空闲端口，
+   更新 ``ANTHROPIC_BASE_URL`` 为该端口，写 ``litellm_autostart_config.yaml`` 并拉起 LiteLLM（与已有实例隔离）。
 
 3. **子进程入口**（``__main__``）  
    启动 LiteLLM 与官方 CLI 一致，并打补丁使 Anthropic ``/v1/messages`` 走 ``/v1/chat/completions``，
    避免仅支持 Chat Completions 的中转在 ``/v1/responses`` 上失败。
 
 ``.env`` 中常见变量：``BASE_URL`` / ``API_KEY``（→ Agent）；``UPSTREAM_MODEL`` / ``UPSTREAM_API_BASE`` / ``UPSTREAM_API_KEY``（→ 上游）。
+``UPSTREAM_API_BASE`` 可写 ``https://host`` 或 ``https://host/v1``；写入 LiteLLM 前会去掉末尾 ``/v1``，避免与 LiteLLM 内置路径拼成 ``/v1/v1/...``。
 仍兼容旧名 ``ANTHROPIC_BASE_URL`` / ``ANTHROPIC_API_KEY``。
 """
 from __future__ import annotations
@@ -37,6 +38,31 @@ LOG_PATH = REPO_ROOT / "litellm_autostart.log"
 # 与常见 litellm --port 4000 一致（Agent → 本机 LiteLLM）
 DEFAULT_LITELLM_BASE_URL = "http://127.0.0.1:4000"
 DEFAULT_LITELLM_API_KEY = "sk-dummy-key"
+
+# 自启 LiteLLM 时从该端口起寻找第一个未被占用的端口（4000→4001→…）
+LITELLM_AUTOSTART_PORT_MIN = 4000
+LITELLM_AUTOSTART_PORT_SCAN_MAX = 1000
+
+# 用户已写 ``provider/model`` 且 provider 已知则原样使用；否则按模型 ID 推断：
+# 含 claude → anthropic；含 gemini → gemini；其余 → openai
+_LITELLM_KNOWN_PROVIDER_PREFIXES = frozenset(
+    {
+        "openai",
+        "azure",
+        "anthropic",
+        "vertex_ai",
+        "vertex_ai_beta",
+        "gemini",
+        "bedrock",
+        "ollama",
+        "huggingface",
+        "deepseek",
+        "mistral",
+        "cohere",
+        "openrouter",
+        "databricks",
+    }
+)
 
 
 def _env_url() -> str | None:
@@ -130,13 +156,75 @@ def port_is_listening(host: str, port: int, timeout: float = 0.35) -> bool:
         return False
 
 
+def first_free_port(
+    host: str,
+    *,
+    start: int = LITELLM_AUTOSTART_PORT_MIN,
+    max_scan: int = LITELLM_AUTOSTART_PORT_SCAN_MAX,
+) -> int | None:
+    """
+    从 ``start`` 起递增，返回第一个 **当前无服务监听** 的端口（本机可 bind）。
+    若连续 ``max_scan`` 个端口均被占用则返回 ``None``。
+    """
+    end = start + max_scan
+    for port in range(start, end):
+        if not port_is_listening(host, port, timeout=0.12):
+            return port
+    return None
+
+
+def normalize_upstream_api_base_for_litellm(api_base: str) -> str:
+    """
+    LiteLLM 会在 ``api_base`` 后拼接 ``/v1/messages``、``/v1/chat/completions`` 等。
+    若 ``UPSTREAM_API_BASE`` 已以 ``/v1`` 结尾，会变成 ``.../v1/v1/...``，此处去掉末尾的 ``/v1``（可重复去至稳定）。
+    """
+    u = api_base.strip().rstrip("/")
+    while u.lower().endswith("/v1"):
+        u = u[:-3].rstrip("/")
+    return u
+
+
+def _infer_litellm_provider_from_model_id(model_id: str) -> str:
+    """
+    根据裸模型 ID 推断 LiteLLM 的 provider 前缀（小写比较）。
+    Claude 系 → anthropic；Gemini → gemini；其它 → openai。
+    """
+    s = model_id.strip().lower()
+    if "gemini" in s:
+        return "gemini"
+    if "claude" in s:
+        return "anthropic"
+    return "openai"
+
+
+def normalize_upstream_model_for_litellm(model: str) -> str:
+    """补全 ``provider/model``：已知前缀保留；否则按模型 ID 推断 anthropic / gemini / openai。"""
+    m = model.strip()
+    if not m:
+        return m
+    if "/" in m:
+        prov, rest = m.split("/", 1)
+        prov_l = prov.strip().lower()
+        rest = rest.strip()
+        if not rest:
+            return m
+        if prov_l in _LITELLM_KNOWN_PROVIDER_PREFIXES:
+            return f"{prov_l}/{rest}"
+        p = _infer_litellm_provider_from_model_id(rest)
+        return f"{p}/{rest}"
+    p = _infer_litellm_provider_from_model_id(m)
+    return f"{p}/{m}"
+
+
 def _build_yaml(model: str, api_base: str, api_key: str) -> str:
+    normalized = normalize_upstream_model_for_litellm(model)
+    base = normalize_upstream_api_base_for_litellm(api_base)
     return (
         "model_list:\n"
         '  - model_name: "*"\n'
         "    litellm_params:\n"
-        f"      model: {json.dumps(model)}\n"
-        f"      api_base: {json.dumps(api_base)}\n"
+        f"      model: {json.dumps(normalized)}\n"
+        f"      api_base: {json.dumps(base)}\n"
         f"      api_key: {json.dumps(api_key)}\n"
         "      drop_params: true\n"
     )
@@ -191,17 +279,19 @@ def run_litellm_proxy_main() -> int:
 
 def maybe_start_litellm(base_url: str, *, disable: bool = False) -> None:
     """
-    若 ``disable`` 为真，或 ``base_url`` 非本机，或端口已可连，则直接返回。
-    否则在具备 ``UPSTREAM_*`` 时写入配置并启动本模块子进程（LiteLLM）。
+    若 ``disable`` 为真，或 ``base_url`` 非本机，则直接返回。
+    否则在具备 ``UPSTREAM_*`` 时：从 **4000** 起选第一个空闲端口，写 ``ANTHROPIC_BASE_URL`` 并启动子进程 LiteLLM。
+
+    若需使用已手动启动的代理（例如固定占用 4000），请使用 ``--no-litellm-autostart``。
 
     Args:
-        base_url: 与 ``configure_anthropic_for_litellm`` 生效后的 ``ANTHROPIC_BASE_URL`` 一致。
+        base_url: 与 ``configure_anthropic_for_litellm`` 生效后的 ``ANTHROPIC_BASE_URL``（仅用于判断是否本机）。
         disable: 对应 ``--no-litellm-autostart``。
     """
     if disable:
         return
 
-    host, port = host_port_from_base_url(base_url)
+    host, _ignored_port = host_port_from_base_url(base_url)
     if not host or not _is_local_host(host):
         print(f"[llm] BASE_URL 非本机 ({host!r})，跳过 LiteLLM 自启", flush=True)
         return
@@ -210,13 +300,16 @@ def maybe_start_litellm(base_url: str, *, disable: bool = False) -> None:
     if connect_host == "::1":
         connect_host = "127.0.0.1"
 
-    if port_is_listening(connect_host, port):
-        print(f"[llm] 端口 {port} 已可连接，跳过 LiteLLM 自启", flush=True)
-        return
-
     model = (os.environ.get("UPSTREAM_MODEL") or "").strip()
     api_base = (os.environ.get("UPSTREAM_API_BASE") or "").strip()
     api_key = (os.environ.get("UPSTREAM_API_KEY") or "").strip()
+
+    _norm_model = normalize_upstream_model_for_litellm(model)
+    if model and _norm_model != model:
+        print(f"[llm] UPSTREAM_MODEL 规范化: {model!r} -> {_norm_model!r}", flush=True)
+    _norm_base = normalize_upstream_api_base_for_litellm(api_base)
+    if api_base and _norm_base != api_base.strip():
+        print(f"[llm] UPSTREAM_API_BASE 规范化: {api_base.strip()!r} -> {_norm_base!r}", flush=True)
 
     if not (model and api_base and api_key):
         print(
@@ -234,6 +327,21 @@ def maybe_start_litellm(base_url: str, *, disable: bool = False) -> None:
             flush=True,
         )
         return
+
+    port = first_free_port(connect_host)
+    if port is None:
+        print(
+            f"[llm] 自 {LITELLM_AUTOSTART_PORT_MIN} 起连续 {LITELLM_AUTOSTART_PORT_SCAN_MAX} "
+            "个端口均被占用，无法自启 LiteLLM。",
+            file=sys.stderr,
+            flush=True,
+        )
+        return
+
+    new_base = f"http://{connect_host}:{port}".rstrip("/")
+    os.environ["ANTHROPIC_BASE_URL"] = new_base
+    _merge_no_proxy_for_url(new_base)
+    print(f"[llm] 自启 LiteLLM 选用空闲端口: {port}（已设置 ANTHROPIC_BASE_URL={new_base}）", flush=True)
 
     CONFIG_PATH.write_text(_build_yaml(model, api_base, api_key), encoding="utf-8")
 

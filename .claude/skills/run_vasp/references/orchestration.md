@@ -15,6 +15,8 @@
 
 **与主 SKILL 对齐**：一般 **GPU 版 VASP** 下 **1 MPI rank ↔ 1 GPU**；单卡单任务用 `mpirun -np 1`，可执行文件可为 **`vasp_gpu`**，也可为站点上的 **GPU 版 `vasp_std`**（如模块/路径中的 `vasp_std/gpu` 等）。完整规则见 `SKILL.md`「核心执行准则 §1」。
 
+**启动前门控（`vasp_runner.py`，本地且 `--gpu-per-task>0`）**：通过 `nvidia-smi` 查询每卡 **空闲显存** 与 **GPU 计算利用率**。默认要求 **memory.free ≥ 约 10 GiB**（`--min-gpu-free-mib`，传 `0` 关闭），且 **utilization.gpu 严格小于 10%**（`--max-gpu-util-percent`，传 `0` 关闭）。灵活队列会在两条件同时满足后再绑定 GPU；不满足则轮询等待或超时。
+
 ## 4. 可执行依赖探测（mpirun / VASP）
 `probe_env.py` 输出的 `dependencies` 字段包含：
 - `mpirun_found`

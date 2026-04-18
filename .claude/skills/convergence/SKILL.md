@@ -99,7 +99,8 @@ convergence_test/
 每个子目录内：放入对应 **POSCAR**、**INCAR**（该点上的 **ENCUT** 或 **KSPACING**），调用 **`setup_vasp_inputs`**（保证 **KSPACING** 在 INCAR 中、且无多余 **KPOINTS**），再 **`run_vasp`**。算完后：
 
 ```bash
-python /path/to/convergence/scripts/check_convergence.py .
+# 在仓库根执行（与 system_prompt 中 SKILL & `.claude` PATH RULE 一致）：
+cd "<Repository root>" && python .claude/skills/convergence/scripts/check_convergence.py "<含 OUTCAR 的子目录>"
 ```
 
 若 `electronic_converged` 为 false，勿用于收敛判定；先按 `references/convergence_rules.md` 与项目内其它 troubleshooting 调整 **NELM** / **ALGO** 等后重算该点。

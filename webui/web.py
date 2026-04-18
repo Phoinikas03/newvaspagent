@@ -602,7 +602,7 @@ function send() {
   setStatus('思考中...', true);
   curBubble = curMd = toolsStackEl = null;
   pendingText = '';
-  renderTodoPanel([]);
+  /* 不在此处清空 Todo：右侧列表由服务端下发的 todo_update 驱动；若清空会在下一轮首个 TodoWrite 之前长时间显示「暂无任务」。 */
 }
 
 inputEl.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
