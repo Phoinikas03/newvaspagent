@@ -1,7 +1,7 @@
 ---
 name: "vasp-lattice-constant-eos"
 description: "执行 VASP 平衡晶格常数计算和状态方程 (EOS) 拟合。EOS 前须征得用户同意后，再通过 convergence 做 ENCUT/KSPACING 收敛；否则采用用户指定或模板参数并注明。随后各向同性缩放、批量静态计算、拟合 EOS 得平衡晶格常数与体积。"
-version: "1.2.0"
+version: "1.2.1"
 ---
 
 # VASP 平衡晶格常数与 EOS 计算工作流 (Lattice Constant & EOS Workflow)
@@ -31,7 +31,7 @@ lattice_constant/
 - `Skill` (`literature`)：检索特定材料的可靠实验晶格常数及标准 EOS 拟合文献
 - `get_poscar_from_md`：根据特定材料生成或获取初始 POSCAR
 - `setup_vasp_inputs`：生成 POTCAR；若 **INCAR** 含 **`KSPACING`** 则**不**生成 **KPOINTS**
-- Skill（`run_vasp`）：按该 skill 与系统 orchestration 规则，用 Bash / `TaskOutput` / 作业调度运行 VASP（MCP 工具 `run_vasp` 已移除，勿再调用）
+- Skill（`run_vasp`）：按该 skill 与系统 orchestration 规则，用 Bash /（必要时）**非阻塞** `TaskOutput` / 作业调度运行 VASP（MCP 工具 `run_vasp` 已移除，勿再调用）
 - `Write` / `Edit`：生成和修改工作区文件
 - `Bash`：文件管理、运行预处理与后处理脚本
 - `Read` / `Grep`：读取日志和输出文件
@@ -39,6 +39,18 @@ lattice_constant/
 **VASP 启动（硬性）**：任何将执行 `mpirun`、直接调用 `vasp_std` / `vasp_gpu` 或等价命令的步骤，**必须先**通过工具调用 **`Skill: run_vasp`** 载入其全文，并按其中「核心执行准则」与用户已确认的 **GPU / CPU** 方案确定 `--np`、`--exe`、`--gpu-per-task`（及 `env_script`）。**严禁**在未执行上述步骤时，仅根据 `lscpu` 的「每 socket 核心数」等自拟 `mpirun -np 16`（或其它大核数）。用户已声明使用 **GPU 版 VASP** 时（可执行文件名仍可能是 `vasp_std`），须遵守 `run_vasp` 中的 **GPU：通常 1 rank ↔ 1 GPU、单卡单任务用 `np=1` 并配合设备绑定**，不得按纯 CPU 逻辑分配 `-np`。
 
 注意：当前运行在无 GUI 的终端环境中。若需向用户提问，**直接输出纯文本问题并停止生成，等待用户在终端输入回复**。
+
+### Web / IDE：长计算不冻结界面（流程不变）
+
+本 skill 与前置 **`convergence`** 中的 **`vasp_runner.py`**（可多 `--dirs` **并行**）仍由你**完整编排**：提交、轮询直到结束、再读能量 / 跑 `check_convergence.py` / `fit_eos.py` 等步骤**一律不少**。
+
+为遵守仓库 **system_prompt** 的 **LOCAL COMPUTE** 规则并避免会话卡死：
+
+1. **启动**：对 **`vasp_runner.py`**（及任何分钟级 VASP 命令）使用 **`Bash` 且 `run_in_background: true`**。
+2. **等待完成**：**禁止**用 **`TaskOutput` + `block: true` + 超长 `timeout`**（例如数十万 ms）在**单次工具调用**里一直等到 VASP 结束——会整轮冻结 **Web / IDE**。**应**改用 **`TaskOutput` + `block: false`** 对同一 `task_id` **反复轮询**，直到 `completed` / 失败；若环境不支持非阻塞 `TaskOutput`，则用**每次几秒内返回**的 **Bash**（例如检查各目标目录 `OUTCAR` 是否已有终态能量行、相关 `vasp`/`mpirun` 进程是否仍存活）重复调用，直至本批任务全部就绪后再进入读结果与收敛检查。
+3. **禁止**在前景 Bash 里用**长 `sleep`**「等算完」（与 system_prompt 一致）。
+
+上述仅改变**等待方式**，不改变：并行目录集合、每点单独核查、禁止 monolithic `for` 内串行多点 VASP 等规则。
 
 ---
 
@@ -85,7 +97,7 @@ lattice_constant/
 对每个 `scale_x.xx` 子文件夹准备输入并提交计算（各目录可**并行**提交多个独立任务，**禁止**单个脚本在同一进程内 `for` 串行跑完所有 scale）：
 1. 复制模板与配置：将 `templates/INCAR_static` 拷贝至当前子目录，并填入 **`convergence`** 得到的 **`ENCUT`** 与 **`KSPACING`**。
 2. 调用 `setup_vasp_inputs` 准备与收敛测试一致的 POTCAR；**INCAR** 须含与收敛测试相同的 **`KSPACING`**，以便不生成 **KPOINTS**。
-3. 按 Skill `run_vasp` 与 orchestration 规则，用 Bash 或 `TaskOutput` 在该子目录**单独**提交并完成一次 VASP 计算（一点一任务）。
+3. 按 Skill `run_vasp` 与 orchestration 规则，用 Bash（`run_in_background: true`）及上文 **Web / IDE 等待规则** 在该子目录**单独**提交并完成一次 VASP 计算（一点一任务）；**禁止**长时间阻塞式 `TaskOutput` 冻结会话。
 4. 该目录计算结束后，`Bash`：`python scripts/check_convergence.py .`
    - 确认 `electronic_converged: true`。
    - 若未收敛，查阅 `references/troubleshooting.md`，可能需要增加 `NELM` 或调整 `ALGO` 算法后重试该点。

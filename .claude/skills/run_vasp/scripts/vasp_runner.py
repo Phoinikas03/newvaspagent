@@ -13,6 +13,8 @@ from pathlib import Path
 DEFAULT_MIN_GPU_FREE_MIB = 10240.0
 # 默认：GPU 计算利用率 utilization.gpu 须严格小于该百分数（与 nvidia-smi 一致）
 DEFAULT_MAX_GPU_UTIL_PERCENT = 10.0
+# 空卡判定：memory.used (MiB) 不超过该值时视为「空」，优先分配；0 表示不区分空卡（仅用门控）
+DEFAULT_EMPTY_GPU_MAX_USED_MIB = 512.0
 
 
 def verify_local_dependencies(exe: str, env_script: str = "") -> None:
@@ -100,6 +102,33 @@ def query_gpu_utilization_percent() -> dict[int, float]:
         try:
             util_raw = parts[1].replace("%", "").strip()
             out[int(parts[0])] = float(util_raw)
+        except ValueError:
+            continue
+    return out
+
+
+def query_gpu_used_mib() -> dict[int, float]:
+    """nvidia-smi：各 GPU 索引 -> memory.used (MiB)，用于「空卡」判定。"""
+    if not shutil.which("nvidia-smi"):
+        return {}
+    r = subprocess.run(
+        [
+            "nvidia-smi",
+            "--query-gpu=index,memory.used",
+            "--format=csv,noheader,nounits",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if r.returncode != 0:
+        return {}
+    out: dict[int, float] = {}
+    for line in r.stdout.strip().splitlines():
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) < 2:
+            continue
+        try:
+            out[int(parts[0])] = float(parts[1])
         except ValueError:
             continue
     return out
@@ -235,13 +264,17 @@ def build_mpirun_shell(
     return inner
 
 
-def _eligible_gpus_for_flex(
+def gpus_tier_load_ok(
     free_map: dict[int, float],
     util_map: dict[int, float],
     min_free_mib: float,
     max_util_percent: float,
 ) -> set[int]:
-    """同时满足显存与利用率门槛的 GPU 索引集合。"""
+    """
+    Tier B（可上卡）：同时满足
+    - memory.free >= min_free_mib（min_free_mib<=0 时不检查）
+    - utilization.gpu < max_util_percent（max_util_percent<=0 时不检查）
+    """
     ids = set(free_map.keys()) | set(util_map.keys())
     out: set[int] = set()
     for i in ids:
@@ -255,6 +288,57 @@ def _eligible_gpus_for_flex(
     return out
 
 
+def gpus_tier_empty(
+    free_map: dict[int, float],
+    util_map: dict[int, float],
+    used_map: dict[int, float],
+    min_free_mib: float,
+    max_util_percent: float,
+    empty_max_used_mib: float,
+) -> set[int]:
+    """
+    Tier A（空卡优先）：在 Tier B 基础上，memory.used <= empty_max_used_mib。
+    empty_max_used_mib <= 0 时返回空集，表示不启用空卡优先（仅用 Tier B）。
+    """
+    if empty_max_used_mib <= 0:
+        return set()
+    base = gpus_tier_load_ok(free_map, util_map, min_free_mib, max_util_percent)
+    out: set[int] = set()
+    for i in base:
+        if i not in used_map:
+            continue
+        if used_map[i] <= empty_max_used_mib:
+            out.add(i)
+    return out
+
+
+def pick_gpu_slot_two_tier(
+    assigned: set[int],
+    gpu_per_task: int,
+    free_map: dict[int, float],
+    util_map: dict[int, float],
+    used_map: dict[int, float],
+    min_free_mib: float,
+    max_util_percent: float,
+    empty_max_used_mib: float,
+) -> tuple[list[int] | None, str]:
+    """
+    先在一级（空卡）里找连续槽；没有再在二级（门控可满足）里找。
+    返回 (slot_or_None, reason) reason in {'empty', 'load_ok', 'none'}.
+    """
+    empty_set = gpus_tier_empty(
+        free_map, util_map, used_map, min_free_mib, max_util_percent, empty_max_used_mib
+    )
+    slot = pick_consecutive_gpu_slot(empty_set - assigned, gpu_per_task)
+    if slot is not None:
+        return slot, "empty"
+    load_ok = gpus_tier_load_ok(free_map, util_map, min_free_mib, max_util_percent)
+    slot = pick_consecutive_gpu_slot(load_ok - assigned, gpu_per_task)
+    if slot is not None:
+        return slot, "load_ok"
+    return None, "none"
+
+
 def run_local_gpu_flexible_queue(
     work_dirs: list[str],
     np: int,
@@ -265,10 +349,13 @@ def run_local_gpu_flexible_queue(
     max_util_percent: float,
     poll_sec: float,
     timeout_sec: float,
+    empty_max_used_mib: float,
 ) -> int:
     """
-    动态挑选当前满足空闲显存的 GPU；任务数多于可同时占用的卡时在进程内排队。
-    返回 0 表示全部子进程退出码为 0，否则为最大非零退出码（无子进程失败时为 0）。
+    本地 flex 调度（单 vasp_runner 进程内队列）：
+    1) 优先在「空卡」上起任务：满足 Tier B 门控，且 memory.used <= empty_max_used_mib；
+    2) 若无空槽，在仍满足 Tier B 的卡上起（可与其它作业共享显存，只要 free/util 过线）；
+    3) 若当前无可用槽，pending 在队列里轮询等待，直至有任务结束释放 assigned 或超时。
     """
     if gpu_per_task < 1:
         return 0
@@ -280,9 +367,11 @@ def run_local_gpu_flexible_queue(
     poll_sec = max(0.5, float(poll_sec))
 
     print(
-        "[flex-gpu] scheduler: assign GPUs by nvidia-smi memory.free + utilization.gpu; "
-        f"queue when tasks > available slots (min_free_mib={min_free_mib}, "
-        f"util must be < {max_util_percent if max_util_percent > 0 else 'off'}%).",
+        "[flex-gpu] scheduler: (1) prefer empty GPUs: tier-B gate + memory.used <= "
+        f"{empty_max_used_mib if empty_max_used_mib > 0 else 'OFF'} MiB; "
+        "(2) else tier-B only (memory.free >= min_free, util < max); "
+        "(3) queue until a slot frees. "
+        f"min_free_mib={min_free_mib}, util<{max_util_percent if max_util_percent > 0 else 'off'}%.",
         file=sys.stderr,
     )
 
@@ -307,6 +396,9 @@ def run_local_gpu_flexible_queue(
         while pending:
             free_map = query_gpu_free_mib()
             util_map = query_gpu_utilization_percent()
+            used_map = (
+                query_gpu_used_mib() if empty_max_used_mib > 0 else {}
+            )
             if min_free_mib > 0 and not free_map:
                 print(
                     "ERROR: flex-gpu needs nvidia-smi to query GPU memory.",
@@ -319,9 +411,17 @@ def run_local_gpu_flexible_queue(
                     file=sys.stderr,
                 )
                 return 1
-            eligible = _eligible_gpus_for_flex(free_map, util_map, min_free_mib, max_util_percent)
-            available = eligible - assigned
-            slot = pick_consecutive_gpu_slot(available, gpu_per_task)
+
+            slot, tier = pick_gpu_slot_two_tier(
+                assigned,
+                gpu_per_task,
+                free_map,
+                util_map,
+                used_map,
+                min_free_mib,
+                max_util_percent,
+                empty_max_used_mib,
+            )
             if slot is None:
                 break
             task_idx, wdir = pending.popleft()
@@ -348,7 +448,7 @@ def run_local_gpu_flexible_queue(
             )
             stall_start = None
             print(
-                f"[flex-gpu] start task {task_idx} CUDA_VISIBLE_DEVICES={cuda_vis} -> {log_file}",
+                f"[flex-gpu] start task {task_idx} tier={tier} CUDA_VISIBLE_DEVICES={cuda_vis} -> {log_file}",
                 file=sys.stderr,
             )
 
@@ -360,7 +460,7 @@ def run_local_gpu_flexible_queue(
                 stall_start = time.monotonic()
             elif timeout_sec > 0 and (time.monotonic() - stall_start) >= timeout_sec:
                 print(
-                    "ERROR: flex-gpu timeout: no GPU satisfied memory/util gates to start next task.",
+                    "ERROR: flex-gpu timeout: no GPU satisfied gates to start next task.",
                     file=sys.stderr,
                 )
                 return 1
@@ -468,6 +568,15 @@ if __name__ == "__main__":
             "启动前要求所涉 GPU 同时满足 min_free_mib；默认关闭，使用灵活队列调度"
         ),
     )
+    parser.add_argument(
+        "--empty-gpu-max-used-mib",
+        type=float,
+        default=DEFAULT_EMPTY_GPU_MAX_USED_MIB,
+        help=(
+            "flex 调度优先「空卡」：memory.used (MiB) 需 <= 该值且满足 min_free/util 才算空卡。"
+            f" 默认 {DEFAULT_EMPTY_GPU_MAX_USED_MIB:.0f}；传 0 关闭空卡优先（仅用 min_free+util 选卡）"
+        ),
+    )
     args = parser.parse_args()
 
     run_script_path = Path("vasp_orchestration_run.sh")
@@ -485,6 +594,7 @@ if __name__ == "__main__":
                 args.max_gpu_util_percent,
                 max(1.0, args.gpu_ready_poll_sec),
                 max(0.0, args.gpu_ready_timeout_sec),
+                args.empty_gpu_max_used_mib,
             )
             if rc != 0:
                 print(

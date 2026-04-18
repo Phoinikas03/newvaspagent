@@ -1,7 +1,7 @@
 ---
 name: "vasp-convergence"
 description: "对固定几何的单胞执行 VASP 静态单点能（NSW=0）下的截断能 ENCUT 与 INCAR 中 KSPACING 收敛测试，目标相邻步能量差 ≤1 meV/atom，输出 Convergence_Report.md 与推荐生产参数。适用于 EOS、带隙扫描、一般静态能量对比等任意需要先收敛 ENCUT/K 点的前置步骤。"
-version: "1.1.0"
+version: "1.1.1"
 ---
 
 # VASP 截断能与 K 点收敛（ENCUT & KSPACING Convergence）
@@ -85,6 +85,9 @@ convergence/
 - **允许**：多个彼此独立的测试点作为**多个独立任务**并行提交（各子目录各自一次 `run_vasp`/作业）。
 - **禁止**：**单个** Bash/Python 脚本、**单次**作业或**同一进程**内用 `for`/`while` **串行**跑完所有测试点。
 - 判定：各点计算**结束后**再读能量；若下一步依赖上一步结果，由 Agent **逐步推理**，与「多点可否并行」不矛盾。
+
+**Web / IDE：等待本批 `vasp_runner` 时不要冻结界面（流程不变）**  
+仍由你**完整负责**提交与本批全部结束后的读 OUTCAR / `check_convergence.py` / 能量表。启动 `vasp_runner.py` 须 **`Bash` + `run_in_background: true`**。**禁止**用 **`TaskOutput` + `block: true` + 超长 `timeout`** 单次等到结束（会卡死 Web/IDE 整轮）。改用 **`TaskOutput` + `block: false` 轮询**同一 `task_id`，或**每次几秒内返回**的 Bash 检查各子目录 `OUTCAR`/进程，重复直至就绪后再判定能量；**禁止**前景 Bash **长 `sleep`** 等 VASP（见仓库 system_prompt **LOCAL COMPUTE**）。
 
 **建议目录布局**（可在当前 workspace 根目录或 `convergence_test/` 下）：
 
