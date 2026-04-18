@@ -1,7 +1,7 @@
 ---
 name: run-vasp
 description: "环境与硬件感知下编排 VASP：探针 mpirun/vasp_std/vasp_gpu、STRICT HARDWARE ALIGNMENT（GPU 与 CPU 共存 / Slurm 分叉）、GPU 映射（通常 1 rank↔1 GPU）、ITERATIVE 分批调用 vasp_runner、执行前向用户展示完整命令并取得同意。凡在本工作区使用 mpirun、vasp_std、vasp_gpu、Slurm/PBS 提交或 vasp_runner.py 时必须加载本 skill；lattice_constant、relax、bandgap、adsorption_energy、literature、supercell 等材料类 skill 在真正启动 VASP 前也必须先加载本 skill。"
-version: "1.0.1"
+version: "1.0.2"
 ---
 
 # Skill: Run VASP (Intelligent Orchestrator)
@@ -76,6 +76,7 @@ version: "1.0.1"
 
 ### Step 4: 执行与追踪 (Execution & Tracking)
 - 与用户确认策略与 **env_script** 后，先完成 **「核心执行准则 §2」**：展示硬件摘要与**完整拟执行命令**（或作业脚本内 `mpirun` 片段），**取得用户明确同意**，再通过 Bash 调用 `python .claude/skills/run_vasp/scripts/vasp_runner.py`（传入 `--dirs`、`--mode`、`--np`、`--exe`、`--env-script`、`--gpu-per-task` 等）或提交 Slurm/PBS。
+- **`vasp_runner` 已启动后的等待方式（与仓库 system_prompt 一致）：** Bash 必须使用 **`run_in_background: true`**。**禁止**用 **`TaskOutput` + `block: true` + 超长 `timeout`** 单次阻塞到 VASP 结束（会冻结 Web/IDE）。须在仍由你亲自轮询直至完成的前提下，使用 **`TaskOutput` + `block: false`** 反复查询同一 `task_id`，或多次**短时** Bash（各 `--dirs` 目录 `OUTCAR` 终态、`pgrep` 等）；完成后再读日志与做下游检查。
 - 告知用户日志路径；Slurm 场景用 `squeue -u $USER` 等帮助追踪队列状态。
 - **与项目 ITERATIVE EXECUTION RULE 对齐**：若上游 skill 要求**逐点**收敛（多 ENCUT/K 点）或**逐目录**核查（如多个 `scale_*`），**禁止**单次 `vasp_runner.py --dirs` 把全部点或全部目录一次性排队跑完而不在中间读 OUTCAR/日志；应分多次调用（或每批少量目录），每步确认后再继续。
 
