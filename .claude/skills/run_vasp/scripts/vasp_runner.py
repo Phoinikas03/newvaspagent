@@ -11,6 +11,8 @@ from pathlib import Path
 
 # 默认：每块将使用的 GPU 至少空闲 10 GiB（MiB 与 nvidia-smi 一致）
 DEFAULT_MIN_GPU_FREE_MIB = 10240.0
+# 默认：GPU 计算利用率 utilization.gpu 须严格小于该百分数（与 nvidia-smi 一致）
+DEFAULT_MAX_GPU_UTIL_PERCENT = 10.0
 
 
 def verify_local_dependencies(exe: str, env_script: str = "") -> None:
@@ -75,6 +77,34 @@ def query_gpu_free_mib() -> dict[int, float]:
     return out
 
 
+def query_gpu_utilization_percent() -> dict[int, float]:
+    """nvidia-smi：各 GPU 索引 -> utilization.gpu（0–100）。"""
+    if not shutil.which("nvidia-smi"):
+        return {}
+    r = subprocess.run(
+        [
+            "nvidia-smi",
+            "--query-gpu=index,utilization.gpu",
+            "--format=csv,noheader,nounits",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if r.returncode != 0:
+        return {}
+    out: dict[int, float] = {}
+    for line in r.stdout.strip().splitlines():
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) < 2:
+            continue
+        try:
+            util_raw = parts[1].replace("%", "").strip()
+            out[int(parts[0])] = float(util_raw)
+        except ValueError:
+            continue
+    return out
+
+
 def gpu_indices_for_local_batch(num_tasks: int, gpu_per_task: int) -> list[int]:
     """本地并行时将要绑定的物理 GPU 索引（与 create_local_batch_script 中逻辑一致）。"""
     if gpu_per_task <= 0 or num_tasks <= 0:
@@ -90,48 +120,80 @@ def gpu_indices_for_local_batch(num_tasks: int, gpu_per_task: int) -> list[int]:
 def wait_for_min_free_gpu_memory(
     gpu_indices: list[int],
     min_free_mib: float,
+    max_util_percent: float,
     poll_sec: float,
     timeout_sec: float,
 ) -> None:
     """
-    在启动任务前等待：所列 GPU 的 memory.free 均 >= min_free_mib。
-    min_free_mib <= 0 时不检查。
+    在启动任务前等待：所列 GPU 同时满足
+    - memory.free >= min_free_mib（min_free_mib <= 0 时不检查显存）
+    - utilization.gpu < max_util_percent（max_util_percent <= 0 时不检查利用率）
     timeout_sec == 0 表示无限等待；>0 超时则打印 ERROR 并以码 1 退出。
     """
-    if min_free_mib <= 0 or not gpu_indices:
+    if not gpu_indices:
+        return
+    if min_free_mib <= 0 and max_util_percent <= 0:
         return
     t0 = time.monotonic()
     attempt = 0
     while True:
         attempt += 1
         free_map = query_gpu_free_mib()
-        if not free_map:
+        util_map = query_gpu_utilization_percent()
+        if min_free_mib > 0 and not free_map:
             print(
                 "ERROR: --min-gpu-free-mib is set but nvidia-smi is missing or failed.",
                 file=sys.stderr,
             )
             sys.exit(1)
+        if max_util_percent > 0 and not util_map:
+            print(
+                "ERROR: --max-gpu-util-percent is set but nvidia-smi is missing or failed.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
         bad: list[str] = []
         for idx in gpu_indices:
-            if idx not in free_map:
-                bad.append(f"GPU {idx} not present (only {len(free_map)} device(s))")
-                continue
-            f = free_map[idx]
-            if f < min_free_mib:
-                bad.append(f"GPU {idx} free {f:.0f} MiB < required {min_free_mib:.0f} MiB")
+            if min_free_mib > 0:
+                if idx not in free_map:
+                    bad.append(f"GPU {idx} not present (only {len(free_map)} device(s))")
+                    continue
+                f = free_map[idx]
+                if f < min_free_mib:
+                    bad.append(f"GPU {idx} free {f:.0f} MiB < required {min_free_mib:.0f} MiB")
+            if max_util_percent > 0:
+                if idx not in util_map:
+                    bad.append(f"GPU {idx} has no utilization reading")
+                    continue
+                u = util_map[idx]
+                if u >= max_util_percent:
+                    bad.append(
+                        f"GPU {idx} util {u:.0f}% >= limit {max_util_percent:.0f}% (need strictly less)"
+                    )
         if not bad:
-            parts = [f"GPU{i} free {free_map[i]:.0f} MiB" for i in gpu_indices]
-            print("GPU memory gate passed: " + "; ".join(parts), file=sys.stderr)
+            parts_mem = (
+                [f"GPU{i} free {free_map[i]:.0f} MiB" for i in gpu_indices]
+                if min_free_mib > 0
+                else []
+            )
+            parts_u = (
+                [f"GPU{i} util {util_map[i]:.0f}%" for i in gpu_indices]
+                if max_util_percent > 0
+                else []
+            )
+            msg = "GPU gate passed: " + "; ".join([*parts_mem, *parts_u])
+            print(msg, file=sys.stderr)
             return
         elapsed = time.monotonic() - t0
         if timeout_sec > 0 and elapsed >= timeout_sec:
             print(
-                "ERROR: GPU memory gate timeout (" + str(timeout_sec) + "s): " + "; ".join(bad),
+                "ERROR: GPU gate timeout (" + str(timeout_sec) + "s): " + "; ".join(bad),
                 file=sys.stderr,
             )
             sys.exit(1)
+        label = "[gpu-gate]"
         print(
-            f"[min-gpu-free-mib] wait #{attempt} ({elapsed:.0f}s): " + "; ".join(bad),
+            f"{label} wait #{attempt} ({elapsed:.0f}s): " + "; ".join(bad),
             file=sys.stderr,
         )
         time.sleep(poll_sec)
@@ -173,6 +235,26 @@ def build_mpirun_shell(
     return inner
 
 
+def _eligible_gpus_for_flex(
+    free_map: dict[int, float],
+    util_map: dict[int, float],
+    min_free_mib: float,
+    max_util_percent: float,
+) -> set[int]:
+    """同时满足显存与利用率门槛的 GPU 索引集合。"""
+    ids = set(free_map.keys()) | set(util_map.keys())
+    out: set[int] = set()
+    for i in ids:
+        if min_free_mib > 0:
+            if i not in free_map or free_map[i] < min_free_mib:
+                continue
+        if max_util_percent > 0:
+            if i not in util_map or util_map[i] >= max_util_percent:
+                continue
+        out.add(i)
+    return out
+
+
 def run_local_gpu_flexible_queue(
     work_dirs: list[str],
     np: int,
@@ -180,6 +262,7 @@ def run_local_gpu_flexible_queue(
     env_script: str,
     gpu_per_task: int,
     min_free_mib: float,
+    max_util_percent: float,
     poll_sec: float,
     timeout_sec: float,
 ) -> int:
@@ -197,8 +280,9 @@ def run_local_gpu_flexible_queue(
     poll_sec = max(0.5, float(poll_sec))
 
     print(
-        "[flex-gpu] scheduler: assign free GPUs by nvidia-smi memory.free; "
-        f"queue when tasks > available slots (min_free_mib={min_free_mib}).",
+        "[flex-gpu] scheduler: assign GPUs by nvidia-smi memory.free + utilization.gpu; "
+        f"queue when tasks > available slots (min_free_mib={min_free_mib}, "
+        f"util must be < {max_util_percent if max_util_percent > 0 else 'off'}%).",
         file=sys.stderr,
     )
 
@@ -222,16 +306,20 @@ def run_local_gpu_flexible_queue(
         # 尽量从队列中启动新任务
         while pending:
             free_map = query_gpu_free_mib()
-            if not free_map:
+            util_map = query_gpu_utilization_percent()
+            if min_free_mib > 0 and not free_map:
                 print(
                     "ERROR: flex-gpu needs nvidia-smi to query GPU memory.",
                     file=sys.stderr,
                 )
                 return 1
-            if min_free_mib > 0:
-                eligible = {i for i, f in free_map.items() if f >= min_free_mib}
-            else:
-                eligible = set(free_map.keys())
+            if max_util_percent > 0 and not util_map:
+                print(
+                    "ERROR: flex-gpu needs nvidia-smi to query GPU utilization.",
+                    file=sys.stderr,
+                )
+                return 1
+            eligible = _eligible_gpus_for_flex(free_map, util_map, min_free_mib, max_util_percent)
             available = eligible - assigned
             slot = pick_consecutive_gpu_slot(available, gpu_per_task)
             if slot is None:
@@ -272,7 +360,7 @@ def run_local_gpu_flexible_queue(
                 stall_start = time.monotonic()
             elif timeout_sec > 0 and (time.monotonic() - stall_start) >= timeout_sec:
                 print(
-                    "ERROR: flex-gpu timeout: no GPU satisfied min free memory to start next task.",
+                    "ERROR: flex-gpu timeout: no GPU satisfied memory/util gates to start next task.",
                     file=sys.stderr,
                 )
                 return 1
@@ -352,6 +440,15 @@ if __name__ == "__main__":
         ),
     )
     parser.add_argument(
+        "--max-gpu-util-percent",
+        type=float,
+        default=DEFAULT_MAX_GPU_UTIL_PERCENT,
+        help=(
+            "本地且 --gpu-per-task>0：所分配 GPU 的 utilization.gpu (%%) 须 **严格小于** 该值后再启动；"
+            f"默认 {DEFAULT_MAX_GPU_UTIL_PERCENT:.0f}。传 0 可关闭利用率检查"
+        ),
+    )
+    parser.add_argument(
         "--gpu-ready-poll-sec",
         type=float,
         default=10.0,
@@ -385,6 +482,7 @@ if __name__ == "__main__":
                 args.env_script,
                 args.gpu_per_task,
                 args.min_gpu_free_mib,
+                args.max_gpu_util_percent,
                 max(1.0, args.gpu_ready_poll_sec),
                 max(0.0, args.gpu_ready_timeout_sec),
             )
@@ -396,11 +494,14 @@ if __name__ == "__main__":
                 )
                 sys.exit(rc)
         else:
-            if args.gpu_per_task > 0 and args.fixed_gpu_layout and args.min_gpu_free_mib > 0:
+            if args.gpu_per_task > 0 and args.fixed_gpu_layout and (
+                args.min_gpu_free_mib > 0 or args.max_gpu_util_percent > 0
+            ):
                 indices = gpu_indices_for_local_batch(len(args.dirs), args.gpu_per_task)
                 wait_for_min_free_gpu_memory(
                     indices,
                     args.min_gpu_free_mib,
+                    args.max_gpu_util_percent,
                     max(1.0, args.gpu_ready_poll_sec),
                     max(0.0, args.gpu_ready_timeout_sec),
                 )
