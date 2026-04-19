@@ -1,0 +1,147 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1080" viewBox="0 0 1600 1080">
+  <defs>
+    <style>
+      .title { font: 700 34px "Arial", "PingFang SC", "Microsoft YaHei", sans-serif; fill: #17324d; }
+      .subtitle { font: 500 18px "Arial", "PingFang SC", "Microsoft YaHei", sans-serif; fill: #49637c; }
+      .section { font: 700 20px "Arial", "PingFang SC", "Microsoft YaHei", sans-serif; fill: #17324d; }
+      .label { font: 600 17px "Arial", "PingFang SC", "Microsoft YaHei", sans-serif; fill: #15324b; }
+      .text { font: 15px "Arial", "PingFang SC", "Microsoft YaHei", sans-serif; fill: #29465f; }
+      .small { font: 14px "Arial", "PingFang SC", "Microsoft YaHei", sans-serif; fill: #486178; }
+      .frame { fill: #f8fbff; stroke: #c8d8e8; stroke-width: 2; rx: 24; }
+      .boxBlue { fill: #e8f2ff; stroke: #5b8fd9; stroke-width: 2; rx: 18; }
+      .boxMint { fill: #e8faf5; stroke: #53a88f; stroke-width: 2; rx: 18; }
+      .boxAmber { fill: #fff5df; stroke: #c7962a; stroke-width: 2; rx: 18; }
+      .boxRose { fill: #fff0f1; stroke: #d27680; stroke-width: 2; rx: 18; }
+      .boxGray { fill: #f3f6f9; stroke: #8799ab; stroke-width: 2; rx: 18; }
+      .arrow { stroke: #56738f; stroke-width: 3; fill: none; marker-end: url(#arrow); }
+      .dash { stroke: #8da2b6; stroke-width: 2.5; fill: none; stroke-dasharray: 8 6; marker-end: url(#arrow); }
+    </style>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#56738f"/>
+    </marker>
+  </defs>
+
+  <rect x="24" y="24" width="1552" height="1032" class="frame"/>
+  <text x="56" y="78" class="title">VASP Agent 框架总览</text>
+  <text x="56" y="110" class="subtitle">入口调度、Agent 运行、工具能力、状态恢复与前端展示的关系图</text>
+
+  <rect x="60" y="150" width="1480" height="120" class="boxGray"/>
+  <text x="84" y="184" class="section">1. 用户入口</text>
+  <rect x="120" y="205" width="260" height="42" class="boxBlue"/>
+  <text x="150" y="232" class="label">CLI 用户 / Terminal</text>
+  <rect x="470" y="205" width="260" height="42" class="boxBlue"/>
+  <text x="510" y="232" class="label">Web 用户 / Browser</text>
+  <rect x="820" y="205" width="300" height="42" class="boxBlue"/>
+  <text x="856" y="232" class="label">main.py 仓库根入口</text>
+  <rect x="1210" y="205" width="260" height="42" class="boxBlue"/>
+  <text x="1248" y="232" class="label">src.main.main()</text>
+
+  <path d="M 380 226 L 470 226" class="arrow"/>
+  <path d="M 730 226 L 820 226" class="arrow"/>
+  <path d="M 1120 226 L 1210 226" class="arrow"/>
+
+  <rect x="60" y="300" width="460" height="430" class="boxBlue"/>
+  <text x="84" y="334" class="section">2. 启动与调度核心</text>
+
+  <rect x="90" y="358" width="400" height="84" class="boxGray"/>
+  <text x="110" y="388" class="label">parse_args()</text>
+  <text x="110" y="416" class="text">解析 --mode / --dir / --port / --base-url / --no-resume</text>
+
+  <rect x="90" y="458" width="400" height="98" class="boxGray"/>
+  <text x="110" y="488" class="label">LiteLLM 适配</text>
+  <text x="110" y="516" class="text">configure_anthropic_for_litellm()</text>
+  <text x="110" y="540" class="text">maybe_start_litellm()</text>
+
+  <rect x="90" y="572" width="400" height="138" class="boxGray"/>
+  <text x="110" y="602" class="label">工作区与恢复</text>
+  <text x="110" y="630" class="text">resolve_workspace() 解析 runs/ 目录</text>
+  <text x="110" y="654" class="text">从 log.txt 提取 session_id</text>
+  <text x="110" y="678" class="text">必要时注入 conversation_turns.jsonl</text>
+
+  <rect x="560" y="300" width="500" height="430" class="boxMint"/>
+  <text x="584" y="334" class="section">3. Agent 运行层</text>
+
+  <rect x="592" y="358" width="436" height="116" class="boxGray"/>
+  <text x="612" y="388" class="label">build_options()</text>
+  <text x="612" y="416" class="text">构建 ClaudeAgentOptions</text>
+  <text x="612" y="440" class="text">注入 system_prompt、MCP server、allowed_tools</text>
+
+  <rect x="592" y="494" width="436" height="98" class="boxGray"/>
+  <text x="612" y="524" class="label">ClaudeSDKClient</text>
+  <text x="612" y="552" class="text">query() 发起对话，receive_messages() 持续收消息</text>
+
+  <rect x="592" y="612" width="210" height="82" class="boxGray"/>
+  <text x="620" y="642" class="label">cli_main()</text>
+  <text x="620" y="668" class="text">终端事件循环</text>
+
+  <rect x="818" y="612" width="210" height="82" class="boxGray"/>
+  <text x="848" y="642" class="label">web_main()</text>
+  <text x="848" y="668" class="text">网页事件循环</text>
+
+  <rect x="1100" y="300" width="440" height="430" class="boxAmber"/>
+  <text x="1124" y="334" class="section">4. 工具与外部能力</text>
+
+  <rect x="1132" y="358" width="376" height="108" class="boxGray"/>
+  <text x="1152" y="388" class="label">src/tool_wrapper.py</text>
+  <text x="1152" y="416" class="text">把底层实现包装成 SDK Tool</text>
+  <text x="1152" y="440" class="text">并注入 workspace_dir / 默认参数</text>
+
+  <rect x="1132" y="486" width="376" height="160" class="boxGray"/>
+  <text x="1152" y="516" class="label">src/tool.py</text>
+  <text x="1152" y="544" class="text">get_poscar_impl / setup_vasp_inputs_impl</text>
+  <text x="1152" y="568" class="text">duckduckgo_search / google_search</text>
+  <text x="1152" y="592" class="text">visit_webpage / arxiv_search / semanticscholar</text>
+  <text x="1152" y="616" class="text">通过 asyncio.to_thread 执行阻塞 I/O</text>
+
+  <rect x="60" y="770" width="700" height="230" class="boxRose"/>
+  <text x="84" y="804" class="section">5. 状态、日志与恢复</text>
+
+  <rect x="90" y="828" width="190" height="118" class="boxGray"/>
+  <text x="114" y="858" class="label">log.txt</text>
+  <text x="114" y="886" class="text">记录用户输入</text>
+  <text x="114" y="910" class="text">记录 SDK 消息 repr</text>
+
+  <rect x="305" y="828" width="205" height="118" class="boxGray"/>
+  <text x="329" y="858" class="label">conversation_store.py</text>
+  <text x="329" y="886" class="text">写入 conversation_turns.jsonl</text>
+  <text x="329" y="910" class="text">为新会话注入历史上下文</text>
+
+  <rect x="535" y="828" width="195" height="118" class="boxGray"/>
+  <text x="559" y="858" class="label">result_message.py</text>
+  <text x="559" y="886" class="text">统一判断本轮成功/失败</text>
+
+  <rect x="800" y="770" width="740" height="230" class="boxBlue"/>
+  <text x="824" y="804" class="section">6. Web 展示层</text>
+
+  <rect x="830" y="828" width="220" height="118" class="boxGray"/>
+  <text x="860" y="858" class="label">webui/web.py</text>
+  <text x="860" y="886" class="text">HTTP 页面 + WebSocket</text>
+  <text x="860" y="910" class="text">input_queue + send()</text>
+
+  <rect x="1074" y="828" width="220" height="118" class="boxGray"/>
+  <text x="1096" y="858" class="label">web_history.py</text>
+  <text x="1096" y="886" class="text">历史回放</text>
+  <text x="1096" y="910" class="text">TodoWrite 映射到侧栏</text>
+
+  <rect x="1318" y="828" width="190" height="118" class="boxGray"/>
+  <text x="1348" y="858" class="label">Browser UI</text>
+  <text x="1348" y="886" class="text">聊天气泡</text>
+  <text x="1348" y="910" class="text">状态栏 / Todo 面板</text>
+
+  <path d="M 1210 247 L 290 358" class="arrow"/>
+  <path d="M 1210 247 L 810 358" class="arrow"/>
+  <path d="M 1210 247 L 1320 358" class="arrow"/>
+
+  <path d="M 490 641 L 560 641" class="arrow"/>
+  <path d="M 1060 641 L 1100 641" class="arrow"/>
+  <path d="M 810 474 L 810 494" class="arrow"/>
+  <path d="M 697 592 L 697 612" class="arrow"/>
+  <path d="M 923 592 L 923 612" class="arrow"/>
+
+  <path d="M 700 694 L 700 828" class="dash"/>
+  <path d="M 923 694 L 940 828" class="dash"/>
+  <path d="M 510 886 L 800 886" class="arrow"/>
+  <path d="M 1294 886 L 1318 886" class="arrow"/>
+
+  <text x="84" y="1034" class="small">主干思想：CLI 与 Web 共用同一个 Agent 核心；日志、恢复、工具注册围绕 src/main.py 聚合；Web 额外负责可视化回放与状态投影。</text>
+</svg>
