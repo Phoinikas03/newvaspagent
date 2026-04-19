@@ -1,0 +1,132 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1380" viewBox="0 0 1800 1380">
+  <defs>
+    <style>
+      .title { font: 700 36px "Arial", "PingFang SC", "Microsoft YaHei", sans-serif; fill: #17324d; }
+      .subtitle { font: 500 18px "Arial", "PingFang SC", "Microsoft YaHei", sans-serif; fill: #4c667e; }
+      .section { font: 700 22px "Arial", "PingFang SC", "Microsoft YaHei", sans-serif; fill: #18324c; }
+      .label { font: 700 18px "Arial", "PingFang SC", "Microsoft YaHei", sans-serif; fill: #14304a; }
+      .text { font: 15px "Arial", "PingFang SC", "Microsoft YaHei", sans-serif; fill: #2d4861; }
+      .small { font: 14px "Arial", "PingFang SC", "Microsoft YaHei", sans-serif; fill: #557086; }
+      .frame { fill: #f8fbff; stroke: #cad8e5; stroke-width: 2; rx: 26; }
+      .groupBlue { fill: #edf5ff; stroke: #73a0de; stroke-width: 2; rx: 24; }
+      .groupMint { fill: #edfdf7; stroke: #66b49a; stroke-width: 2; rx: 24; }
+      .groupAmber { fill: #fff7e7; stroke: #d0a245; stroke-width: 2; rx: 24; }
+      .groupRose { fill: #fff1f3; stroke: #d9808b; stroke-width: 2; rx: 24; }
+      .groupGray { fill: #f3f6f9; stroke: #97a6b5; stroke-width: 2; rx: 24; }
+      .skillBlue { fill: #e4f0ff; stroke: #5f8fd3; stroke-width: 2; rx: 18; }
+      .skillMint { fill: #e6faf3; stroke: #55aa90; stroke-width: 2; rx: 18; }
+      .skillAmber { fill: #fff2d4; stroke: #c7962a; stroke-width: 2; rx: 18; }
+      .skillRose { fill: #ffe9ed; stroke: #d06f7c; stroke-width: 2; rx: 18; }
+      .skillGray { fill: #eef2f6; stroke: #8798a9; stroke-width: 2; rx: 18; }
+    </style>
+  </defs>
+
+  <rect x="24" y="24" width="1752" height="1332" class="frame"/>
+  <text x="60" y="78" class="title">VASP Agent Skills 总览</text>
+  <text x="60" y="110" class="subtitle">按职责划分技能，并标出常见依赖关系：先准备结构与参数，再进入 VASP 工作流；真正启动计算前统一经过 run_vasp</text>
+
+  <rect x="70" y="150" width="1660" height="198" class="groupGray"/>
+  <text x="96" y="190" class="section">底座技能：所有 VASP 真正开跑前都要经过它</text>
+  <rect x="180" y="220" width="1440" height="98" class="skillGray"/>
+  <text x="210" y="252" class="label">run_vasp</text>
+  <text x="210" y="278" class="text">
+    <tspan x="210" dy="0">环境探针、CPU/GPU/Slurm 分叉、命令确认、vasp_runner 分批执行、进程安全，</tspan>
+    <tspan x="210" dy="22">是所有材料计算技能的统一执行编排层。</tspan>
+  </text>
+
+  <rect x="70" y="380" width="500" height="520" class="groupBlue"/>
+  <text x="96" y="410" class="section">A. 结构准备类</text>
+
+  <rect x="104" y="448" width="432" height="116" class="skillBlue"/>
+  <text x="130" y="474" class="label">relax</text>
+  <text x="130" y="500" class="text">做结构松弛，生成可靠的弛豫后结构。</text>
+  <text x="130" y="524" class="text">
+    <tspan x="130" dy="0">适合“先优化晶体结构，</tspan>
+    <tspan x="130" dy="22">再做后续静态/HSE/EOS”的入口场景。</tspan>
+  </text>
+
+  <rect x="104" y="590" width="432" height="116" class="skillBlue"/>
+  <text x="130" y="626" class="label">supercell</text>
+  <text x="130" y="652" class="text">
+    <tspan x="130" dy="0">按倍数扩胞，输出更大的 POSCAR 结构，</tspan>
+    <tspan x="130" dy="22">常用于表面、缺陷、尺寸效应准备。</tspan>
+  </text>
+
+  <rect x="104" y="732" width="432" height="140" class="skillBlue"/>
+  <text x="130" y="768" class="label">adsorption_energy</text>
+  <text x="130" y="794" class="text">
+    <tspan x="130" dy="0">围绕表面吸附能做三步工作流：</tspan>
+    <tspan x="130" dy="22">气相分子、洁净表面、吸附体系。</tspan>
+  </text>
+  <text x="130" y="838" class="text">常依赖已准备好的 slab / supercell，也可能先做 relax。</text>
+
+  <rect x="650" y="380" width="500" height="520" class="groupMint"/>
+  <text x="676" y="410" class="section">B. 参数与知识支撑类</text>
+
+  <rect x="684" y="448" width="432" height="116" class="skillMint"/>
+  <text x="710" y="474" class="label">convergence</text>
+  <text x="710" y="500" class="text">
+    <tspan x="710" dy="0">固定结构下做 ENCUT / KSPACING 收敛，</tspan>
+    <tspan x="710" dy="22">给后续生产计算提供统一参数基线。</tspan>
+  </text>
+  <text x="710" y="544" class="text">是 EOS、bandgap、严谨静态能量比较的前置技能。</text>
+
+  <rect x="684" y="590" width="432" height="116" class="skillMint"/>
+  <text x="710" y="626" class="label">literature</text>
+  <text x="710" y="652" class="text">
+    <tspan x="710" dy="0">查实验值、文献参数、方法学依据，</tspan>
+    <tspan x="710" dy="22">并整理成可引用的说明块。</tspan>
+  </text>
+
+  <rect x="684" y="732" width="432" height="140" class="skillMint"/>
+  <text x="710" y="768" class="label">pdf</text>
+  <text x="710" y="794" class="text">
+    <tspan x="710" dy="0">处理 PDF 读写、提取、合并、OCR、表单等，</tspan>
+    <tspan x="710" dy="22">是文献文件层面的通用辅助工具。</tspan>
+  </text>
+  <text x="710" y="838" class="text">它本身不负责 VASP 计算，只在任务涉及 PDF 时介入。</text>
+
+  <rect x="1230" y="380" width="500" height="520" class="groupAmber"/>
+  <text x="1256" y="410" class="section">C. 核心计算工作流类</text>
+
+  <rect x="1264" y="448" width="432" height="116" class="skillAmber"/>
+  <text x="1290" y="474" class="label">bandgap</text>
+  <text x="1290" y="500" class="text">
+    <tspan x="1290" dy="0">PBE 预计算 + HSE 续算，</tspan>
+    <tspan x="1290" dy="22">提取高精度带隙与跃迁类型。</tspan>
+  </text>
+  <text x="1290" y="544" class="text">常以前一步 relax 的结构为起点，也常配合 convergence 统一参数。</text>
+
+  <rect x="1264" y="590" width="432" height="140" class="skillAmber"/>
+  <text x="1290" y="626" class="label">lattice_constant</text>
+  <text x="1290" y="652" class="text">
+    <tspan x="1290" dy="0">通过多组缩放结构 + EOS 拟合，</tspan>
+    <tspan x="1290" dy="22">求平衡晶格常数、体积与能量曲线。</tspan>
+  </text>
+  <text x="1290" y="696" class="text">EOS 常直接依赖 convergence 先确定 ENCUT / KSPACING。</text>
+
+  <rect x="1264" y="756" width="432" height="126" class="skillAmber"/>
+  <text x="1290" y="792" class="label">adsorption_energy 也属于计算工作流</text>
+  <text x="1290" y="818" class="text">
+    <tspan x="1290" dy="0">它同时出现在左侧“结构准备类”，</tspan>
+    <tspan x="1290" dy="22">是因为吸附体系常牵涉 slab、扩胞、初始构型搭建。</tspan>
+  </text>
+  <text x="1290" y="862" class="text">从任务性质上，它最终也是一个完整的 VASP 生产工作流。</text>
+
+  <rect x="430" y="950" width="940" height="260" class="groupRose"/>
+  <text x="456" y="990" class="section">D. 元技能与开发辅助</text>
+
+  <rect x="470" y="1020" width="860" height="142" class="skillRose"/>
+  <text x="500" y="1056" class="label">simple-skill-creator</text>
+  <text x="500" y="1082" class="text">
+    <tspan x="500" dy="0">这是“管理技能本身”的元技能：创建新 skill、打开网页编辑器、</tspan>
+    <tspan x="500" dy="22">比较旧版与新版、根据轨迹改进现有 SKILL.md。</tspan>
+  </text>
+  <text x="500" y="1126" class="text">它不参与材料计算，但负责让整套技能系统持续演化。</text>
+
+  <text x="96" y="1264" class="small">
+    <tspan x="96" dy="0">阅读方式建议：先看 run_vasp 这条“执行主干”，再按任务类型选择上层技能。</tspan>
+    <tspan x="96" dy="20">结构类技能负责准备模型，convergence / literature / pdf 负责补参数与知识，</tspan>
+    <tspan x="96" dy="20">bandgap / lattice_constant / adsorption_energy / relax 负责完整材料计算工作流。</tspan>
+  </text>
+</svg>

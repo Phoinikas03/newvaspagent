@@ -1,0 +1,153 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="1500" viewBox="0 0 1400 1500">
+  <defs>
+    <style>
+      .title { font: 700 34px "Arial", "PingFang SC", "Microsoft YaHei", sans-serif; fill: #17324d; }
+      .subtitle { font: 500 18px "Arial", "PingFang SC", "Microsoft YaHei", sans-serif; fill: #49637c; }
+      .laneTitle { font: 700 20px "Arial", "PingFang SC", "Microsoft YaHei", sans-serif; fill: #17324d; }
+      .label { font: 600 17px "Arial", "PingFang SC", "Microsoft YaHei", sans-serif; fill: #15324b; }
+      .text { font: 15px "Arial", "PingFang SC", "Microsoft YaHei", sans-serif; fill: #2f4a63; }
+      .small { font: 14px "Arial", "PingFang SC", "Microsoft YaHei", sans-serif; fill: #546d84; }
+      .frame { fill: #f8fbff; stroke: #c8d8e8; stroke-width: 2; rx: 24; }
+      .lane { fill: #f5f8fb; stroke: #d4dfeb; stroke-width: 1.5; }
+      .boxBlue { fill: #e8f2ff; stroke: #5b8fd9; stroke-width: 2; rx: 18; }
+      .boxMint { fill: #e8faf5; stroke: #53a88f; stroke-width: 2; rx: 18; }
+      .boxAmber { fill: #fff5df; stroke: #c7962a; stroke-width: 2; rx: 18; }
+      .boxRose { fill: #fff0f1; stroke: #d27680; stroke-width: 2; rx: 18; }
+      .arrow { stroke: #56738f; stroke-width: 3; fill: none; marker-end: url(#arrow); }
+      .arrowThin { stroke: #7a92a8; stroke-width: 2.5; fill: none; marker-end: url(#arrow); }
+      .loop { stroke: #7a92a8; stroke-width: 2.5; fill: none; stroke-dasharray: 8 6; marker-end: url(#arrow); }
+    </style>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#56738f"/>
+    </marker>
+  </defs>
+
+  <rect x="24" y="24" width="1352" height="1452" class="frame"/>
+  <text x="56" y="78" class="title">VASP Agent 单轮交互流程</text>
+  <text x="56" y="110" class="subtitle">从启动、输入、工具调用，到日志回放与结果收尾的消息链路</text>
+
+  <rect x="70" y="150" width="220" height="1260" class="lane"/>
+  <rect x="320" y="150" width="290" height="1260" class="lane"/>
+  <rect x="640" y="150" width="320" height="1260" class="lane"/>
+  <rect x="990" y="150" width="330" height="1260" class="lane"/>
+
+  <text x="128" y="190" class="laneTitle">用户 / 前端</text>
+  <text x="392" y="190" class="laneTitle">入口与主循环</text>
+  <text x="720" y="190" class="laneTitle">ClaudeSDKClient / 消息流</text>
+  <text x="1050" y="190" class="laneTitle">工具 / 存储 / UI</text>
+
+  <rect x="104" y="232" width="150" height="56" class="boxBlue"/>
+  <text x="132" y="266" class="label">启动程序</text>
+
+  <rect x="365" y="220" width="200" height="84" class="boxBlue"/>
+  <text x="388" y="252" class="label">src.main.main()</text>
+  <text x="388" y="278" class="text">解析参数、模式、目录</text>
+
+  <rect x="365" y="338" width="200" height="102" class="boxBlue"/>
+  <text x="388" y="370" class="label">启动前准备</text>
+  <text x="388" y="396" class="text">配置 LiteLLM</text>
+  <text x="388" y="420" class="text">resolve_workspace()</text>
+
+  <rect x="1030" y="338" width="250" height="110" class="boxAmber"/>
+  <text x="1054" y="372" class="label">读取状态</text>
+  <text x="1054" y="398" class="text">log.txt -> session_id</text>
+  <text x="1054" y="422" class="text">conversation_turns.jsonl</text>
+
+  <rect x="365" y="480" width="200" height="112" class="boxBlue"/>
+  <text x="388" y="514" class="label">进入 cli_main()</text>
+  <text x="388" y="538" class="text">或 web_main()</text>
+  <text x="388" y="562" class="text">并创建 ClaudeSDKClient</text>
+
+  <rect x="685" y="480" width="230" height="112" class="boxMint"/>
+  <text x="710" y="514" class="label">build_options()</text>
+  <text x="710" y="538" class="text">system_prompt + MCP tools</text>
+  <text x="710" y="562" class="text">allowed_tools</text>
+
+  <rect x="1030" y="480" width="250" height="112" class="boxAmber"/>
+  <text x="1054" y="514" class="label">Web 额外初始化</text>
+  <text x="1054" y="538" class="text">parse_log_file_to_ui_events()</text>
+  <text x="1054" y="562" class="text">重放旧历史到页面</text>
+
+  <rect x="104" y="650" width="150" height="70" class="boxRose"/>
+  <text x="130" y="692" class="label">用户输入问题</text>
+
+  <rect x="365" y="636" width="200" height="96" class="boxBlue"/>
+  <text x="388" y="670" class="label">记录输入并发起 query</text>
+  <text x="388" y="694" class="text">write_user_turn_log()</text>
+  <text x="388" y="718" class="text">client.query(user_input)</text>
+
+  <rect x="685" y="636" width="230" height="96" class="boxMint"/>
+  <text x="710" y="670" class="label">消息流开始</text>
+  <text x="710" y="694" class="text">receive_messages()</text>
+  <text x="710" y="718" class="text">后台持续消费</text>
+
+  <rect x="1030" y="636" width="250" height="96" class="boxAmber"/>
+  <text x="1054" y="670" class="label">本地落盘</text>
+  <text x="1054" y="694" class="text">log.txt 追加用户输入</text>
+  <text x="1054" y="718" class="text">append_turn(user)</text>
+
+  <rect x="685" y="792" width="230" height="116" class="boxMint"/>
+  <text x="710" y="826" class="label">收到 AssistantMessage</text>
+  <text x="710" y="850" class="text">Text / Thinking / ToolUse</text>
+  <text x="710" y="874" class="text">交给 CLI / Web 分发器</text>
+
+  <rect x="1030" y="780" width="250" height="140" class="boxAmber"/>
+  <text x="1054" y="814" class="label">界面更新</text>
+  <text x="1054" y="840" class="text">CLI: 终端打印</text>
+  <text x="1054" y="864" class="text">Web: 聊天气泡 / 状态栏</text>
+  <text x="1054" y="888" class="text">TodoWrite -> 右侧面板</text>
+
+  <rect x="685" y="958" width="230" height="120" class="boxMint"/>
+  <text x="710" y="992" class="label">触发 ToolUseBlock</text>
+  <text x="710" y="1016" class="text">mcp__vasp_agent__*</text>
+  <text x="710" y="1040" class="text">由 tool_wrapper.py 转发</text>
+
+  <rect x="1030" y="950" width="250" height="136" class="boxAmber"/>
+  <text x="1054" y="984" class="label">执行具体工具</text>
+  <text x="1054" y="1010" class="text">tool.py 访问 MP / 搜索 / 网页</text>
+  <text x="1054" y="1034" class="text">或生成 POSCAR / INCAR / POTCAR</text>
+  <text x="1054" y="1058" class="text">结果包装为 ToolResultBlock</text>
+
+  <rect x="685" y="1128" width="230" height="118" class="boxMint"/>
+  <text x="710" y="1162" class="label">收到 UserMessage</text>
+  <text x="710" y="1186" class="text">通常承接工具结果</text>
+  <text x="710" y="1210" class="text">继续推送给界面与日志</text>
+
+  <rect x="1030" y="1128" width="250" height="118" class="boxAmber"/>
+  <text x="1054" y="1162" class="label">持久化助手文本</text>
+  <text x="1054" y="1186" class="text">persist_on_sdk_message()</text>
+  <text x="1054" y="1210" class="text">累积 assistant 文本缓冲</text>
+
+  <rect x="685" y="1288" width="230" height="88" class="boxMint"/>
+  <text x="710" y="1322" class="label">收到 ResultMessage</text>
+  <text x="710" y="1346" class="text">本轮完成或失败</text>
+
+  <rect x="1030" y="1280" width="250" height="104" class="boxAmber"/>
+  <text x="1054" y="1314" class="label">结束收尾</text>
+  <text x="1054" y="1338" class="text">result_message.py 判错</text>
+  <text x="1054" y="1362" class="text">append_turn(assistant) + UI 就绪</text>
+
+  <path d="M 254 260 L 365 260" class="arrow"/>
+  <path d="M 465 304 L 465 338" class="arrow"/>
+  <path d="M 565 390 L 1030 390" class="arrowThin"/>
+  <path d="M 465 440 L 465 480" class="arrow"/>
+  <path d="M 565 536 L 685 536" class="arrow"/>
+  <path d="M 915 536 L 1030 536" class="arrowThin"/>
+  <path d="M 179 720 L 365 684" class="arrow"/>
+  <path d="M 565 684 L 685 684" class="arrow"/>
+  <path d="M 565 684 L 1030 684" class="arrowThin"/>
+  <path d="M 800 732 L 800 792" class="arrow"/>
+  <path d="M 915 850 L 1030 850" class="arrowThin"/>
+  <path d="M 800 908 L 800 958" class="arrow"/>
+  <path d="M 915 1018 L 1030 1018" class="arrowThin"/>
+  <path d="M 800 1078 L 800 1128" class="arrow"/>
+  <path d="M 915 1188 L 1030 1188" class="arrowThin"/>
+  <path d="M 800 1246 L 800 1288" class="arrow"/>
+  <path d="M 915 1332 L 1030 1332" class="arrowThin"/>
+
+  <path d="M 1155 1086 C 1155 1140, 980 1140, 980 1018 C 980 930, 940 930, 915 958" class="loop"/>
+  <text x="1006" y="1108" class="small">若模型继续规划或再调工具，则回到工具阶段循环</text>
+
+  <path d="M 1155 1384 C 1155 1430, 430 1430, 430 720" class="loop"/>
+  <text x="736" y="1450" class="small">本轮结束后，CLI 等待下一次输入；Web 切回“就绪”，继续接收新消息</text>
+</svg>
