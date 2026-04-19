@@ -136,8 +136,12 @@ _HTML = """<!DOCTYPE html>
     display: flex; flex-direction: column;
     gap: 0;
   }
-  .msg-bubble > .md-content:empty { display: none; }
-  .agent-tools-stack:not(:empty) ~ .md-content:not(:empty) {
+  .agent-text-stack {
+    display: flex; flex-direction: column;
+    gap: 10px;
+  }
+  .agent-text-stack:empty { display: none; }
+  .agent-tools-stack:not(:empty) + .agent-text-stack:not(:empty) {
     margin-top: 10px; padding-top: 10px;
     border-top: 1px solid var(--border);
   }
@@ -270,30 +274,6 @@ _HTML = """<!DOCTYPE html>
     border-bottom: 1px solid var(--border);
     flex-shrink: 0;
   }
-  .side-section {
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
-    border-bottom: 1px solid var(--border);
-  }
-  .side-section:last-child { border-bottom: none; }
-  .side-section-header {
-    padding: 12px 14px;
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--muted);
-    border-bottom: 1px solid var(--border);
-    flex-shrink: 0;
-  }
-  #bg-task-list {
-    max-height: 42vh;
-    overflow-y: auto;
-    padding: 10px 12px 16px;
-    font-size: 12px;
-    line-height: 1.45;
-  }
-  #bg-task-list::-webkit-scrollbar { width: 5px; }
-  #bg-task-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
   #todo-list {
     flex: 1;
     overflow-y: auto;
@@ -356,63 +336,6 @@ _HTML = """<!DOCTYPE html>
     word-break: break-word;
   }
   .todo-item.todo-muted .todo-label { color: var(--muted); }
-  .bg-task-card {
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: #12151c;
-    padding: 10px 10px 8px;
-    margin-bottom: 10px;
-  }
-  .bg-task-card:last-child { margin-bottom: 0; }
-  .bg-task-head {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 6px;
-    flex-wrap: wrap;
-  }
-  .bg-task-id {
-    font-family: 'Consolas','JetBrains Mono',monospace;
-    font-size: 12px;
-    color: var(--text);
-  }
-  .bg-task-status {
-    font-size: 11px;
-    border-radius: 999px;
-    padding: 2px 7px;
-    border: 1px solid var(--border);
-    text-transform: lowercase;
-  }
-  .bg-task-status.running {
-    color: var(--accent);
-    border-color: var(--accent);
-    background: rgba(88,166,255,0.08);
-  }
-  .bg-task-status.completed {
-    color: var(--success);
-    border-color: var(--success);
-    background: rgba(63,185,80,0.08);
-  }
-  .bg-task-status.failed {
-    color: var(--error);
-    border-color: var(--error);
-    background: rgba(248,81,73,0.08);
-  }
-  .bg-task-meta {
-    font-size: 11px;
-    color: var(--muted);
-    margin-bottom: 6px;
-  }
-  .bg-task-tail {
-    margin: 0;
-    font-family: 'Consolas','JetBrains Mono',monospace;
-    font-size: 11px;
-    color: var(--text);
-    white-space: pre-wrap;
-    word-break: break-word;
-    max-height: 140px;
-    overflow-y: auto;
-  }
 </style>
 </head>
 <body>
@@ -430,14 +353,8 @@ _HTML = """<!DOCTYPE html>
     </div>
   </div>
   <aside id="todo-panel">
-    <section class="side-section">
-      <div class="side-section-header">后台任务</div>
-      <div id="bg-task-list"><div class="todo-empty">暂无后台任务</div></div>
-    </section>
-    <section class="side-section">
-      <div class="side-section-header">任务列表</div>
-      <div id="todo-list"><div class="todo-empty">暂无任务</div></div>
-    </section>
+    <div id="todo-panel-header">任务列表</div>
+    <div id="todo-list"><div class="todo-empty">暂无任务</div></div>
   </aside>
 </div>
 <script>
@@ -449,16 +366,15 @@ const sendBtn = document.getElementById('send-btn');
 const statusBadge = document.getElementById('status-badge');
 const logPathEl = document.getElementById('log-path');
 const todoListEl = document.getElementById('todo-list');
-const bgTaskListEl = document.getElementById('bg-task-list');
 
-let curBubble = null, curMd = null, toolsStackEl = null, pendingText = '';
+let curBubble = null, textStackEl = null, toolsStackEl = null;
 /** @type {Record<string, HTMLElement>} 按 tool_use_id 合并「请求+返回」到同一卡片 */
 let toolCardByUseId = {};
 
 const ws = new WebSocket(`ws://${location.host}/ws`);
-ws.onopen  = () => setStatus('已连接', false);
-ws.onclose = () => setStatus('连接断开', false);
-ws.onerror = () => setStatus('连接错误', false);
+ws.onopen  = () => { setStatus('已连接', false); sendBtn.disabled = false; };
+ws.onclose = () => { setStatus('连接断开', false); sendBtn.disabled = false; };
+ws.onerror = () => { setStatus('连接错误', false); sendBtn.disabled = false; };
 ws.onmessage = (ev) => {
   const d = JSON.parse(ev.data);
   if (d.type === 'history') {
@@ -475,6 +391,7 @@ ws.onmessage = (ev) => {
     } else {
       setStatus('就绪', false);
     }
+    sendBtn.disabled = false;
     scrollBottom();
     return;
   }
@@ -490,32 +407,7 @@ function dispatch(d, replay) {
   else if (d.type === 'log_path')     logPathEl.textContent = d.path;
   else if (d.type === 'status')       setStatus(d.text, d.thinking ?? false);
   else if (d.type === 'todo_update') renderTodoPanel(d.todos);
-  else if (d.type === 'background_tasks_update') renderBackgroundTasks(d.tasks);
   else if (!replay && d.type === 'done')   sendBtn.disabled = false;
-}
-
-function renderBackgroundTasks(tasks) {
-  const list = Array.isArray(tasks) ? tasks : [];
-  if (!list.length) {
-    bgTaskListEl.innerHTML = '<div class="todo-empty">暂无后台任务</div>';
-    return;
-  }
-  bgTaskListEl.innerHTML = list.map((t) => {
-    const status = esc(t.status || 'running');
-    const taskId = esc(t.task_id || '');
-    const updated = esc(t.last_update || '');
-    const tailLines = Array.isArray(t.last_lines) ? t.last_lines : [];
-    const tail = esc(tailLines.join('\n'));
-    return `
-      <div class="bg-task-card">
-        <div class="bg-task-head">
-          <span class="bg-task-id">${taskId}</span>
-          <span class="bg-task-status ${status}">${status}</span>
-        </div>
-        <div class="bg-task-meta">最近更新: ${updated}</div>
-        <pre class="bg-task-tail">${tail || '暂无输出'}</pre>
-      </div>`;
-  }).join('');
 }
 
 function renderTodoPanel(todos) {
@@ -566,14 +458,13 @@ function ensureAgentBubble() {
   bubble.className = 'msg-bubble';
   toolsStackEl = document.createElement('div');
   toolsStackEl.className = 'agent-tools-stack';
-  curMd = document.createElement('div');
-  curMd.className = 'md-content';
+  textStackEl = document.createElement('div');
+  textStackEl.className = 'agent-text-stack';
   bubble.appendChild(toolsStackEl);
-  bubble.appendChild(curMd);
+  bubble.appendChild(textStackEl);
   row.appendChild(bubble);
   chat.appendChild(row);
   curBubble = bubble;
-  pendingText = '';
 }
 
 function appendText(text, meta) {
@@ -590,12 +481,14 @@ function appendText(text, meta) {
     renderMarkdownTo(body, text);
     det.appendChild(sm);
     det.appendChild(body);
-    curBubble.insertBefore(det, curMd);
+    curBubble.insertBefore(det, textStackEl);
     scrollBottom();
     return;
   }
-  pendingText += text;
-  renderMarkdownTo(curMd, pendingText);
+  const block = document.createElement('div');
+  block.className = 'md-content';
+  renderMarkdownTo(block, text);
+  textStackEl.appendChild(block);
   scrollBottom();
 }
 
@@ -695,8 +588,7 @@ function appendResult(d) {
     det.appendChild(body);
     curBubble.appendChild(det);
   }
-  curBubble = curMd = toolsStackEl = null;
-  pendingText = '';
+  curBubble = textStackEl = toolsStackEl = null;
   scrollBottom();
 }
 
@@ -716,14 +608,18 @@ function appendUserMsg(text) {
 function send() {
   const text = inputEl.value.trim();
   if (!text) return;
+  if (ws.readyState !== WebSocket.OPEN) {
+    setStatus('连接未就绪，请稍后重试', false);
+    sendBtn.disabled = false;
+    return;
+  }
   appendUserMsg(text);
   ws.send(JSON.stringify({ type: 'user_message', text }));
   inputEl.value = '';
   inputEl.style.height = '';
   sendBtn.disabled = true;
   setStatus('思考中...', true);
-  curBubble = curMd = toolsStackEl = null;
-  pendingText = '';
+  curBubble = textStackEl = toolsStackEl = null;
   /* 不在此处清空 Todo：右侧列表由服务端下发的 todo_update 驱动；若清空会在下一轮首个 TodoWrite 之前长时间显示「暂无任务」。 */
 }
 
@@ -749,7 +645,6 @@ _HISTORY_TYPES = {
     "log_path",
     "status",
     "todo_update",
-    "background_tasks_update",
 }
 
 
