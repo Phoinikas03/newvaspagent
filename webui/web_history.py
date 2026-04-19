@@ -68,7 +68,9 @@ def todo_write_items_for_ui(tool_input: Any) -> list[dict[str, str]]:
             continue
         raw = t.get("status")
         status = raw if raw in _VALID_TODO_STATUSES else "pending"
-        label = (t.get("activeForm") or t.get("content") or "").strip()
+        # 右侧 Todo 栏应该展示任务名本身，而不是「已完成/待完成/进行中」这类状态短语。
+        # activeForm 仍可用于状态栏，但面板标签优先使用 content。
+        label = (t.get("content") or t.get("activeForm") or "").strip()
         if not label:
             continue
         if len(label) > TODO_LABEL_MAX_LEN:
