@@ -50,6 +50,13 @@ EMPTY_RESULT_WITH_TOOL_ERROR_FALLBACK = (
     "（system_prompt 中的 SKILL & `.claude` PATH RULE：`cd` 到 Repository root 再运行）。"
 )
 
+BACKGROUND_TASK_RE = re.compile(
+    r"Command running in background with ID:\s*(?P<task_id>\S+)\.\s*"
+    r"Output is being written to:\s*(?P<output_path>\S+)"
+)
+BACKGROUND_EXIT_RE = re.compile(r"\bexit=(?P<code>\d+)\b|\(exit code (?P<code2>\d+)\)")
+BACKGROUND_TAIL_LINE_LIMIT = 5
+
 
 def _parse_last_session_id(log_path: Path) -> str | None:
     """从已有 log.txt 的 repr 行中提取最后一次出现的 Claude session_id（用于 --resume）。"""
@@ -259,6 +266,235 @@ def _append_sdk_log_line(log_file, msg: Any) -> None:
     print(repr(msg))
 
 
+def _extract_background_task_info_from_message(msg: Any) -> list[tuple[str, Path]]:
+    """从后台 Bash 的 ToolResultBlock 中提取 task_id 与 output 文件路径。"""
+    found: list[tuple[str, Path]] = []
+    if not isinstance(msg, UserMessage):
+        return found
+    for block in getattr(msg, "content", []) or []:
+        if type(block).__name__ != "ToolResultBlock":
+            continue
+        content = str(getattr(block, "content", "") or "")
+        m = BACKGROUND_TASK_RE.search(content)
+        if not m:
+            continue
+        task_id = m.group("task_id").strip()
+        output_path = Path(m.group("output_path").strip())
+        if task_id:
+            found.append((task_id, output_path))
+    return found
+
+
+def _background_now_str() -> str:
+    return datetime.now().strftime("%H:%M:%S")
+
+
+def _ensure_background_task_entry(
+    state: dict[str, Any],
+    task_id: str,
+    output_path: Path,
+) -> dict[str, Any]:
+    tasks = state.setdefault("background_tasks", {})
+    entry = tasks.get(task_id)
+    if entry is None:
+        entry = {
+            "task_id": task_id,
+            "status": "running",
+            "last_update": _background_now_str(),
+            "last_lines": [],
+            "output_path": str(output_path),
+        }
+        tasks[task_id] = entry
+    else:
+        entry["output_path"] = str(output_path)
+    return entry
+
+
+def _background_chunk_status(text: str) -> str:
+    lower = text.lower()
+    m = BACKGROUND_EXIT_RE.search(text)
+    if m:
+        code = m.group("code") or m.group("code2") or ""
+        if code and code != "0":
+            return "failed"
+    if "traceback" in lower or "error:" in lower or "exception" in lower:
+        return "failed"
+    if _background_chunk_is_terminal(text):
+        return "completed"
+    return "running"
+
+
+def _update_background_task_entry(
+    state: dict[str, Any],
+    task_id: str,
+    output_path: Path,
+    chunk: str | None = None,
+    *,
+    status: str | None = None,
+) -> None:
+    entry = _ensure_background_task_entry(state, task_id, output_path)
+    entry["last_update"] = _background_now_str()
+    if chunk:
+        lines = [line.rstrip() for line in chunk.splitlines() if line.strip()]
+        merged = list(entry.get("last_lines") or [])
+        merged.extend(lines)
+        entry["last_lines"] = merged[-BACKGROUND_TAIL_LINE_LIMIT:]
+    if status:
+        entry["status"] = status
+    elif chunk:
+        entry["status"] = _background_chunk_status(chunk)
+
+
+def _background_tasks_snapshot(state: dict[str, Any]) -> list[dict[str, Any]]:
+    tasks = state.get("background_tasks") or {}
+    ordered = sorted(
+        tasks.values(),
+        key=lambda item: (item.get("status") != "running", item.get("task_id", "")),
+    )
+    out: list[dict[str, Any]] = []
+    for item in ordered:
+        out.append(
+            {
+                "task_id": str(item.get("task_id", "")),
+                "status": str(item.get("status", "running")),
+                "last_update": str(item.get("last_update", "")),
+                "last_lines": list(item.get("last_lines") or []),
+                "output_path": str(item.get("output_path", "")),
+            }
+        )
+    return out
+
+
+async def _emit_background_tasks_to_cli(state: dict[str, Any]) -> None:
+    tasks = _background_tasks_snapshot(state)
+    if not tasks:
+        return
+    lines = ["[后台任务列表]"]
+    for item in tasks:
+        status = item["status"]
+        icon = "●"
+        if status == "completed":
+            icon = "✓"
+        elif status == "failed":
+            icon = "✗"
+        lines.append(
+            f"{icon} {item['task_id']}  {status}  更新:{item['last_update']}"
+        )
+        for tail in item["last_lines"][-3:]:
+            lines.append(f"  {tail}")
+    print("\n".join(lines) + "\n", flush=True)
+
+
+async def _emit_background_tasks_to_web(ui: Any, state: dict[str, Any]) -> None:
+    await ui.send(
+        {
+            "type": "background_tasks_update",
+            "tasks": _background_tasks_snapshot(state),
+        }
+    )
+
+
+def _background_chunk_is_terminal(text: str) -> bool:
+    lower = text.lower()
+    return any(
+        token in lower
+        for token in (
+            "all tasks finished",
+            "calculation converged",
+            "converged!",
+            "all kspacing tests completed",
+            "all encut tests completed",
+            "completed successfully",
+            " exit=0 ",
+        )
+    )
+
+
+async def _tail_background_task_output(
+    task_id: str,
+    output_path: Path,
+    state: dict[str, Any],
+    emit_text: Any,
+    emit_tasks: Any,
+) -> None:
+    """独立于 Claude 会话，直接 tail 后台任务 output 文件并推到界面。"""
+    last_pos = 0
+    announced_missing = False
+    while True:
+        try:
+            if not output_path.exists():
+                if not announced_missing:
+                    _update_background_task_entry(
+                        state,
+                        task_id,
+                        output_path,
+                        f"等待输出文件: {output_path}",
+                        status="running",
+                    )
+                    await emit_text(f"[后台任务 {task_id}] 等待输出文件: {output_path}")
+                    await emit_tasks(state)
+                    announced_missing = True
+                await asyncio.sleep(2)
+                continue
+
+            announced_missing = False
+            text = output_path.read_text(encoding="utf-8", errors="replace")
+            if len(text) > last_pos:
+                chunk = text[last_pos:]
+                last_pos = len(text)
+                chunk = chunk.strip()
+                if chunk:
+                    _update_background_task_entry(state, task_id, output_path, chunk)
+                    await emit_text(f"[后台任务 {task_id}]\n{chunk}")
+                    await emit_tasks(state)
+                    if _background_chunk_status(chunk) in {"completed", "failed"}:
+                        await emit_text(f"[后台任务 {task_id}] 输出显示该任务已结束。")
+                        return
+        except asyncio.CancelledError:
+            raise
+        except Exception as ex:
+            _update_background_task_entry(
+                state,
+                task_id,
+                output_path,
+                f"读取输出失败: {ex}",
+                status="failed",
+            )
+            await emit_text(f"[后台任务 {task_id}] 读取输出失败: {ex}")
+            await emit_tasks(state)
+            return
+
+        await asyncio.sleep(2)
+
+
+async def _maybe_start_background_monitors(
+    msg: Any,
+    state: dict[str, Any],
+    emit_text: Any,
+    emit_tasks: Any,
+) -> None:
+    monitors = state.setdefault("background_monitors", {})
+    for task_id, output_path in _extract_background_task_info_from_message(msg):
+        if task_id in monitors:
+            continue
+        _update_background_task_entry(state, task_id, output_path, status="running")
+        await emit_tasks(state)
+        monitors[task_id] = asyncio.create_task(
+            _tail_background_task_output(task_id, output_path, state, emit_text, emit_tasks)
+        )
+
+
+async def _cancel_background_monitors(state: dict[str, Any]) -> None:
+    monitors = state.get("background_monitors") or {}
+    tasks = [t for t in monitors.values() if isinstance(t, asyncio.Task)]
+    for task in tasks:
+        task.cancel()
+    for task in tasks:
+        with suppress(asyncio.CancelledError):
+            await task
+    monitors.clear()
+
+
 def _dispatch_message_to_cli(msg: Any) -> None:
     """CLI 下将单条消息打印到终端（不含已写入 log 的 repr）。"""
     if isinstance(msg, StreamEvent):
@@ -308,21 +544,32 @@ def _dispatch_message_to_cli(msg: Any) -> None:
         print(f"\n{status}  轮次: {msg.num_turns}{extra}\n", flush=True)
 
 
-async def _cli_sdk_receive_loop(
+async def _cli_consume_one_turn(
     client: ClaudeSDKClient,
     log_file,
     workspace: str,
     persist_state: dict[str, Any],
 ) -> None:
-    """持续消费 SDK 消息流（ClaudeSDKClient.receive_messages）。
+    """只消费当前这一次 query 对应的一轮消息，直到 ResultMessage。
 
-    与 receive_response()（在 ResultMessage 处结束）不同：空闲等待用户输入时仍可收到
-    SystemMessage（如 task_notification），从而及时写入 log 与终端。
+    这样进入「等待用户确认」后，不会因为后台任务通知而在用户未输入时自动推进下一步。
     """
     async for msg in client.receive_messages():
         _append_sdk_log_line(log_file, msg)
         persist_on_sdk_message(workspace, msg, persist_state)
         _dispatch_message_to_cli(msg)
+        await _maybe_start_background_monitors(
+            msg,
+            persist_state,
+            _cli_emit_background_text,
+            _emit_background_tasks_to_cli,
+        )
+        if isinstance(msg, ResultMessage):
+            break
+
+
+async def _cli_emit_background_text(text: str) -> None:
+    print(f"{text}\n", flush=True)
 
 
 async def cli_agent_loop(
@@ -330,8 +577,11 @@ async def cli_agent_loop(
     log_file,
     workspace: str,
 ) -> None:
-    persist_state: dict[str, Any] = {"persist_assistant_buf": ""}
-    drain = asyncio.create_task(_cli_sdk_receive_loop(client, log_file, workspace, persist_state))
+    persist_state: dict[str, Any] = {
+        "persist_assistant_buf": "",
+        "background_monitors": {},
+        "background_tasks": {},
+    }
     try:
         while True:
             try:
@@ -348,10 +598,9 @@ async def cli_agent_loop(
             print("思考中...\n", flush=True)
             write_user_turn_log(log_file, user_input)
             await client.query(user_input)
+            await _cli_consume_one_turn(client, log_file, workspace, persist_state)
     finally:
-        drain.cancel()
-        with suppress(asyncio.CancelledError):
-            await drain
+        await _cancel_background_monitors(persist_state)
 
 
 async def cli_main(
@@ -531,19 +780,30 @@ async def _dispatch_message_to_web(
         await ui.send({"type": "done"})
 
 
-async def _web_sdk_receive_loop(
+async def _web_consume_one_turn(
     client: ClaudeSDKClient,
     log_file,
     ui: Any,
     session_state: dict[str, Any],
     workspace: str,
 ) -> None:
-    """后台持续 consume receive_messages()，与主协程中仅负责 query(用户输入) 分离。"""
+    """只消费当前这一次 query 的消息，直到 ResultMessage。
+
+    保证等待用户确认时，后台 task_notification 不会在无用户输入的情况下继续驱动会话。
+    """
     try:
         async for msg in client.receive_messages():
             _append_sdk_log_line(log_file, msg)
             persist_on_sdk_message(workspace, msg, session_state)
             await _dispatch_message_to_web(msg, ui, session_state)
+            await _maybe_start_background_monitors(
+                msg,
+                session_state,
+                lambda text: ui.send({"type": "agent_text", "text": text}),
+                lambda cur_state: _emit_background_tasks_to_web(ui, cur_state),
+            )
+            if isinstance(msg, ResultMessage):
+                break
     except asyncio.CancelledError:
         raise
     except Exception as e:
@@ -558,23 +818,16 @@ async def web_agent_loop(
     session_state: dict[str, Any],
     workspace: str,
 ) -> None:
-    drain = asyncio.create_task(
-        _web_sdk_receive_loop(client, log_file, ui, session_state, workspace),
-    )
-    try:
-        while True:
-            user_input = await ui.input_queue.get()
-            if user_input.lower() in ("quit", "exit"):
-                break
+    while True:
+        user_input = await ui.input_queue.get()
+        if user_input.lower() in ("quit", "exit"):
+            break
 
-            await ui.send({"type": "status", "text": "思考中...", "thinking": True})
-            write_user_turn_log(log_file, user_input)
-            session_state["last_tool_error"] = False
-            await client.query(user_input)
-    finally:
-        drain.cancel()
-        with suppress(asyncio.CancelledError):
-            await drain
+        await ui.send({"type": "status", "text": "思考中...", "thinking": True})
+        write_user_turn_log(log_file, user_input)
+        session_state["last_tool_error"] = False
+        await client.query(user_input)
+        await _web_consume_one_turn(client, log_file, ui, session_state, workspace)
 
 
 async def web_main(
@@ -626,12 +879,18 @@ async def web_main(
                 web_session_state: dict[str, Any] = {
                     "last_tool_error": False,
                     "persist_assistant_buf": "",
+                    "background_monitors": {},
+                    "background_tasks": {},
                 }
                 await web_agent_loop(client, log_file, ui, web_session_state, workspace)
         except ProcessError:
             _print_process_error_help(workspace, resume)
             raise
     finally:
+        try:
+            await _cancel_background_monitors(locals().get("web_session_state", {}))
+        except Exception:
+            pass
         log_file.close()
         await ui.stop()
 
