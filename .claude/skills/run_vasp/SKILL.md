@@ -1,7 +1,7 @@
 ---
 name: run-vasp
 description: "环境与硬件感知下编排 VASP：探针 mpirun/vasp_std/vasp_gpu、STRICT HARDWARE ALIGNMENT（GPU 与 CPU 共存 / Slurm 分叉）、GPU 映射（通常 1 rank↔1 GPU）、ITERATIVE 分批调用 vasp_runner、执行前向用户展示完整命令并取得同意。凡在本工作区使用 mpirun、vasp_std、vasp_gpu、Slurm/PBS 提交或 vasp_runner.py 时必须加载本 skill；lattice_constant、relax、bandgap、adsorption_energy、literature、supercell 等材料类 skill 在真正启动 VASP 前也必须先加载本 skill。"
-version: "1.0.3"
+version: "1.0.2"
 ---
 
 # Skill: Run VASP (Intelligent Orchestrator)
@@ -34,6 +34,22 @@ version: "1.0.3"
 *示例*：「探针显示共 8 块 GPU。当前收敛测试第一步采用单卡单任务。拟执行：`source ./template/env_local.sh && python .claude/skills/run_vasp/scripts/vasp_runner.py --dirs <dir> --mode local --np 1 --exe vasp_gpu --gpu-per-task 1 --env-script ./template/env_local.sh`（若站点 GPU 入口为 `vasp_std`，则将 `--exe vasp_std`）。是否同意？」
 
 **与迭代工作流的关系**：命令确认针对**当前拟执行的这一步或这一批**；若上游 skill 要求逐点/逐目录核查，仍须遵守下文 Step 4 的 **ITERATIVE EXECUTION RULE**，**禁止**用「一次确认」覆盖随后无核查的多点排队。多任务本地并发优先用 `vasp_runner.py` 内置的 GPU 分配与日志，**不要**自写 monolithic `for`+`mpirun` 绕过 runner 与迭代规则。
+
+### 3. 进程所有权与终止安全 (Process Ownership & Safe Termination)
+
+- **默认禁止全局杀进程**：严禁使用 `pkill`、`killall`、`pkill -f vasp_std`、`killall vasp_std`、`kill $(pgrep ...)` 之类按名字/模式批量终止 VASP 或 MPI 进程的命令。
+- **只能处理自己启动的任务**：若需要停止任务，你必须先证明该 PID 或作业 ID 是你在当前工作流中亲自启动的那一个，证据应来自：
+  - 你刚刚启动时记录的 `task_id`、作业 ID、日志路径或目录；
+  - `ps` / `squeue` / `qstat` / 任务输出能明确对应到当前工作区或当前这批目录；
+  - 日志或文件时间戳表明该进程确实属于当前 run，而不是系统中其它人的/其它目录的 VASP。
+- **仅凭名字不算证据**：`pgrep -f vasp_std`、`ps | grep vasp_std`、进程数量统计，最多只能说明“系统里有 VASP 在跑”，**不能**说明这些进程属于当前任务，因此**绝不能**据此执行终止。
+- **先核实，再决定是否停**：在考虑终止前，先检查是否真的需要停止，例如：
+  - 关联目录的日志是否持续增长；
+  - `OUTCAR` / `vasp_run_*.log` 是否仍有新内容；
+  - 对应 `task_id` / 作业状态是否已经结束但残留了子进程；
+  - 用户是否明确要求“停止”而不是“继续等待”。
+- **必须定点终止**：只有在完成上述核实且确需停止时，才允许对**已确认属于当前任务**的具体 PID 或作业 ID 进行定点终止；优先使用最窄范围的命令。
+- **无法证明所有权时的正确行为**：停止自动处置，向用户汇报“发现有同名进程，但无法证明属于当前任务”，并请求确认；不得擅自清场后重提。
 
 ---
 
@@ -76,20 +92,9 @@ version: "1.0.3"
 
 ### Step 4: 执行与追踪 (Execution & Tracking)
 - 与用户确认策略与 **env_script** 后，先完成 **「核心执行准则 §2」**：展示硬件摘要与**完整拟执行命令**（或作业脚本内 `mpirun` 片段），**取得用户明确同意**，再通过 Bash 调用 `python .claude/skills/run_vasp/scripts/vasp_runner.py`（传入 `--dirs`、`--mode`、`--np`、`--exe`、`--env-script`、`--gpu-per-task` 等）或提交 Slurm/PBS。
-- **`vasp_runner` 已启动后的等待方式（与仓库 system_prompt 一致）：** Bash 必须使用 **`run_in_background: true`**。**禁止**用 **`TaskOutput` + `block: true` + 超长 `timeout`** 单次阻塞到 VASP 结束（会冻结 Web/IDE）。须在仍由你亲自轮询直至完成的前提下，使用 **`TaskOutput` + `block: false`** 反复查询同一 `task_id`，或多次**短时** Bash（各 `--dirs` 目录 `OUTCAR` 终态、`pgrep` 等）；完成后再读日志与做下游检查。
+- **`vasp_runner` 已启动后的等待方式（与仓库 system_prompt 一致）：** Bash 必须使用 **`run_in_background: true`**。等待阶段鼓励**周期性检查**而不是高频刷新：对长作业优先采用较粗的检查间隔（例如 5 分钟），仅在接近完成或排查异常时临时加密。可以使用 **`TaskOutput` + `block: false`** 按周期查询同一 `task_id`，也可以使用带 `sleep` 的**后台** Bash 辅助脚本定期检查各目录 `OUTCAR`、日志与进程状态；完成后再读日志与做下游检查。避免 **`TaskOutput` + `block: true` + 超长 `timeout`** 单次阻塞到 VASP 结束，因为这会冻结 Web/IDE。
 - 告知用户日志路径；Slurm 场景用 `squeue -u $USER` 等帮助追踪队列状态。
 - **与项目 ITERATIVE EXECUTION RULE 对齐**：若上游 skill 要求**逐点**收敛（多 ENCUT/K 点）或**逐目录**核查（如多个 `scale_*`），**禁止**单次 `vasp_runner.py --dirs` 把全部点或全部目录一次性排队跑完而不在中间读 OUTCAR/日志；应分多次调用（或每批少量目录），每步确认后再继续。
-
-### 输出疑为截断/损坏时（与 bandgap 等上游 skill 对齐，强制）
-
-在读取 `vasprun.xml`、`OUTCAR` 做后处理或决定重跑前：
-
-1. **先**用 Bash 确认**无**仍在运行的 VASP / `mpirun … vasp` 进程（见上文 Step 4 轮询方式）；若有进程，**不得**认定文件为最终态，**不得**删文件或重跑。
-2. 仅在确认无进程后，再判断是否需修正输入并重跑。
-3. **默认**对将废弃或覆盖的文件使用 **`mv` 重命名/迁入备份目录**，**禁止**默认 `rm`。
-4. 再次启动 `vasp_runner` 前，须**用户明确同意**，或用户已声明的**自动重试策略**；**禁止**无确认自动重跑。
-
-上游若已载入 **`bandgap`**，详细条文以 **`bandgap/SKILL.md` 中「输出完整性：疑为截断/损坏时」** 为准；本段为编排层最低要求。
 
 ---
 

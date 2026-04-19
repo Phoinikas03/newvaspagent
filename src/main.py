@@ -40,7 +40,7 @@ load_dotenv(REPO_ROOT / ".env")
 
 SESSION_LOG_NAME = "log.txt"
 CLAUDE_STDERR_LOG = "claude_stderr.log"
-WEB_PORT = 8888
+WEB_PORT = 18688
 RUNS_ROOT = REPO_ROOT / "runs"
 
 # Web：ResultMessage.result 为空且本轮最后一条工具返回 is_error 时，避免界面无文字说明
@@ -49,13 +49,6 @@ EMPTY_RESULT_WITH_TOOL_ERROR_FALLBACK = (
     "请查看上文的工具报错；若涉及 `.claude/skills/` 下脚本，请先在仓库根目录执行"
     "（system_prompt 中的 SKILL & `.claude` PATH RULE：`cd` 到 Repository root 再运行）。"
 )
-
-BACKGROUND_TASK_RE = re.compile(
-    r"Command running in background with ID:\s*(?P<task_id>\S+)\.\s*"
-    r"Output is being written to:\s*(?P<output_path>\S+)"
-)
-BACKGROUND_EXIT_RE = re.compile(r"\bexit=(?P<code>\d+)\b|\(exit code (?P<code2>\d+)\)")
-BACKGROUND_TAIL_LINE_LIMIT = 5
 
 
 def _parse_last_session_id(log_path: Path) -> str | None:
@@ -229,9 +222,20 @@ Use **TodoWrite** to mirror this checklist and advance items to `completed` / `i
 
 LOCAL COMPUTE — BASH `run_in_background` (mandatory):
 - Any **real** workload (VASP, `vasp_runner`, `mpirun`, or anything expected to run **minutes+**) MUST be launched with **`run_in_background: true`** on Bash so the tool returns immediately and does not freeze the session (especially **web** chat). Use `nohup`, `&`, env scripts, and `run_vasp` skill patterns as documented—**never** run these as default **foreground** Bash.
-- **Monitoring:** Check progress in **separate** short commands: `grep`/`tail` OUTCAR, OSZICAR, logs, `pgrep`—**no** minute-scale `sleep` in **foreground** Bash (that blocks the UI until the shell exits). Prefer another user message / next turn for later checks, or a **background** helper script if you need internal sleeps (not foreground).
-- **`TaskOutput` vs frozen UI (critical):** After a long Bash job is started (including when the host auto-backgrounds `vasp_runner`), you MUST NOT wait for completion with **`TaskOutput` and `block: true`** plus a **large `timeout` (e.g. hundreds of thousands of ms)** in one shot—that pins the whole agent turn and **freezes web/IDE chat** until VASP finishes. You **must still** fully orchestrate the run yourself (poll until done, then read OUTCAR, run `check_convergence.py`, etc.): use **`TaskOutput` with `block: false`** (short `timeout` if required) in a **poll loop** on the same `task_id` until `status` is terminal, **or** repeated **fast** Bash probes (per-directory OUTCAR final energy line, `pgrep`, etc.) that each return in **seconds**. Do not replace this with a single foreground Bash that **`sleep`s minutes** to wait for VASP.
+- **Monitoring:** Periodic checking is encouraged. Prefer a coarse cadence for long jobs (for example, every 5 minutes) and only tighten the cadence near completion or when diagnosing anomalies. You may use `grep`/`tail` on `OUTCAR`, `OSZICAR`, logs, and `pgrep`/`ps` to inspect status.
+- **Sleep usage:** `sleep 300`-style waiting is allowed and often desirable for long VASP jobs, **provided** it does not freeze the user-facing session. Prefer **background** helper loops/scripts or non-blocking polling; if you use foreground waiting, keep the UI responsiveness tradeoff in mind and explain it briefly when relevant.
+- **`TaskOutput` vs frozen UI (critical):** After a long Bash job is started (including when the host auto-backgrounds `vasp_runner`), avoid overly chatty polling. You **must still** fully orchestrate the run yourself (poll until done, then read OUTCAR, run `check_convergence.py`, etc.), but prefer **periodic** checks over rapid-fire checks: use **`TaskOutput` with `block: false`** at a sensible cadence, typically coarse for long jobs, or a background Bash helper that sleeps between checks. Do not use **`TaskOutput` and `block: true`** with a single huge timeout that pins the whole agent turn and **freezes web/IDE chat** until VASP finishes.
 - **Slurm / PBS:** Submit → record **Job ID** → poll `squeue`/`qstat` in brief commands; do not keep one foreground Bash open until the job finishes.
+
+PROCESS OWNERSHIP & TERMINATION SAFETY (CRITICAL):
+- You MUST treat process termination as a high-risk action. **Never** use broad kill commands such as `pkill`, `killall`, `pkill -f vasp_std`, `killall vasp_std`, or pattern-based `kill $(pgrep ...)` for VASP or MPI workloads.
+- You MAY terminate a process **only if all of the following are true**:
+  1. You launched that exact workload earlier in the same session/workflow; and
+  2. You have concrete ownership evidence tying the running PID/job to the exact workspace/run directory or recorded task/job id you started; and
+  3. You have first checked that it is actually stale, wedged, or no longer desired (for example: log file no longer changes, task state is terminal-but-process-remains, or the user explicitly asked to stop it).
+- `pgrep`/`ps` name matches alone are **not** ownership evidence. A count like `pgrep -f vasp_std | wc -l` is never sufficient justification to kill anything.
+- If ownership cannot be proven, you must **not** terminate the process. Instead, report what you observed, explain the ambiguity, and ask the user before any destructive action.
+- If termination is justified, target only the specific PID(s) or scheduler job ID(s) you verified belong to the workload you started. Prefer the narrowest possible command and explain the evidence in user-facing text before or immediately after the action.
 
 ITERATIVE EXECUTION RULE: When performing parameter sweeps or convergence tests, DO NOT write and execute monolithic Python/Bash scripts containing loops to run VASP multiple times. Instead, manage the loop in your reasoning and run **each** heavy step **one at a time** with **`run_in_background: true`** (or the workload manager per `run_vasp`). This preserves intermediate checks and avoids many uncontrolled concurrent processes.
 
@@ -264,235 +268,6 @@ def _append_sdk_log_line(log_file, msg: Any) -> None:
     log_file.write(repr(msg) + "\n")
     log_file.flush()
     print(repr(msg))
-
-
-def _extract_background_task_info_from_message(msg: Any) -> list[tuple[str, Path]]:
-    """从后台 Bash 的 ToolResultBlock 中提取 task_id 与 output 文件路径。"""
-    found: list[tuple[str, Path]] = []
-    if not isinstance(msg, UserMessage):
-        return found
-    for block in getattr(msg, "content", []) or []:
-        if type(block).__name__ != "ToolResultBlock":
-            continue
-        content = str(getattr(block, "content", "") or "")
-        m = BACKGROUND_TASK_RE.search(content)
-        if not m:
-            continue
-        task_id = m.group("task_id").strip()
-        output_path = Path(m.group("output_path").strip())
-        if task_id:
-            found.append((task_id, output_path))
-    return found
-
-
-def _background_now_str() -> str:
-    return datetime.now().strftime("%H:%M:%S")
-
-
-def _ensure_background_task_entry(
-    state: dict[str, Any],
-    task_id: str,
-    output_path: Path,
-) -> dict[str, Any]:
-    tasks = state.setdefault("background_tasks", {})
-    entry = tasks.get(task_id)
-    if entry is None:
-        entry = {
-            "task_id": task_id,
-            "status": "running",
-            "last_update": _background_now_str(),
-            "last_lines": [],
-            "output_path": str(output_path),
-        }
-        tasks[task_id] = entry
-    else:
-        entry["output_path"] = str(output_path)
-    return entry
-
-
-def _background_chunk_status(text: str) -> str:
-    lower = text.lower()
-    m = BACKGROUND_EXIT_RE.search(text)
-    if m:
-        code = m.group("code") or m.group("code2") or ""
-        if code and code != "0":
-            return "failed"
-    if "traceback" in lower or "error:" in lower or "exception" in lower:
-        return "failed"
-    if _background_chunk_is_terminal(text):
-        return "completed"
-    return "running"
-
-
-def _update_background_task_entry(
-    state: dict[str, Any],
-    task_id: str,
-    output_path: Path,
-    chunk: str | None = None,
-    *,
-    status: str | None = None,
-) -> None:
-    entry = _ensure_background_task_entry(state, task_id, output_path)
-    entry["last_update"] = _background_now_str()
-    if chunk:
-        lines = [line.rstrip() for line in chunk.splitlines() if line.strip()]
-        merged = list(entry.get("last_lines") or [])
-        merged.extend(lines)
-        entry["last_lines"] = merged[-BACKGROUND_TAIL_LINE_LIMIT:]
-    if status:
-        entry["status"] = status
-    elif chunk:
-        entry["status"] = _background_chunk_status(chunk)
-
-
-def _background_tasks_snapshot(state: dict[str, Any]) -> list[dict[str, Any]]:
-    tasks = state.get("background_tasks") or {}
-    ordered = sorted(
-        tasks.values(),
-        key=lambda item: (item.get("status") != "running", item.get("task_id", "")),
-    )
-    out: list[dict[str, Any]] = []
-    for item in ordered:
-        out.append(
-            {
-                "task_id": str(item.get("task_id", "")),
-                "status": str(item.get("status", "running")),
-                "last_update": str(item.get("last_update", "")),
-                "last_lines": list(item.get("last_lines") or []),
-                "output_path": str(item.get("output_path", "")),
-            }
-        )
-    return out
-
-
-async def _emit_background_tasks_to_cli(state: dict[str, Any]) -> None:
-    tasks = _background_tasks_snapshot(state)
-    if not tasks:
-        return
-    lines = ["[后台任务列表]"]
-    for item in tasks:
-        status = item["status"]
-        icon = "●"
-        if status == "completed":
-            icon = "✓"
-        elif status == "failed":
-            icon = "✗"
-        lines.append(
-            f"{icon} {item['task_id']}  {status}  更新:{item['last_update']}"
-        )
-        for tail in item["last_lines"][-3:]:
-            lines.append(f"  {tail}")
-    print("\n".join(lines) + "\n", flush=True)
-
-
-async def _emit_background_tasks_to_web(ui: Any, state: dict[str, Any]) -> None:
-    await ui.send(
-        {
-            "type": "background_tasks_update",
-            "tasks": _background_tasks_snapshot(state),
-        }
-    )
-
-
-def _background_chunk_is_terminal(text: str) -> bool:
-    lower = text.lower()
-    return any(
-        token in lower
-        for token in (
-            "all tasks finished",
-            "calculation converged",
-            "converged!",
-            "all kspacing tests completed",
-            "all encut tests completed",
-            "completed successfully",
-            " exit=0 ",
-        )
-    )
-
-
-async def _tail_background_task_output(
-    task_id: str,
-    output_path: Path,
-    state: dict[str, Any],
-    emit_text: Any,
-    emit_tasks: Any,
-) -> None:
-    """独立于 Claude 会话，直接 tail 后台任务 output 文件并推到界面。"""
-    last_pos = 0
-    announced_missing = False
-    while True:
-        try:
-            if not output_path.exists():
-                if not announced_missing:
-                    _update_background_task_entry(
-                        state,
-                        task_id,
-                        output_path,
-                        f"等待输出文件: {output_path}",
-                        status="running",
-                    )
-                    await emit_text(f"[后台任务 {task_id}] 等待输出文件: {output_path}")
-                    await emit_tasks(state)
-                    announced_missing = True
-                await asyncio.sleep(2)
-                continue
-
-            announced_missing = False
-            text = output_path.read_text(encoding="utf-8", errors="replace")
-            if len(text) > last_pos:
-                chunk = text[last_pos:]
-                last_pos = len(text)
-                chunk = chunk.strip()
-                if chunk:
-                    _update_background_task_entry(state, task_id, output_path, chunk)
-                    await emit_text(f"[后台任务 {task_id}]\n{chunk}")
-                    await emit_tasks(state)
-                    if _background_chunk_status(chunk) in {"completed", "failed"}:
-                        await emit_text(f"[后台任务 {task_id}] 输出显示该任务已结束。")
-                        return
-        except asyncio.CancelledError:
-            raise
-        except Exception as ex:
-            _update_background_task_entry(
-                state,
-                task_id,
-                output_path,
-                f"读取输出失败: {ex}",
-                status="failed",
-            )
-            await emit_text(f"[后台任务 {task_id}] 读取输出失败: {ex}")
-            await emit_tasks(state)
-            return
-
-        await asyncio.sleep(2)
-
-
-async def _maybe_start_background_monitors(
-    msg: Any,
-    state: dict[str, Any],
-    emit_text: Any,
-    emit_tasks: Any,
-) -> None:
-    monitors = state.setdefault("background_monitors", {})
-    for task_id, output_path in _extract_background_task_info_from_message(msg):
-        if task_id in monitors:
-            continue
-        _update_background_task_entry(state, task_id, output_path, status="running")
-        await emit_tasks(state)
-        monitors[task_id] = asyncio.create_task(
-            _tail_background_task_output(task_id, output_path, state, emit_text, emit_tasks)
-        )
-
-
-async def _cancel_background_monitors(state: dict[str, Any]) -> None:
-    monitors = state.get("background_monitors") or {}
-    tasks = [t for t in monitors.values() if isinstance(t, asyncio.Task)]
-    for task in tasks:
-        task.cancel()
-    for task in tasks:
-        with suppress(asyncio.CancelledError):
-            await task
-    monitors.clear()
 
 
 def _dispatch_message_to_cli(msg: Any) -> None:
@@ -544,32 +319,21 @@ def _dispatch_message_to_cli(msg: Any) -> None:
         print(f"\n{status}  轮次: {msg.num_turns}{extra}\n", flush=True)
 
 
-async def _cli_consume_one_turn(
+async def _cli_sdk_receive_loop(
     client: ClaudeSDKClient,
     log_file,
     workspace: str,
     persist_state: dict[str, Any],
 ) -> None:
-    """只消费当前这一次 query 对应的一轮消息，直到 ResultMessage。
+    """持续消费 SDK 消息流（ClaudeSDKClient.receive_messages）。
 
-    这样进入「等待用户确认」后，不会因为后台任务通知而在用户未输入时自动推进下一步。
+    与 receive_response()（在 ResultMessage 处结束）不同：空闲等待用户输入时仍可收到
+    SystemMessage（如 task_notification），从而及时写入 log 与终端。
     """
     async for msg in client.receive_messages():
         _append_sdk_log_line(log_file, msg)
         persist_on_sdk_message(workspace, msg, persist_state)
         _dispatch_message_to_cli(msg)
-        await _maybe_start_background_monitors(
-            msg,
-            persist_state,
-            _cli_emit_background_text,
-            _emit_background_tasks_to_cli,
-        )
-        if isinstance(msg, ResultMessage):
-            break
-
-
-async def _cli_emit_background_text(text: str) -> None:
-    print(f"{text}\n", flush=True)
 
 
 async def cli_agent_loop(
@@ -577,11 +341,8 @@ async def cli_agent_loop(
     log_file,
     workspace: str,
 ) -> None:
-    persist_state: dict[str, Any] = {
-        "persist_assistant_buf": "",
-        "background_monitors": {},
-        "background_tasks": {},
-    }
+    persist_state: dict[str, Any] = {"persist_assistant_buf": ""}
+    drain = asyncio.create_task(_cli_sdk_receive_loop(client, log_file, workspace, persist_state))
     try:
         while True:
             try:
@@ -598,9 +359,10 @@ async def cli_agent_loop(
             print("思考中...\n", flush=True)
             write_user_turn_log(log_file, user_input)
             await client.query(user_input)
-            await _cli_consume_one_turn(client, log_file, workspace, persist_state)
     finally:
-        await _cancel_background_monitors(persist_state)
+        drain.cancel()
+        with suppress(asyncio.CancelledError):
+            await drain
 
 
 async def cli_main(
@@ -780,30 +542,19 @@ async def _dispatch_message_to_web(
         await ui.send({"type": "done"})
 
 
-async def _web_consume_one_turn(
+async def _web_sdk_receive_loop(
     client: ClaudeSDKClient,
     log_file,
     ui: Any,
     session_state: dict[str, Any],
     workspace: str,
 ) -> None:
-    """只消费当前这一次 query 的消息，直到 ResultMessage。
-
-    保证等待用户确认时，后台 task_notification 不会在无用户输入的情况下继续驱动会话。
-    """
+    """后台持续 consume receive_messages()，与主协程中仅负责 query(用户输入) 分离。"""
     try:
         async for msg in client.receive_messages():
             _append_sdk_log_line(log_file, msg)
             persist_on_sdk_message(workspace, msg, session_state)
             await _dispatch_message_to_web(msg, ui, session_state)
-            await _maybe_start_background_monitors(
-                msg,
-                session_state,
-                lambda text: ui.send({"type": "agent_text", "text": text}),
-                lambda cur_state: _emit_background_tasks_to_web(ui, cur_state),
-            )
-            if isinstance(msg, ResultMessage):
-                break
     except asyncio.CancelledError:
         raise
     except Exception as e:
@@ -818,16 +569,23 @@ async def web_agent_loop(
     session_state: dict[str, Any],
     workspace: str,
 ) -> None:
-    while True:
-        user_input = await ui.input_queue.get()
-        if user_input.lower() in ("quit", "exit"):
-            break
+    drain = asyncio.create_task(
+        _web_sdk_receive_loop(client, log_file, ui, session_state, workspace),
+    )
+    try:
+        while True:
+            user_input = await ui.input_queue.get()
+            if user_input.lower() in ("quit", "exit"):
+                break
 
-        await ui.send({"type": "status", "text": "思考中...", "thinking": True})
-        write_user_turn_log(log_file, user_input)
-        session_state["last_tool_error"] = False
-        await client.query(user_input)
-        await _web_consume_one_turn(client, log_file, ui, session_state, workspace)
+            await ui.send({"type": "status", "text": "思考中...", "thinking": True})
+            write_user_turn_log(log_file, user_input)
+            session_state["last_tool_error"] = False
+            await client.query(user_input)
+    finally:
+        drain.cancel()
+        with suppress(asyncio.CancelledError):
+            await drain
 
 
 async def web_main(
@@ -879,18 +637,12 @@ async def web_main(
                 web_session_state: dict[str, Any] = {
                     "last_tool_error": False,
                     "persist_assistant_buf": "",
-                    "background_monitors": {},
-                    "background_tasks": {},
                 }
                 await web_agent_loop(client, log_file, ui, web_session_state, workspace)
         except ProcessError:
             _print_process_error_help(workspace, resume)
             raise
     finally:
-        try:
-            await _cancel_background_monitors(locals().get("web_session_state", {}))
-        except Exception:
-            pass
         log_file.close()
         await ui.stop()
 

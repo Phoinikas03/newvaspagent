@@ -87,7 +87,7 @@ convergence/
 - 判定：各点计算**结束后**再读能量；若下一步依赖上一步结果，由 Agent **逐步推理**，与「多点可否并行」不矛盾。
 
 **Web / IDE：等待本批 `vasp_runner` 时不要冻结界面（流程不变）**  
-仍由你**完整负责**提交与本批全部结束后的读 OUTCAR / `check_convergence.py` / 能量表。启动 `vasp_runner.py` 须 **`Bash` + `run_in_background: true`**。**禁止**用 **`TaskOutput` + `block: true` + 超长 `timeout`** 单次等到结束（会卡死 Web/IDE 整轮）。改用 **`TaskOutput` + `block: false` 轮询**同一 `task_id`，或**每次几秒内返回**的 Bash 检查各子目录 `OUTCAR`/进程，重复直至就绪后再判定能量；**禁止**前景 Bash **长 `sleep`** 等 VASP（见仓库 system_prompt **LOCAL COMPUTE**）。
+仍由你**完整负责**提交与本批全部结束后的读 OUTCAR / `check_convergence.py` / 能量表。启动 `vasp_runner.py` 须 **`Bash` + `run_in_background: true`**。等待阶段鼓励**周期性检查**：对长作业优先使用较粗的间隔（例如 5 分钟），仅在临近完成或需要诊断异常时加密检查。可用 **`TaskOutput` + `block: false`** 按周期轮询同一 `task_id`，也可用带 `sleep` 的**后台** Bash 周期性检查各子目录 `OUTCAR`/进程，重复直至就绪后再判定能量；避免 **`TaskOutput` + `block: true` + 超长 `timeout`** 单次等到结束，因为这会卡死 Web/IDE 整轮。
 
 **建议目录布局**（可在当前 workspace 根目录或 `convergence_test/` 下）：
 

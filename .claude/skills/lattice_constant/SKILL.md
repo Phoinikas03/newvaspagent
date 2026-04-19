@@ -47,8 +47,8 @@ lattice_constant/
 为遵守仓库 **system_prompt** 的 **LOCAL COMPUTE** 规则并避免会话卡死：
 
 1. **启动**：对 **`vasp_runner.py`**（及任何分钟级 VASP 命令）使用 **`Bash` 且 `run_in_background: true`**。
-2. **等待完成**：**禁止**用 **`TaskOutput` + `block: true` + 超长 `timeout`**（例如数十万 ms）在**单次工具调用**里一直等到 VASP 结束——会整轮冻结 **Web / IDE**。**应**改用 **`TaskOutput` + `block: false`** 对同一 `task_id` **反复轮询**，直到 `completed` / 失败；若环境不支持非阻塞 `TaskOutput`，则用**每次几秒内返回**的 **Bash**（例如检查各目标目录 `OUTCAR` 是否已有终态能量行、相关 `vasp`/`mpirun` 进程是否仍存活）重复调用，直至本批任务全部就绪后再进入读结果与收敛检查。
-3. **禁止**在前景 Bash 里用**长 `sleep`**「等算完」（与 system_prompt 一致）。
+2. **等待完成**：鼓励**周期性检查**而不是高频刷新。对长任务，优先采用较粗的轮询间隔（例如 5 分钟），只在接近结束或需要排障时临时加密。避免用 **`TaskOutput` + `block: true` + 超长 `timeout`**（例如数十万 ms）在**单次工具调用**里一直等到 VASP 结束，因为这会整轮冻结 **Web / IDE**。**应**改用 **`TaskOutput` + `block: false`** 对同一 `task_id` 周期性轮询，直到 `completed` / 失败；若环境不支持非阻塞 `TaskOutput`，则用 Bash 周期性检查各目标目录 `OUTCAR` 是否已有终态能量行、相关 `vasp`/`mpirun` 进程是否仍存活，直至本批任务全部就绪后再进入读结果与收敛检查。
+3. 可以使用带 `sleep` 的等待逻辑，但更推荐放在**后台** Bash 或辅助脚本中，以兼顾周期性检查与界面响应性（与 system_prompt 一致）。
 
 上述仅改变**等待方式**，不改变：并行目录集合、每点单独核查、禁止 monolithic `for` 内串行多点 VASP 等规则。
 
