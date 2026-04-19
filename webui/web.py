@@ -13,7 +13,7 @@ import json
 from aiohttp import web
 import aiohttp
 
-WEB_PORT = 8888
+WEB_PORT = 18688
 # 首选端口被占用时，依次尝试 base+1 …（与 LiteLLM 4000 起扫端口思路一致）
 WEB_PORT_TRY_COUNT = 64
 

@@ -42,6 +42,13 @@ bandgap/
 
 **执行方式（与系统 ITERATIVE EXECUTION RULE 一致）**：每次 VASP 提交须**单独**执行并在继续前用 `check_convergence.py` 等检查；**严禁**用 Bash/Python 的 `for` 循环或单条命令把 PBE/HSE、多次参数试探或多目录计算一次性后台跑完。PBE 阶段通过并产出有效 `WAVECAR`/`CHGCAR` 后，再进入 HSE；HSE 前须已按步骤向用户确认。允许的一次性脚本仅限本 skill `scripts/` 下列出的后处理（如 `check_convergence.py`、`gap.py`）。
 
+**HSE 启动前确认（强制）**：
+- 在 **PBE 已收敛**、且 **HSE 输入文件已准备完成** 后，必须**单独输出一条面向用户的纯文本确认消息**，明确说明 HSE 计算即将开始、成本高、预计更耗时，并**停止生成，等待用户回复**。
+- **禁止**在同一轮里一边说“现在启动 HSE”一边直接调用 Bash / `run_vasp` / `TaskOutput` 启动 HSE。也就是说：**询问** 与 **实际启动 HSE** 必须分成两个独立回合。
+- 若检测到可用 GPU，必须在该确认消息中明确告知：**HSE 可选择使用 1 卡或多卡 GPU**，并**明确询问用户希望使用多少张 GPU**。
+- 在用户尚未明确回复“继续”以及未明确给出 **GPU 卡数**（如 `1`、`2`、`4` 等）之前，**不得**提交 HSE 任务。
+- 若用户只回复“继续”但未说明 GPU 卡数，而当前环境存在 GPU，必须继续追问 GPU 数量；**不得**自行默认 1 卡或多卡。
+
 ### literature 调用规则（必读）
 
 - **与实验值对比**（实验带隙、实验结构数据等）：**仅当用户明确要求**时再调用 `Skill: literature`（例如用户说「和实验比」「对比文献实验带隙」「查一下实验值」）。若用户只说「整理结果」「汇报结果」「总结带隙」等而未提及实验/文献对比，**只**根据 `gap.py`、本地 `OUTCAR`/`vasprun.xml` 与已有文件汇报，**不得**自动调用 `literature`，也不得自动 `arxiv_search` / `google_search` 做实验对比。
@@ -97,7 +104,10 @@ bandgap/
 3. `Write INCAR`（覆写）
 4. `Bash`：`cp INCAR INCAR_hse`（保留历史版本，不可省略）
 5. 生成说明文档：`Write HSE_INCAR_explanation.md`，记录 PBE→HSE 的参数逻辑及参考来源
-6. 向用户确认是否继续（HSE 耗时极长），等待回复后再按 Skill `run_vasp` 运行 HSE 步
+6. **单独**向用户确认是否继续（HSE 耗时极长），等待回复后再按 Skill `run_vasp` 运行 HSE 步
+   - 若检测到 GPU，可明确告诉用户：HSE 可使用 **1 卡或多卡 GPU**
+   - 必须**明确询问 GPU 数量**
+   - 该轮只允许询问并等待回复，**不得**在同一轮直接启动 HSE
 7. 计算结束后，`Bash`：`python scripts/check_convergence.py .`
    - 若遇到报错，先 `Read references/troubleshooting.md` 查阅处理方案
    - `ZBRENT: fatal error` 等已知报错在 `vasprun.xml` 完整生成的前提下可安全忽略
@@ -145,5 +155,6 @@ bandgap/
 - **WAVECAR 连续性**：`ISTART=1` 是 HSE 阶段热启动的关键，绝不能在 HSE 阶段设 `ISTART=0`。
 - **ENCUT 一致性**：PBE 和 HSE 两阶段的 `ENCUT` 必须完全相同，否则 WAVECAR 无法读取。
 - **ENCUT / KSPACING 收敛**：正式带隙对比或发表级计算前，宜对松弛后结构做收敛；**须先征得用户同意**再载入 **`convergence`**，再贯穿 PBE 与 HSE；若用户选择不做，须在说明文档中声明风险。
+- **HSE 前单独确认**：HSE 启动前必须有一个**独立用户回合**用于确认是否继续；若有 GPU，还必须明确问清 **GPU 卡数**。在未获得这些确认前，禁止提交 HSE。
 - **历史文件追溯**：`INCAR_pbe` 和 `INCAR_hse` 必须在工作区中同时存在，不允许静默覆盖。
 - **参数先查本地**：先查 `references/hse_params.md` 和 `references/troubleshooting.md`。本地未覆盖且**用户同意**用文献补 HSE 参数时，再按 §2 调用 `Skill: literature`。**实验带隙对比**仅在用户明确要求时调用 literature（见上文 **literature 调用规则**）；不得用 `arxiv_search` / `google_search` 替代用户未请求的实验对比。

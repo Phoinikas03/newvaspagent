@@ -92,7 +92,7 @@ relax/
 
 ### 5. 运行 VASP 计算
 
-按 Skill `run_vasp`，用 **`Bash` + `run_in_background: true`** 提交计算；等待完成时遵守仓库 **LOCAL COMPUTE**（**禁止**长时间 **`TaskOutput` + `block: true`** 冻结 Web/IDE；用 **`block: false` 轮询**或短时 Bash 检查直至结束）后再跑 `check_convergence.py` 等。
+按 Skill `run_vasp`，用 **`Bash` + `run_in_background: true`** 提交计算；等待完成时遵守仓库 **LOCAL COMPUTE**：鼓励**周期性检查**，对长任务优先采用较粗的检查间隔（例如 5 分钟），必要时再临时加密；避免长时间 **`TaskOutput` + `block: true`** 冻结 Web/IDE。优先用 **`block: false`** 的周期性轮询或带 `sleep` 的后台 Bash 检查直至结束，再跑 `check_convergence.py` 等。
 
 ---
 
