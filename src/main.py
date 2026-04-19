@@ -70,22 +70,32 @@ def resolve_workspace(run_dir: str | None) -> tuple[Path, str | None]:
     """
     解析工作区路径与是否恢复会话。
     - run_dir 为空：新建 runs/<时间戳>，不恢复。
-    - run_dir 非空：使用 runs/<run_dir>，若存在 log.txt 则解析 session_id 供 SDK resume。
+    - run_dir 为单级目录名：兼容旧行为，解析为 runs/<run_dir>。
+    - run_dir 为相对/绝对路径：直接按该路径解析。
+    若最终目录存在 log.txt，则解析 session_id 供 SDK resume。
     """
     base = RUNS_ROOT.resolve()
-    name = (run_dir or "").strip()
-    if not name:
+    raw = (run_dir or "").strip()
+    if not raw:
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         ws = base / ts
         ws.mkdir(parents=True, exist_ok=True)
         return ws, None
-    if name in (".", "..") or "/" in name or "\\" in name:
-        raise ValueError("--dir 只能是 runs 下的单级子目录名，不能含路径分隔符")
-    ws = (base / name).resolve()
+
+    candidate = Path(raw).expanduser()
+    if candidate.is_absolute():
+        ws = candidate.resolve()
+    elif candidate.parent == Path("."):
+        # 兼容旧行为：裸目录名默认解释为 runs/<name>。
+        ws = (base / candidate.name).resolve()
+    else:
+        # 支持显式相对路径，例如 runs/foo、./runs/foo、../other/foo。
+        ws = candidate.resolve()
+
     try:
         ws.relative_to(base)
     except ValueError:
-        raise ValueError("--dir 解析后不在 runs 目录内")
+        pass
     if not ws.is_dir():
         raise ValueError(f"目录不存在: {ws}")
     resume = _parse_last_session_id(ws / SESSION_LOG_NAME)
@@ -664,7 +674,12 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default="",
         metavar="NAME",
-        help="runs 下的子目录名；省略或空则新建时间戳目录并开始新会话；指定则使用该目录并尝试从 log.txt 恢复会话",
+        help=(
+            "工作目录；省略则新建 runs/<时间戳>。"
+            "传单级目录名时按 runs/<name> 解析；"
+            "也支持相对路径或绝对路径。"
+            "若目录内有 log.txt，则尝试恢复会话"
+        ),
     )
     parser.add_argument(
         "--port",
