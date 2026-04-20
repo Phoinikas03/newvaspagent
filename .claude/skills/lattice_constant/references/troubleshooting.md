@@ -37,7 +37,7 @@
 ## 5. 路径与脚本找不到
 
 - 工作目录在 `runs/...` 时，请用 **绝对路径** 调用 Skill 内脚本，例如：
-  - `python .../lattice_constant/scripts/check_convergence.py .`
+  - `python .../run_vasp/scripts/check_convergence.py .`
 - `templates/INCAR_static` 位于 `lattice_constant/templates/`，复制到各 `scale_*` 目录后再改 `ENCUT`。
 
 ## 6. Materials Project mp-id 与结构不符

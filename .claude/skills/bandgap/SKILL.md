@@ -14,8 +14,7 @@ version: "2.2.1"
 bandgap/
 ├── SKILL.md                       ← 本文件（工作流指令）
 ├── scripts/
-│   ├── gap.py                     ← 从 vasprun.xml 提取带隙，输出 JSON
-│   └── check_convergence.py       ← 检查 OUTCAR 收敛状态，输出 JSON
+│   └── gap.py                     ← 从 vasprun.xml 提取带隙，输出 JSON
 ├── references/
 │   ├── hse_params.md              ← 不同材料体系的 HSE 参数经验值
 │   └── troubleshooting.md         ← 常见报错与处理方案
@@ -41,7 +40,7 @@ bandgap/
 
 注意：当前运行在无 GUI 的终端环境中。若需向用户提问，**直接输出纯文本问题并停止生成，等待用户在终端输入回复**。
 
-**执行方式（与系统 ITERATIVE EXECUTION RULE 一致）**：每次 VASP 提交须**单独**执行并在继续前用 `check_convergence.py` 等检查；**严禁**用 Bash/Python 的 `for` 循环或单条命令把 PBE/HSE、多次参数试探或多目录计算一次性后台跑完。PBE 阶段通过并产出有效 `WAVECAR`/`CHGCAR` 后，再进入 HSE；HSE 前须已按步骤向用户确认。允许的一次性脚本仅限本 skill `scripts/` 下列出的后处理（如 `check_convergence.py`、`gap.py`）。
+**执行方式（与系统 ITERATIVE EXECUTION RULE 一致）**：每次 VASP 提交须**单独**执行并在继续前用 `run_vasp/scripts/check_convergence.py` 等检查；**严禁**用 Bash/Python 的 `for` 循环或单条命令把 PBE/HSE、多次参数试探或多目录计算一次性后台跑完。PBE 阶段通过并产出有效 `WAVECAR`/`CHGCAR` 后，再进入 HSE；HSE 前须已按步骤向用户确认。允许的一次性脚本仅限本 skill `scripts/` 与 `run_vasp/scripts/` 下列出的后处理（如 `gap.py`、`check_convergence.py`）。
 
 **HSE 启动前确认（强制）**：
 - 在 **PBE 已收敛**、且 **HSE 输入文件已准备完成** 后，必须**单独输出一条面向用户的纯文本确认消息**，明确说明 HSE 计算即将开始、成本高、预计更耗时，并**停止生成，等待用户回复**。
@@ -90,8 +89,8 @@ bandgap/
 3. `Write INCAR`（覆写）
 4. `Bash`：`cp INCAR INCAR_pbe`（保留历史版本，不可省略）
 5. 调用 `setup_vasp_inputs` 准备 POTCAR（含 **`KSPACING`** 时不生成 **KPOINTS**）
-6. 按 Skill `run_vasp`，用 Bash 或 `TaskOutput` 提交 PBE 步 VASP 计算
-7. 计算结束后，`Bash`：`python scripts/check_convergence.py .`
+6. 按 Skill `run_vasp`，**通过 Bash 调用 `python .claude/skills/run_vasp/scripts/vasp_runner.py`** 提交 PBE 步 VASP 计算；**不得**直接手写 `mpirun ... vasp_std/vasp_gpu`。单目录时应显式传 `--log-file vasp_pbe.log`
+7. 计算结束后，`Bash`：`python .claude/skills/run_vasp/scripts/check_convergence.py .`
    - 确认 `electronic_converged: true`
    - 确认 `wavecar_nonempty: true` 且 `chgcar_nonempty: true`
    - 若未收敛，读取 `errors` 和 `last_lines` 字段，参考 `references/troubleshooting.md` 排查，修正 INCAR 后重试
@@ -108,11 +107,11 @@ bandgap/
 4. `Write INCAR`（覆写）
 5. `Bash`：`cp INCAR INCAR_hse`（保留历史版本，不可省略）
 6. 生成说明文档：`Write HSE_INCAR_explanation.md`，记录 PBE→HSE 的参数逻辑及参考来源
-7. **单独**向用户确认是否继续（HSE 耗时极长），等待回复后再按 Skill `run_vasp` 运行 HSE 步
+7. **单独**向用户确认是否继续（HSE 耗时极长），等待回复后再按 Skill `run_vasp` **通过 `vasp_runner.py`** 运行 HSE 步；**不得**直接手写 `mpirun ... vasp_std/vasp_gpu`。单目录时应显式传 `--log-file vasp_hse.log`
    - 若检测到 GPU，可明确告诉用户：HSE 可使用 **1 卡或多卡 GPU**
    - 必须**明确询问 GPU 数量**
    - 该轮只允许询问并等待回复，**不得**在同一轮直接启动 HSE
-8. 计算结束后，`Bash`：`python scripts/check_convergence.py .`
+8. 计算结束后，`Bash`：`python .claude/skills/run_vasp/scripts/check_convergence.py .`
    - 若遇到报错，先 `Read references/troubleshooting.md` 查阅处理方案
    - `ZBRENT: fatal error` 等已知报错在 `vasprun.xml` 完整生成的前提下可安全忽略
 

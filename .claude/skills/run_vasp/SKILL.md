@@ -9,6 +9,13 @@ version: "1.0.2"
 ## 核心目标
 作为高级计算科学助理，你的职责是安全、高效地编排 VASP 任务。在执行任何计算前，你必须感知所处环境，绝不能在未确认资源、**可执行依赖**与算力映射的情况下盲目执行耗时计算或 `mpirun`。
 
+**提交入口（强制）**：当用户要求真正启动 VASP 时，默认且首选的提交入口是：
+- `python .claude/skills/run_vasp/scripts/vasp_runner.py ...`
+- `python .claude/skills/run_vasp/scripts/quick_test.py ...`（仅快速试错）
+- `python .claude/skills/run_vasp/scripts/check_convergence.py <workdir>`（运行后统一状态检查）
+
+除非是在 **`vasp_runner.py` 生成/驱动的脚本内部**，否则 assistant **不得**直接在 Bash 里手写 `mpirun -np ... vasp_std/vasp_gpu` 作为正式提交命令。也就是说：**`run_vasp` skill 的意义不只是“先读规则”，而是要把实际执行收敛到 runner 脚本。**
+
 若用户不仅要“运行”，还要你**根据硬件修改 `INCAR` 并优化并行参数**，本 skill 不负责拍板 `KPAR/NCORE/NPAR` 的具体值。此时应先加载 `performance` skill，先问清用户设备并改好 `INCAR`，然后再回到本 skill 执行。
 
 ## 核心执行准则 (CRITICAL EXECUTION RULES)
@@ -33,7 +40,7 @@ version: "1.0.2"
 
 在调用 `Bash` 或 `TaskOutput` **真正启动**计算前，**必须**停下并向用户展示：（1）Step 2 得到的**硬件与调度摘要**（CPU/GPU 数、是否登录节点、调度器类型等）；（2）你**最终采用的完整命令**（含 `source env_script`、`CUDA_VISIBLE_DEVICES` 若手写、`vasp_runner.py` 的完整参数行，或作业脚本中的 `mpirun` 行）。**仅当用户明确同意**（如「是 / 同意 / 确认」）后，方可执行。
 
-*示例*：「探针显示共 8 块 GPU。当前收敛测试第一步采用单卡单任务。拟执行：`source ./template/env_local.sh && python .claude/skills/run_vasp/scripts/vasp_runner.py --dirs <dir> --mode local --np 1 --exe vasp_gpu --gpu-per-task 1 --env-script ./template/env_local.sh`（若站点 GPU 入口为 `vasp_std`，则将 `--exe vasp_std`）。是否同意？」
+*示例*：「探针显示共 8 块 GPU。当前收敛测试第一步采用单卡单任务。拟执行：`source ./template/env_local.sh && python .claude/skills/run_vasp/scripts/vasp_runner.py --dirs <dir> --mode local --np 1 --exe vasp_gpu --gpu-per-task 1 --env-script ./template/env_local.sh --log-file vasp_pbe.log`（若站点 GPU 入口为 `vasp_std`，则将 `--exe vasp_std`）。是否同意？」
 
 **与迭代工作流的关系**：命令确认针对**当前拟执行的这一步或这一批**；若上游 skill 要求逐点/逐目录核查，仍须遵守下文 Step 4 的 **ITERATIVE EXECUTION RULE**，**禁止**用「一次确认」覆盖随后无核查的多点排队。多任务本地并发优先用 `vasp_runner.py` 内置的 GPU 分配与日志，**不要**自写 monolithic `for`+`mpirun` 绕过 runner 与迭代规则。
 
@@ -59,7 +66,7 @@ version: "1.0.2"
 
 ### Step 1: 意图识别 (Intent Recognition)
 - 询问用户或分析 Prompt：这是正式的生产计算（Production），还是只是为了测试输入文件是否合法的快速验证（Pre-flight / Quick Test）？
-- **如果属于快速试错**：先完成 Step 2 探针；若依赖满足，调用 `python .claude/skills/run_vasp/scripts/quick_test.py`（可配合 `--env-script`、`--exe`）。
+- **如果属于快速试错**：先完成 Step 2 探针；若依赖满足，调用 `python .claude/skills/run_vasp/scripts/quick_test.py`（可配合 `--env-script`、`--exe`、`--log-file`）。
 - **如果是生产计算**：进入 Step 2。
 
 ### Step 2: 环境侦察 (Environment Probing)
@@ -92,10 +99,27 @@ version: "1.0.2"
 
 **若 `dependencies` 显示所需可执行文件不可用（且不属于「仅计算节点有模块」的已说明情形）**：必须在推荐策略中主动询问用户需要加载的 module 或环境变量，并写入执行策略的 **env_script**；**绝不能**在未解决前直接执行本地 VASP。
 
+**对外参数速查（建议在向用户展示命令时优先使用）**：
+- `--dirs <dir1> [dir2 ...]`：要运行的工作目录
+- `--mode local|slurm`：本地直接运行或生成并提交 Slurm
+- `--np N`：每个目录对应一次 VASP 任务的 MPI rank 数
+- `--exe vasp_std|vasp_gpu|<site_exe>`：实际可执行文件名
+- `--gpu-per-task N`：每个任务绑定 GPU 数；本地 GPU 场景建议显式给出
+- `--env-script <path>`：先 `source` 的环境脚本
+- `--log-file <name>`：单目录任务显式日志名，例如 `vasp_pbe.log`
+- `--log-prefix <prefix>`：多目录任务日志前缀，默认会产出 `vasp_run_0.log` 等
+- `--slurm-template <path>`：Slurm 模板
+- `--min-gpu-free-mib` / `--max-gpu-util-percent` / `--gpu-ready-poll-sec` / `--gpu-ready-timeout-sec` / `--fixed-gpu-layout` / `--empty-gpu-max-used-mib`：本地 GPU 门控与选卡策略
+
+**日志约定（建议）**：
+- 单一步骤、单目录：显式传 `--log-file`，例如 `vasp_pbe.log`、`vasp_hse.log`、`vasp_relax.log`
+- 多目录批量：用 `--log-prefix`，例如 `--log-prefix vasp_encut`，结果为 `vasp_encut_0.log`、`vasp_encut_1.log` …
+- `quick_test.py` 默认写 `vasp_quick_test.log`
+
 ### Step 4: 执行与追踪 (Execution & Tracking)
-- 与用户确认策略与 **env_script** 后，先完成 **「核心执行准则 §2」**：展示硬件摘要与**完整拟执行命令**（或作业脚本内 `mpirun` 片段），**取得用户明确同意**，再通过 Bash 调用 `python .claude/skills/run_vasp/scripts/vasp_runner.py`（传入 `--dirs`、`--mode`、`--np`、`--exe`、`--env-script`、`--gpu-per-task` 等）或提交 Slurm/PBS。
+- 与用户确认策略与 **env_script** 后，先完成 **「核心执行准则 §2」**：展示硬件摘要与**完整拟执行命令**（或作业脚本内 `mpirun` 片段），**取得用户明确同意**，再通过 Bash 调用 `python .claude/skills/run_vasp/scripts/vasp_runner.py`（传入 `--dirs`、`--mode`、`--np`、`--exe`、`--env-script`、`--gpu-per-task`、`--log-file/--log-prefix` 等）或提交 Slurm/PBS。
 - **`vasp_runner` 已启动后的等待方式（与仓库 system_prompt 一致）：** Bash 必须使用 **`run_in_background: true`**。等待阶段鼓励**周期性检查**而不是高频刷新：对长作业优先采用较粗的检查间隔（例如 5 分钟），仅在接近完成或排查异常时临时加密。可以使用 **`TaskOutput` + `block: false`** 按周期查询同一 `task_id`，也可以使用带 `sleep` 的**后台** Bash 辅助脚本定期检查各目录 `OUTCAR`、日志与进程状态；完成后再读日志与做下游检查。避免 **`TaskOutput` + `block: true` + 超长 `timeout`** 单次阻塞到 VASP 结束，因为这会冻结 Web/IDE。
-- 告知用户日志路径；Slurm 场景用 `squeue -u $USER` 等帮助追踪队列状态。
+- 告知用户日志路径；优先引用工作目录中的显式日志文件（`--log-file` 或 `--log-prefix` 产物），不要只让日志停留在外层 Bash 任务输出。Slurm 场景再辅以 `squeue -u $USER` 等帮助追踪队列状态。
 - **与项目 ITERATIVE EXECUTION RULE 对齐**：若上游 skill 要求**逐点**收敛（多 ENCUT/K 点）或**逐目录**核查（如多个 `scale_*`），**禁止**单次 `vasp_runner.py --dirs` 把全部点或全部目录一次性排队跑完而不在中间读 OUTCAR/日志；应分多次调用（或每批少量目录），每步确认后再继续。
 
 ---

@@ -6,7 +6,7 @@
 
 - 本 Skill 根目录：`.claude/skills/convergence/`（或项目内绝对路径）。
 - 运行脚本时若当前工作目录在 `runs/<timestamp>/`，请使用 **Skill 内脚本的绝对路径**，例如：
-  - `python /.../newvaspagent/.claude/skills/convergence/scripts/check_convergence.py .`
+  - `python /.../newvaspagent/.claude/skills/run_vasp/scripts/check_convergence.py .`
 
 ## 截断能 ENCUT 测试
 

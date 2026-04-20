@@ -92,7 +92,9 @@ relax/
 
 ### 5. 运行 VASP 计算
 
-按 Skill `run_vasp`，用 **`Bash` + `run_in_background: true`** 提交计算；等待完成时遵守仓库 **LOCAL COMPUTE**：鼓励**周期性检查**，对长任务优先采用较粗的检查间隔（例如 5 分钟），必要时再临时加密；避免长时间 **`TaskOutput` + `block: true`** 冻结 Web/IDE。优先用 **`block: false`** 的周期性轮询或带 `sleep` 的后台 Bash 检查直至结束，再跑 `check_convergence.py` 等。
+按 Skill `run_vasp`，**通过 Bash 调用 `python .claude/skills/run_vasp/scripts/vasp_runner.py`** 提交计算；**不得**直接手写 `mpirun ... vasp_std/vasp_gpu`。单目录松弛任务应显式传 `--log-file vasp_relax.log`；若是续算，继续沿用该日志名或在向用户汇报时明确新的日志文件名。
+
+等待完成时遵守仓库 **LOCAL COMPUTE**：鼓励**周期性检查**，对长任务优先采用较粗的检查间隔（例如 5 分钟），必要时再临时加密；避免长时间 **`TaskOutput` + `block: true`** 冻结 Web/IDE。优先用 **`block: false`** 的周期性轮询或带 `sleep` 的后台 Bash 检查直至结束，再跑 `check_convergence.py` 等。
 
 ---
 
@@ -152,3 +154,4 @@ python scripts/analyze_result.py .
 - **物理严谨性**：时刻关注材料的电子结构分类（金属/半导体、磁性/非磁性），确保 ISMEAR/MAGMOM 等参数设置合理。
 - **续算而非重算**：离子步未收敛时，将 CONTCAR 复制为 POSCAR 续算，而不是从头开始。
 - **步骤透明**：每完成一个重要节点（获取结构、生成 INCAR、完成收敛检查），向用户简要汇报进度。
+- **日志落盘**：正式计算日志应优先落在工作目录中的显式文件（如 `vasp_relax.log`），不要只停留在外层 Bash/任务系统输出。
