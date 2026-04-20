@@ -1,0 +1,4 @@
+一开始告诉vasp agent要算什么体系，POSCAR在哪里
+这些POSCAR都认为是已经经过结构弛豫了
+但仍然要做收敛测试，即确定ENCUT和KSPACING
+收敛测试每个ENCUT/KSPACING用1张卡并行测，PBE用1-2卡，HSE用8卡计算
