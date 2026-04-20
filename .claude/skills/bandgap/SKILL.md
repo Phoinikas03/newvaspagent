@@ -33,6 +33,7 @@ bandgap/
 - `get_poscar_from_md`：根据 Materials Project ID 获取 POSCAR
 - `setup_vasp_inputs`：生成 POTCAR 与 POSCAR 拷贝；若 **INCAR** 中含 **`KSPACING`** 则**不**生成 **KPOINTS**
 - Skill（`run_vasp`）：按该 skill 与系统 orchestration 规则运行 VASP（MCP 工具 `run_vasp` 已移除）
+- Skill（`performance`）：当用户提到 GPU、`KPAR`、`NCORE`、`NPAR`、并行数量，或需要按硬件决定并行策略时，必须先用该 skill 确定并行参数，再写最终 `INCAR`
 - `Write` / `Edit`：生成和修改工作区文件
 - `Bash`：文件管理、运行后处理脚本
 - `Read` / `Grep`：读取日志和输出文件
@@ -48,6 +49,7 @@ bandgap/
 - 若检测到可用 GPU，必须在该确认消息中明确告知：**HSE 可选择使用 1 卡或多卡 GPU**，并**明确询问用户希望使用多少张 GPU**。
 - 在用户尚未明确回复“继续”以及未明确给出 **GPU 卡数**（如 `1`、`2`、`4` 等）之前，**不得**提交 HSE 任务。
 - 若用户只回复“继续”但未说明 GPU 卡数，而当前环境存在 GPU，必须继续追问 GPU 数量；**不得**自行默认 1 卡或多卡。
+- 只要用户已提到 GPU、`KPAR`、`NCORE`、`NPAR` 或“并行怎么设”，就不得直接沿用模板中的旧并行参数；必须先调用 `Skill: performance`，根据硬件场景生成或修改最终并行设置。
 
 ### literature 调用规则（必读）
 
@@ -83,12 +85,13 @@ bandgap/
 
 **目标**：获得高质量波函数（`WAVECAR`）和电荷密度（`CHGCAR`），供 HSE 续算使用。
 
-1. `Read templates/INCAR_pbe_scf`，按材料调整 **`ENCUT`** 与 **`KSPACING`**：优先采用 **`convergence`** 给出的收敛值；若无报告，可用 POTCAR 中最大 ENMAX × 1.3 作为 **ENCUT** 初值、模板 **KSPACING**，并在文档中说明未做系统收敛。**`KSPACING`**（及 **`KGAMMA`**）在 PBE 与后续 HSE 中必须一致
-2. `Write INCAR`（覆写）
-3. `Bash`：`cp INCAR INCAR_pbe`（保留历史版本，不可省略）
-4. 调用 `setup_vasp_inputs` 准备 POTCAR（含 **`KSPACING`** 时不生成 **KPOINTS**）
-5. 按 Skill `run_vasp`，用 Bash 或 `TaskOutput` 提交 PBE 步 VASP 计算
-6. 计算结束后，`Bash`：`python scripts/check_convergence.py .`
+1. `Read templates/INCAR_pbe_scf`，按材料调整 **`ENCUT`** 与 **`KSPACING`**：优先采用 **`convergence`** 给出的收敛值；若无报告，可用 POTCAR 中最大 ENMAX × 1.3 作为 **`ENCUT`** 初值、模板 **`KSPACING`**，并在文档中说明未做系统收敛。**`KSPACING`**（及 **`KGAMMA`**）在 PBE 与后续 HSE 中必须一致
+2. 若用户已经说明使用 GPU，或明确提到 `KPAR` / `NCORE` / `NPAR` / 并行数量，必须先调用 `Skill: performance`，结合当前硬件为 PBE 阶段确定并行参数；不要自行拍脑袋保留或写入默认并行项
+3. `Write INCAR`（覆写）
+4. `Bash`：`cp INCAR INCAR_pbe`（保留历史版本，不可省略）
+5. 调用 `setup_vasp_inputs` 准备 POTCAR（含 **`KSPACING`** 时不生成 **KPOINTS**）
+6. 按 Skill `run_vasp`，用 Bash 或 `TaskOutput` 提交 PBE 步 VASP 计算
+7. 计算结束后，`Bash`：`python scripts/check_convergence.py .`
    - 确认 `electronic_converged: true`
    - 确认 `wavecar_nonempty: true` 且 `chgcar_nonempty: true`
    - 若未收敛，读取 `errors` 和 `last_lines` 字段，参考 `references/troubleshooting.md` 排查，修正 INCAR 后重试
@@ -101,14 +104,15 @@ bandgap/
 
 1. 确认工作区内 `WAVECAR` 和 `CHGCAR` 均存在且非空（来自第 3 步）
 2. `Read templates/INCAR_hse`，将 `ENCUT`、**`KSPACING`**（及 **`KGAMMA`**）设为与 PBE SCF **完全一致**，填入第 2 步确定的 HSE 参数
-3. `Write INCAR`（覆写）
-4. `Bash`：`cp INCAR INCAR_hse`（保留历史版本，不可省略）
-5. 生成说明文档：`Write HSE_INCAR_explanation.md`，记录 PBE→HSE 的参数逻辑及参考来源
-6. **单独**向用户确认是否继续（HSE 耗时极长），等待回复后再按 Skill `run_vasp` 运行 HSE 步
+3. 若用户已经说明使用 GPU，或明确提到 `KPAR` / `NCORE` / `NPAR` / 并行数量，必须在写 HSE `INCAR` 之前先调用 `Skill: performance`，由该 skill 根据单 GPU、多 GPU、CPU-only 或多节点场景确定并行项；不要沿用模板默认值，也不要只改启动命令而不改 `INCAR`
+4. `Write INCAR`（覆写）
+5. `Bash`：`cp INCAR INCAR_hse`（保留历史版本，不可省略）
+6. 生成说明文档：`Write HSE_INCAR_explanation.md`，记录 PBE→HSE 的参数逻辑及参考来源
+7. **单独**向用户确认是否继续（HSE 耗时极长），等待回复后再按 Skill `run_vasp` 运行 HSE 步
    - 若检测到 GPU，可明确告诉用户：HSE 可使用 **1 卡或多卡 GPU**
    - 必须**明确询问 GPU 数量**
    - 该轮只允许询问并等待回复，**不得**在同一轮直接启动 HSE
-7. 计算结束后，`Bash`：`python scripts/check_convergence.py .`
+8. 计算结束后，`Bash`：`python scripts/check_convergence.py .`
    - 若遇到报错，先 `Read references/troubleshooting.md` 查阅处理方案
    - `ZBRENT: fatal error` 等已知报错在 `vasprun.xml` 完整生成的前提下可安全忽略
 
@@ -156,5 +160,6 @@ bandgap/
 - **ENCUT 一致性**：PBE 和 HSE 两阶段的 `ENCUT` 必须完全相同，否则 WAVECAR 无法读取。
 - **ENCUT / KSPACING 收敛**：正式带隙对比或发表级计算前，宜对松弛后结构做收敛；**须先征得用户同意**再载入 **`convergence`**，再贯穿 PBE 与 HSE；若用户选择不做，须在说明文档中声明风险。
 - **HSE 前单独确认**：HSE 启动前必须有一个**独立用户回合**用于确认是否继续；若有 GPU，还必须明确问清 **GPU 卡数**。在未获得这些确认前，禁止提交 HSE。
+- **并行参数先交给 performance**：一旦用户提到 GPU、`KPAR`、`NCORE`、`NPAR` 或要求按硬件优化，PBE/HSE 两阶段都必须先调用 **`Skill: performance`** 再写最终 `INCAR`；`bandgap` 模板不得私自保留默认 `NCORE`。
 - **历史文件追溯**：`INCAR_pbe` 和 `INCAR_hse` 必须在工作区中同时存在，不允许静默覆盖。
 - **参数先查本地**：先查 `references/hse_params.md` 和 `references/troubleshooting.md`。本地未覆盖且**用户同意**用文献补 HSE 参数时，再按 §2 调用 `Skill: literature`。**实验带隙对比**仅在用户明确要求时调用 literature（见上文 **literature 调用规则**）；不得用 `arxiv_search` / `google_search` 替代用户未请求的实验对比。
