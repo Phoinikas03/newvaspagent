@@ -1,6 +1,6 @@
 ---
 name: run-vasp
-description: "环境与硬件感知下编排 VASP：探针 mpirun/vasp_std/vasp_gpu、STRICT HARDWARE ALIGNMENT（GPU 与 CPU 共存 / Slurm 分叉）、GPU 映射（通常 1 rank↔1 GPU）、ITERATIVE 分批调用 vasp_runner、执行前向用户展示完整命令并取得同意。凡在本工作区使用 mpirun、vasp_std、vasp_gpu、Slurm/PBS 提交或 vasp_runner.py 时必须加载本 skill；lattice_constant、relax、bandgap、adsorption_energy、literature、supercell 等材料类 skill 在真正启动 VASP 前也必须先加载本 skill。"
+description: "环境与硬件感知下编排 VASP：探针 mpirun/vasp_std/vasp_gpu、STRICT HARDWARE ALIGNMENT（GPU 与 CPU 共存 / Slurm 分叉）、GPU 映射（通常 1 rank↔1 GPU）、ITERATIVE 分批调用 vasp_runner、执行前向用户展示完整命令并取得同意。凡在本工作区使用 mpirun、vasp_std、vasp_gpu、Slurm/PBS 提交或 vasp_runner.py 时必须加载本 skill；若用户还要求按 CPU/GPU 资源优化或改写 INCAR 中的 KPAR/NCORE/NPAR，则在真正启动前还必须先加载 performance skill。lattice_constant、relax、bandgap、adsorption_energy、literature、supercell 等材料类 skill 在真正启动 VASP 前也必须先加载本 skill。"
 version: "1.0.2"
 ---
 
@@ -8,6 +8,8 @@ version: "1.0.2"
 
 ## 核心目标
 作为高级计算科学助理，你的职责是安全、高效地编排 VASP 任务。在执行任何计算前，你必须感知所处环境，绝不能在未确认资源、**可执行依赖**与算力映射的情况下盲目执行耗时计算或 `mpirun`。
+
+若用户不仅要“运行”，还要你**根据硬件修改 `INCAR` 并优化并行参数**，本 skill 不负责拍板 `KPAR/NCORE/NPAR` 的具体值。此时应先加载 `performance` skill，先问清用户设备并改好 `INCAR`，然后再回到本 skill 执行。
 
 ## 核心执行准则 (CRITICAL EXECUTION RULES)
 
