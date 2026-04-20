@@ -53,7 +53,13 @@ def setup_quick_test_incar(incar_path):
         f.write("NWRITE = 1\n") # 减少输出
     return backup_path
 
-def run_quick_test(work_dir, exe="vasp_std", env_script=""):
+def run_quick_test(
+    work_dir,
+    exe="vasp_std",
+    env_script="",
+    log_file="vasp_quick_test.log",
+    np=2,
+):
     work_dir = Path(work_dir).resolve()
     incar_path = work_dir / "INCAR"
     
@@ -64,12 +70,13 @@ def run_quick_test(work_dir, exe="vasp_std", env_script=""):
     print("Configuring INCAR for quick test (NELM=5, NSW=0)...")
     backup_path = setup_quick_test_incar(incar_path)
 
-    cmd = f"mpirun -np 2 {exe}"
+    cmd = f"mpirun -np {int(np)} {exe} > {shlex.quote(log_file)} 2>&1"
     if env_script and Path(env_script).exists():
         cmd = f"source {env_script} && {cmd}"
 
     verify_local_dependencies(exe, env_script)
     print(f"Executing quick test: {cmd}")
+    print(f"Quick-test log: {work_dir / log_file}")
     try:
         proc = subprocess.run(cmd, cwd=work_dir, shell=True, executable="/bin/bash")
         if proc.returncode != 0:
@@ -87,5 +94,7 @@ if __name__ == "__main__":
     parser.add_argument("--work-dir", type=str, default=".")
     parser.add_argument("--exe", type=str, default="vasp_std")
     parser.add_argument("--env-script", type=str, default="")
+    parser.add_argument("--log-file", type=str, default="vasp_quick_test.log")
+    parser.add_argument("--np", type=int, default=2)
     args = parser.parse_args()
-    run_quick_test(args.work_dir, args.exe, args.env_script)
+    run_quick_test(args.work_dir, args.exe, args.env_script, args.log_file, args.np)

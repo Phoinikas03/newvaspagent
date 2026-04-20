@@ -17,6 +17,27 @@ DEFAULT_MAX_GPU_UTIL_PERCENT = 10.0
 DEFAULT_EMPTY_GPU_MAX_USED_MIB = 512.0
 
 
+def resolve_log_file_name(
+    task_idx: int,
+    total_tasks: int,
+    log_file: str,
+    log_prefix: str,
+) -> str:
+    """
+    统一日志命名：
+    - 若显式传 --log-file，则仅允许单目录任务，直接使用该文件名；
+    - 单目录默认写 `<log_prefix>.log`；
+    - 多目录默认写 `<log_prefix>_<idx>.log`。
+    """
+    if log_file:
+        if total_tasks != 1:
+            raise ValueError("--log-file only supports a single task directory.")
+        return log_file
+    if total_tasks == 1:
+        return f"{log_prefix}.log"
+    return f"{log_prefix}_{task_idx}.log"
+
+
 def verify_local_dependencies(exe: str, env_script: str = "") -> None:
     """本地模式执行前检查；失败时打印 ERROR 并以非零码退出，便于 Agent 从 Bash 输出识别。"""
     env_p = Path(env_script) if env_script else None
@@ -344,6 +365,8 @@ def run_local_gpu_flexible_queue(
     np: int,
     exe: str,
     env_script: str,
+    log_file: str,
+    log_prefix: str,
     gpu_per_task: int,
     min_free_mib: float,
     max_util_percent: float,
@@ -426,10 +449,12 @@ def run_local_gpu_flexible_queue(
                 break
             task_idx, wdir = pending.popleft()
             dir_path = Path(wdir).resolve()
-            log_file = f"vasp_run_{task_idx}.log"
+            resolved_log = resolve_log_file_name(
+                task_idx, len(work_dirs), log_file, log_prefix
+            )
             cuda_vis = ",".join(str(g) for g in slot)
             cmd = build_mpirun_shell(
-                dir_path, log_file, cuda_vis, np, exe, env_script
+                dir_path, resolved_log, cuda_vis, np, exe, env_script
             )
             try:
                 proc = subprocess.Popen(["bash", "-c", cmd])
@@ -448,7 +473,9 @@ def run_local_gpu_flexible_queue(
             )
             stall_start = None
             print(
-                f"[flex-gpu] start task {task_idx} tier={tier} CUDA_VISIBLE_DEVICES={cuda_vis} -> {log_file}",
+                "[flex-gpu] start task "
+                f"{task_idx} tier={tier} CUDA_VISIBLE_DEVICES={cuda_vis} "
+                f"log={dir_path / resolved_log} cmd={cmd}",
                 file=sys.stderr,
             )
 
@@ -473,7 +500,7 @@ def run_local_gpu_flexible_queue(
     return max_rc
 
 
-def create_local_batch_script(work_dirs, np, exe, env_script, gpu_per_task):
+def create_local_batch_script(work_dirs, np, exe, env_script, gpu_per_task, log_file, log_prefix):
     """场景1 & 场景3：生成包含后台并行与 GPU 绑定的本地执行脚本"""
     script_content = ["#!/bin/bash", ""]
     if env_script and Path(env_script).exists():
@@ -481,7 +508,7 @@ def create_local_batch_script(work_dirs, np, exe, env_script, gpu_per_task):
     
     for i, wdir in enumerate(work_dirs):
         dir_path = Path(wdir).resolve()
-        log_file = f"vasp_run_{i}.log"
+        resolved_log = resolve_log_file_name(i, len(work_dirs), log_file, log_prefix)
         
         env_vars = ""
         # 场景3: GPU 隔离逻辑
@@ -490,14 +517,15 @@ def create_local_batch_script(work_dirs, np, exe, env_script, gpu_per_task):
             gpu_ids = ",".join(str(g) for g in range(gpu_start, gpu_start + gpu_per_task))
             env_vars = f"CUDA_VISIBLE_DEVICES={gpu_ids} "
         
-        cmd = f"cd {dir_path} && {env_vars}mpirun -np {np} {exe} > {log_file} 2>&1 &"
+        cmd = f"cd {dir_path} && {env_vars}mpirun -np {np} {exe} > {resolved_log} 2>&1 &"
+        script_content.append(f"echo '[local-run] dir={dir_path} log={dir_path / resolved_log}'")
         script_content.append(cmd)
     
     script_content.append("wait") # 等待所有后台任务完成
     script_content.append("echo 'All local VASP tasks completed.'")
     return "\n".join(script_content)
 
-def create_slurm_script(work_dirs, np, exe, env_script, template_path):
+def create_slurm_script(work_dirs, np, exe, env_script, template_path, log_file, log_prefix):
     """场景2：基于模板生成 Slurm 脚本并提交"""
     if not Path(template_path).exists():
         raise FileNotFoundError(f"Slurm template not found at {template_path}")
@@ -512,10 +540,12 @@ def create_slurm_script(work_dirs, np, exe, env_script, template_path):
     if env_script and Path(env_script).exists():
         run_commands.append(f"source {env_script}")
         
-    for wdir in work_dirs:
+    for i, wdir in enumerate(work_dirs):
         dir_path = Path(wdir).resolve()
+        resolved_log = resolve_log_file_name(i, len(work_dirs), log_file, log_prefix)
         run_commands.append(f"cd {dir_path}")
-        run_commands.append(f"mpirun -np {np} {exe} > vasp.log")
+        run_commands.append(f"echo '[slurm-run] dir={dir_path} log={dir_path / resolved_log}'")
+        run_commands.append(f"mpirun -np {np} {exe} > {resolved_log} 2>&1")
         run_commands.append("cd - > /dev/null")
         
     template = template.replace("{{COMMANDS}}", "\n".join(run_commands))
@@ -530,6 +560,18 @@ if __name__ == "__main__":
     parser.add_argument("--gpu-per-task", type=int, default=0, help="GPUs to bind per task")
     parser.add_argument("--env-script", type=str, default="")
     parser.add_argument("--slurm-template", type=str, default="")
+    parser.add_argument(
+        "--log-file",
+        type=str,
+        default="",
+        help="单目录任务时的日志文件名；例如 vasp_pbe.log 或 vasp_hse.log",
+    )
+    parser.add_argument(
+        "--log-prefix",
+        type=str,
+        default="vasp_run",
+        help="默认日志前缀；单目录写 <prefix>.log，多目录写 <prefix>_<idx>.log",
+    )
     parser.add_argument(
         "--min-gpu-free-mib",
         type=float,
@@ -579,6 +621,14 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
+    if args.log_file and len(args.dirs) != 1:
+        print(
+            "ERROR: --log-file only supports a single task directory. "
+            "Use --log-prefix for multi-directory runs.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
     run_script_path = Path("vasp_orchestration_run.sh")
 
     if args.mode == "local":
@@ -589,6 +639,8 @@ if __name__ == "__main__":
                 args.np,
                 args.exe,
                 args.env_script,
+                args.log_file,
+                args.log_prefix,
                 args.gpu_per_task,
                 args.min_gpu_free_mib,
                 args.max_gpu_util_percent,
@@ -616,7 +668,13 @@ if __name__ == "__main__":
                     max(0.0, args.gpu_ready_timeout_sec),
                 )
             content = create_local_batch_script(
-                args.dirs, args.np, args.exe, args.env_script, args.gpu_per_task
+                args.dirs,
+                args.np,
+                args.exe,
+                args.env_script,
+                args.gpu_per_task,
+                args.log_file,
+                args.log_prefix,
             )
             run_script_path.write_text(content)
             os.chmod(run_script_path, 0o755)
@@ -632,7 +690,15 @@ if __name__ == "__main__":
                 sys.exit(proc.returncode)
 
     elif args.mode == 'slurm':
-        content = create_slurm_script(args.dirs, args.np, args.exe, args.env_script, args.slurm_template)
+        content = create_slurm_script(
+            args.dirs,
+            args.np,
+            args.exe,
+            args.env_script,
+            args.slurm_template,
+            args.log_file,
+            args.log_prefix,
+        )
         submit_script = Path("submit_vasp.slurm")
         submit_script.write_text(content)
         print(f"Generated Slurm submission script: {submit_script}")

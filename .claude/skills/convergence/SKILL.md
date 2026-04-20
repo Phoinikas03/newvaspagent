@@ -15,8 +15,6 @@ convergence/
 ├── SKILL.md                          ← 本文件
 ├── references/
 │   └── convergence_rules.md          ← 扫描序列、1 meV/atom 判据、注意事项
-├── scripts/
-│   └── check_convergence.py          ← 单次计算后检查 OUTCAR 电子步是否收敛
 └── templates/
     └── INCAR_static_convergence      ← 静态单点 INCAR 模板（复制后改参数）
 ```
@@ -33,7 +31,7 @@ convergence/
 - Skill（`run_vasp`）：运行 VASP 前须载入全文并按 GPU/CPU 规则调用
 - `Write` / `Edit`、`Bash`、`Read` / `Grep`
 
-**VASP 启动（硬性）**：任何将执行 `mpirun`、直接调用 `vasp_std` / `vasp_gpu` 或等价命令的步骤，**必须先**通过工具调用 **`Skill: run_vasp`** 载入其全文，并按其中「核心执行准则」与用户已确认的 **GPU / CPU** 方案确定 `--np`、`--exe`、`--gpu-per-task`（及 `env_script`）。**严禁**在未执行上述步骤时，仅根据 `lscpu` 自拟大核数 `mpirun -np ...`。
+**VASP 启动（硬性）**：任何将执行 `mpirun`、直接调用 `vasp_std` / `vasp_gpu` 或等价命令的步骤，**必须先**通过工具调用 **`Skill: run_vasp`** 载入其全文，并按其中「核心执行准则」与用户已确认的 **GPU / CPU** 方案确定 `--np`、`--exe`、`--gpu-per-task`（及 `env_script`）。正式提交时，**必须通过** `python .claude/skills/run_vasp/scripts/vasp_runner.py`，**严禁** assistant 直接手写 `mpirun -np ...` 作为提交命令。
 
 注意：当前运行在无 GUI 的终端环境中。若需向用户提问，**直接输出纯文本问题并停止生成，等待用户在终端输入回复**。
 
@@ -87,7 +85,7 @@ convergence/
 - 判定：各点计算**结束后**再读能量；若下一步依赖上一步结果，由 Agent **逐步推理**，与「多点可否并行」不矛盾。
 
 **Web / IDE：等待本批 `vasp_runner` 时不要冻结界面（流程不变）**  
-仍由你**完整负责**提交与本批全部结束后的读 OUTCAR / `check_convergence.py` / 能量表。启动 `vasp_runner.py` 须 **`Bash` + `run_in_background: true`**。等待阶段鼓励**周期性检查**：对长作业优先使用较粗的间隔（例如 5 分钟），仅在临近完成或需要诊断异常时加密检查。可用 **`TaskOutput` + `block: false`** 按周期轮询同一 `task_id`，也可用带 `sleep` 的**后台** Bash 周期性检查各子目录 `OUTCAR`/进程，重复直至就绪后再判定能量；避免 **`TaskOutput` + `block: true` + 超长 `timeout`** 单次等到结束，因为这会卡死 Web/IDE 整轮。
+仍由你**完整负责**提交与本批全部结束后的读 OUTCAR / `run_vasp/scripts/check_convergence.py` / 能量表。启动 `vasp_runner.py` 须 **`Bash` + `run_in_background: true`**。单点单目录任务应显式传 `--log-file`（如 `vasp_encut.log`、`vasp_kspacing.log`）；多目录并行任务应显式传 `--log-prefix`，让日志稳定落在各子目录中。等待阶段鼓励**周期性检查**：对长作业优先使用较粗的间隔（例如 5 分钟），仅在临近完成或需要诊断异常时加密检查。可用 **`TaskOutput` + `block: false`** 按周期轮询同一 `task_id`，也可用带 `sleep` 的**后台** Bash 周期性检查各子目录 `OUTCAR`/进程，重复直至就绪后再判定能量；避免 **`TaskOutput` + `block: true` + 超长 `timeout`** 单次等到结束，因为这会卡死 Web/IDE 整轮。
 
 **建议目录布局**（可在当前 workspace 根目录或 `convergence_test/` 下）：
 
@@ -99,11 +97,11 @@ convergence_test/
 └── kspacing_test/k_<KSPACING>/
 ```
 
-每个子目录内：放入对应 **POSCAR**、**INCAR**（该点上的 **ENCUT** 或 **KSPACING**），调用 **`setup_vasp_inputs`**（保证 **KSPACING** 在 INCAR 中、且无多余 **KPOINTS**），再 **`run_vasp`**。算完后：
+每个子目录内：放入对应 **POSCAR**、**INCAR**（该点上的 **ENCUT** 或 **KSPACING**），调用 **`setup_vasp_inputs`**（保证 **KSPACING** 在 INCAR 中、且无多余 **KPOINTS**），再通过 **`python .claude/skills/run_vasp/scripts/vasp_runner.py`** 提交。算完后：
 
 ```bash
 # 在仓库根执行（与 system_prompt 中 SKILL & `.claude` PATH RULE 一致）：
-cd "<Repository root>" && python .claude/skills/convergence/scripts/check_convergence.py "<含 OUTCAR 的子目录>"
+cd "<Repository root>" && python .claude/skills/run_vasp/scripts/check_convergence.py "<含 OUTCAR 的子目录>"
 ```
 
 若 `electronic_converged` 为 false，勿用于收敛判定；先按 `references/convergence_rules.md` 与项目内其它 troubleshooting 调整 **NELM** / **ALGO** 等后重算该点。
@@ -136,6 +134,7 @@ cd "<Repository root>" && python .claude/skills/convergence/scripts/check_conver
 - **静态单点**：收敛测试全程 **`NSW = 0`**，不在此阶段做离子步或变胞。
 - **K 点仅用 INCAR**：依赖 **`KSPACING`**；**`setup_vasp_inputs`** 在含 **`KSPACING`** 时不写 **KPOINTS**；若目录中有旧 **KPOINTS**，应删除以免覆盖 INCAR。
 - **禁止 monolithic 多点 VASP**：禁止单脚本单作业内顺序跑满多组 ENCUT/KSPACING；允许多个独立任务并行。
+- **日志规范**：单目录显式用 `--log-file`，多目录显式用 `--log-prefix`；不要让关键运行日志只存在于外层 Bash 任务输出。
 
 ---
 

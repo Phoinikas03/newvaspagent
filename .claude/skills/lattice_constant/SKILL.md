@@ -14,8 +14,7 @@ lattice_constant/
 ├── SKILL.md                       ← 本文件（EOS 工作流）
 ├── scripts/
 │   ├── generate_scaled_poscars.py ← 根据缩放因子列表批量生成带应变的 POSCAR
-│   ├── fit_eos.py                 ← 提取批量计算能量，拟合 EOS (如 Birch-Murnaghan) 并输出结果 JSON
-│   └── check_convergence.py       ← 检查单次 VASP 计算 OUTCAR 收敛状态
+│   └── fit_eos.py                 ← 提取批量计算能量，拟合 EOS (如 Birch-Murnaghan) 并输出结果 JSON
 ├── references/
 │   ├── convergence_rules.md       ← 占位：指向 convergence/references/convergence_rules.md
 │   └── troubleshooting.md         ← EOS 拟合与计算异常
@@ -36,17 +35,17 @@ lattice_constant/
 - `Bash`：文件管理、运行预处理与后处理脚本
 - `Read` / `Grep`：读取日志和输出文件
 
-**VASP 启动（硬性）**：任何将执行 `mpirun`、直接调用 `vasp_std` / `vasp_gpu` 或等价命令的步骤，**必须先**通过工具调用 **`Skill: run_vasp`** 载入其全文，并按其中「核心执行准则」与用户已确认的 **GPU / CPU** 方案确定 `--np`、`--exe`、`--gpu-per-task`（及 `env_script`）。**严禁**在未执行上述步骤时，仅根据 `lscpu` 的「每 socket 核心数」等自拟 `mpirun -np 16`（或其它大核数）。用户已声明使用 **GPU 版 VASP** 时（可执行文件名仍可能是 `vasp_std`），须遵守 `run_vasp` 中的 **GPU：通常 1 rank ↔ 1 GPU、单卡单任务用 `np=1` 并配合设备绑定**，不得按纯 CPU 逻辑分配 `-np`。
+**VASP 启动（硬性）**：任何将执行 `mpirun`、直接调用 `vasp_std` / `vasp_gpu` 或等价命令的步骤，**必须先**通过工具调用 **`Skill: run_vasp`** 载入其全文，并按其中「核心执行准则」与用户已确认的 **GPU / CPU** 方案确定 `--np`、`--exe`、`--gpu-per-task`（及 `env_script`）。正式提交时必须**通过** `python .claude/skills/run_vasp/scripts/vasp_runner.py`，**严禁** assistant 直接手写 `mpirun -np 16`（或其它命令）绕过 runner。用户已声明使用 **GPU 版 VASP** 时（可执行文件名仍可能是 `vasp_std`），须遵守 `run_vasp` 中的 **GPU：通常 1 rank ↔ 1 GPU、单卡单任务用 `np=1` 并配合设备绑定**，不得按纯 CPU 逻辑分配 `-np`。
 
 注意：当前运行在无 GUI 的终端环境中。若需向用户提问，**直接输出纯文本问题并停止生成，等待用户在终端输入回复**。
 
 ### Web / IDE：长计算不冻结界面（流程不变）
 
-本 skill 与前置 **`convergence`** 中的 **`vasp_runner.py`**（可多 `--dirs` **并行**）仍由你**完整编排**：提交、轮询直到结束、再读能量 / 跑 `check_convergence.py` / `fit_eos.py` 等步骤**一律不少**。
+本 skill 与前置 **`convergence`** 中的 **`vasp_runner.py`**（可多 `--dirs` **并行**）仍由你**完整编排**：提交、轮询直到结束、再读能量 / 跑 `run_vasp/scripts/check_convergence.py` / `fit_eos.py` 等步骤**一律不少**。
 
 为遵守仓库 **system_prompt** 的 **LOCAL COMPUTE** 规则并避免会话卡死：
 
-1. **启动**：对 **`vasp_runner.py`**（及任何分钟级 VASP 命令）使用 **`Bash` 且 `run_in_background: true`**。
+1. **启动**：对 **`vasp_runner.py`**（及任何分钟级 VASP 命令）使用 **`Bash` 且 `run_in_background: true`**。单目录单点可显式传 `--log-file`；多 `scale_*` 目录并行时应显式传 `--log-prefix`。
 2. **等待完成**：鼓励**周期性检查**而不是高频刷新。对长任务，优先采用较粗的轮询间隔（例如 5 分钟），只在接近结束或需要排障时临时加密。避免用 **`TaskOutput` + `block: true` + 超长 `timeout`**（例如数十万 ms）在**单次工具调用**里一直等到 VASP 结束，因为这会整轮冻结 **Web / IDE**。**应**改用 **`TaskOutput` + `block: false`** 对同一 `task_id` 周期性轮询，直到 `completed` / 失败；若环境不支持非阻塞 `TaskOutput`，则用 Bash 周期性检查各目标目录 `OUTCAR` 是否已有终态能量行、相关 `vasp`/`mpirun` 进程是否仍存活，直至本批任务全部就绪后再进入读结果与收敛检查。
 3. 可以使用带 `sleep` 的等待逻辑，但更推荐放在**后台** Bash 或辅助脚本中，以兼顾周期性检查与界面响应性（与 system_prompt 一致）。
 
@@ -97,8 +96,8 @@ lattice_constant/
 对每个 `scale_x.xx` 子文件夹准备输入并提交计算（各目录可**并行**提交多个独立任务，**禁止**单个脚本在同一进程内 `for` 串行跑完所有 scale）：
 1. 复制模板与配置：将 `templates/INCAR_static` 拷贝至当前子目录，并填入 **`convergence`** 得到的 **`ENCUT`** 与 **`KSPACING`**。
 2. 调用 `setup_vasp_inputs` 准备与收敛测试一致的 POTCAR；**INCAR** 须含与收敛测试相同的 **`KSPACING`**，以便不生成 **KPOINTS**。
-3. 按 Skill `run_vasp` 与 orchestration 规则，用 Bash（`run_in_background: true`）及上文 **Web / IDE 等待规则** 在该子目录**单独**提交并完成一次 VASP 计算（一点一任务）；**禁止**长时间阻塞式 `TaskOutput` 冻结会话。
-4. 该目录计算结束后，`Bash`：`python scripts/check_convergence.py .`
+3. 按 Skill `run_vasp` 与 orchestration 规则，**通过 Bash 调用 `python .claude/skills/run_vasp/scripts/vasp_runner.py`**（`run_in_background: true`）及上文 **Web / IDE 等待规则** 在该子目录**单独**提交并完成一次 VASP 计算（一点一任务）；**禁止**长时间阻塞式 `TaskOutput` 冻结会话，也**不得**直接手写 `mpirun ... vasp_std/vasp_gpu`。
+4. 该目录计算结束后，`Bash`：`python .claude/skills/run_vasp/scripts/check_convergence.py .`
    - 确认 `electronic_converged: true`。
    - 若未收敛，查阅 `references/troubleshooting.md`，可能需要增加 `NELM` 或调整 `ALGO` 算法后重试该点。
 
@@ -132,7 +131,8 @@ lattice_constant/
 ## 核心原则
 
 - **收敛测试须用户确认**：载入 **`convergence`** 前**必须**询问用户是否进行；**禁止**自动开始收敛测试。
-- **禁止单作业内串行多点 VASP**：除 `generate_scaled_poscars.py`、`fit_eos.py`、`check_convergence.py` 等明确允许的脚本外，不得用**一个** Bash/Python 脚本或**一次**作业提交，在**同一进程/同一作业**内循环或顺序执行多个 VASP。**允许**将多个单点 VASP 作为多个独立任务**并行**提交；每个任务仍是一点一算、一目录一输入，结束后分别用 `check_convergence.py` 等核查。
+- **禁止单作业内串行多点 VASP**：除 `generate_scaled_poscars.py`、`fit_eos.py`、`run_vasp/scripts/check_convergence.py` 等明确允许的脚本外，不得用**一个** Bash/Python 脚本或**一次**作业提交，在**同一进程/同一作业**内循环或顺序执行多个 VASP。**允许**将多个单点 VASP 作为多个独立任务**并行**提交；每个任务仍是一点一算、一目录一输入，结束后分别用通用 `check_convergence.py` 等核查。
 - **参数绝对一致**：在第 4 步的批量计算中，所有子任务的 `ENCUT`、`POTCAR` 类别和 K 点网格划分方式必须**完全一致**。改变基点截断能会导致 Pulay 应力带来的巨大误差。
 - **静态计算优先**：EOS 拟合过程中，各个比例下的 VASP 计算必须是**单点静态计算 (ISIF=2 且 NSW=0)**，不能在内部再次进行晶胞体积松弛，否则能量-体积对应关系将失效。
 - **异常点剔除**：若 `fit_eos.py` 报错或拟合曲线存在明显偏离抛物线底部的异常点（例如 SCF 未真正收敛导致的能量畸变），必须重新检查该点的 `OUTCAR`。
+- **日志规范**：EOS 目录批量运行时应显式使用 `--log-prefix`，让每个 `scale_*` 子目录中都有稳定、可追溯的运行日志。
