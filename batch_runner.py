@@ -11,6 +11,10 @@
     python batch_runner.py --dry-run          # 只列出任务不执行
 
 环境：启动前请 export ANTHROPIC_BASE_URL 与 litellm 监听一致；worker 内用 setdefault，不再强行覆盖为 4000。
+
+注意：本脚本中的 worker prompt 也应遵守仓库统一规范：
+- 正式 VASP 提交优先通过 `python .claude/skills/run_vasp/scripts/vasp_runner.py`
+- 不应引导 agent 直接执行 `bash run_vasp.sh` 或手写 `mpirun`
 """
 
 from __future__ import annotations
@@ -40,13 +44,13 @@ RELAX_PROMPT = """\
 请对材料 {material} 执行结构优化（structure relaxation）计算。
 
 数据目录: {data_dir}
-该目录中已有以下文件: POSCAR, KPOINTS, POTCAR, run_vasp.sh
+该目录中已有以下文件: POSCAR, KPOINTS, POTCAR
 你需要将该目录复制到/mnt/data_x3/xiazeyu/newvaspagent/runs/relax/{material}目录下
 
 操作步骤：
 1. 查看数据目录中的文件，确认 POSCAR、KPOINTS、POTCAR 存在
 2. 该目录中没有 INCAR，请根据结构优化需求创建 INCAR 文件（推荐参数：IBRION=2, ISIF=3, NSW>=30, EDIFFG=-0.02, ENCUT 根据 POTCAR 选取合适值）
-3. 在数据目录中执行 bash run_vasp.sh 来运行 VASP
+3. 通过 `python .claude/skills/run_vasp/scripts/vasp_runner.py` 运行 VASP；不要执行 `bash run_vasp.sh`，也不要手写 `mpirun`
 4. VASP 完成后检查 OSZICAR 确认收敛
 5. 运行 python get_energy.py 获取最终优化能量并报告
 
@@ -60,13 +64,13 @@ BANDGAP_PROMPT = """\
 请对材料 {material} 执行能带带隙（band gap）计算。
 
 数据目录: {data_dir}
-该目录中已有以下文件: POSCAR, KPOINTS, POTCAR, run_vasp.sh
+该目录中已有以下文件: POSCAR, KPOINTS, POTCAR
 你需要将该目录复制到/mnt/data_x3/xiazeyu/newvaspagent/runs/bandgap/{material}目录下
 
 操作步骤：
 1. 查看数据目录中的文件，确认 POSCAR、KPOINTS、POTCAR 存在
 2. 该目录中没有 INCAR，请根据能带带隙计算需求创建 INCAR 文件（需使用HSE06杂化泛函，请合理调整HFSCREEN、AEXX、ALGO等参数）
-3. 在数据目录中执行 bash run_vasp.sh 来运行 VASP
+3. 通过 `python .claude/skills/run_vasp/scripts/vasp_runner.py` 运行 VASP；不要执行 `bash run_vasp.sh`，也不要手写 `mpirun`
 4. VASP 完成后检查 OSZICAR/OUTCAR 确认计算正常完成
 5. 运行 python gap.py 获取带隙值并报告（包括带隙数值和类型）
 
@@ -88,7 +92,9 @@ def _build_system_prompt(workspace: str, task_type: str) -> str:
         "1. You MUST NOT use the AskUserQuestion tool. Never ask for confirmation.",
         "2. You MUST complete the entire computation in one session — create INCAR, "
         "run VASP, extract results. Do NOT stop after merely describing your plan.",
-        "3. Prefer running `bash run_vasp.sh` in the data directory via Shell to launch VASP.",
+        "3. Prefer running `python .claude/skills/run_vasp/scripts/vasp_runner.py` "
+        "to launch VASP. Do NOT use `bash run_vasp.sh`, and do NOT hand-write raw "
+        "`mpirun` commands as the assistant.",
         "",
     ]
     if task_type == "relax":
