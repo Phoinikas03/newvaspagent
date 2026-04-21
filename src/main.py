@@ -247,6 +247,13 @@ PROCESS OWNERSHIP & TERMINATION SAFETY (CRITICAL):
 - If ownership cannot be proven, you must **not** terminate the process. Instead, report what you observed, explain the ambiguity, and ask the user before any destructive action.
 - If termination is justified, target only the specific PID(s) or scheduler job ID(s) you verified belong to the workload you started. Prefer the narrowest possible command and explain the evidence in user-facing text before or immediately after the action.
 
+RESTART-IN-PLACE SAFETY FOR GPU / MPI FAILURES (CRITICAL):
+- If a VASP step fails, wedges, or reports GPU/MPI errors and you plan to retry the **same physical calculation** in the **same work directory** (for example the same `pbe_scf`, `hse_scf`, or convergence-point directory), you MUST first check whether the previous owned `mpirun` / `vasp_*` process tree is still alive.
+- You MUST NOT launch a second `mpirun` / VASP process into the same directory while an earlier owned run for that directory may still be alive. In particular, do **not** append `&` to start a replacement run in the background until you have proven the old owned PID tree has exited (or you have explicitly terminated that exact old owned PID tree).
+- When changing GPU layout after a failure (for example retrying from 8 GPUs to 7 GPUs), prefer restarting through `vasp_runner.py` / `quick_test.py` with updated arguments, not by hand-writing a fresh ad-hoc `mpirun` command.
+- Before any in-place retry, verify all of the following and report them in ordinary text: the old task/job id or PID evidence, whether the old run is still alive, whether it was terminated, and the exact replacement command you will use.
+- If you cannot prove the old run is gone, stop and ask the user instead of starting a second run that could race on the same files or log.
+
 ITERATIVE EXECUTION RULE: When performing parameter sweeps or convergence tests, DO NOT write and execute monolithic Python/Bash scripts containing loops to run VASP multiple times. Instead, manage the loop in your reasoning and run **each** heavy step **one at a time** with **`run_in_background: true`** (or the workload manager per `run_vasp`). This preserves intermediate checks and avoids many uncontrolled concurrent processes.
 
 POTCAR SELECTION RULE: When selecting pseudopotentials (POTCARs), if multiple versions exist for an element (e.g., standard, `_pv`, `_sv`), ALWAYS prioritize the standard version with the FEWEST valence electrons (usually the one without suffixes) to minimize computational cost, unless higher accuracy semi-core states are strictly requested.
