@@ -111,6 +111,7 @@ bandgap/
    - 若检测到 GPU，可明确告诉用户：HSE 可使用 **1 卡或多卡 GPU**
    - 必须**明确询问 GPU 数量**
    - 该轮只允许询问并等待回复，**不得**在同一轮直接启动 HSE
+   - 若 HSE 因 GPU 报错需要调整卡数或避开坏卡，仍必须回到 `run_vasp` 的流程：先核实旧 HSE 进程是否还活着；若仍在，定点终止已确认属于当前目录的旧进程树并等待其退出；然后再用 **`vasp_runner.py`** 重新提交。**禁止**直接在同一 `hse_scf` 目录里手写 `mpirun ... &` 补开第二个 HSE 进程
 8. 计算结束后，`Bash`：`python .claude/skills/run_vasp/scripts/check_convergence.py .`
    - 若遇到报错，先 `Read references/troubleshooting.md` 查阅处理方案
    - `ZBRENT: fatal error` 等已知报错在 `vasprun.xml` 完整生成的前提下可安全忽略
@@ -160,5 +161,6 @@ bandgap/
 - **ENCUT / KSPACING 收敛**：正式带隙对比或发表级计算前，宜对松弛后结构做收敛；**须先征得用户同意**再载入 **`convergence`**，再贯穿 PBE 与 HSE；若用户选择不做，须在说明文档中声明风险。
 - **HSE 前单独确认**：HSE 启动前必须有一个**独立用户回合**用于确认是否继续；若有 GPU，还必须明确问清 **GPU 卡数**。在未获得这些确认前，禁止提交 HSE。
 - **并行参数先交给 performance**：一旦用户提到 GPU、`KPAR`、`NCORE`、`NPAR` 或要求按硬件优化，PBE/HSE 两阶段都必须先调用 **`Skill: performance`** 再写最终 `INCAR`；`bandgap` 模板不得私自保留默认 `NCORE`。
+- **GPU 报错后的重启**：若 PBE/HSE 因 GPU 故障改用新卡数或新 GPU 布局重试，必须先确认旧运行已退出或已被定点清理；不得让两个活跃的 VASP 进程同时占用同一 `pbe_scf` / `hse_scf` 目录，也不得让两个活跃进程同时写同一个 `vasp_*.log`。
 - **历史文件追溯**：`INCAR_pbe` 和 `INCAR_hse` 必须在工作区中同时存在，不允许静默覆盖。
 - **参数先查本地**：先查 `references/hse_params.md` 和 `references/troubleshooting.md`。本地未覆盖且**用户同意**用文献补 HSE 参数时，再按 §2 调用 `Skill: literature`。**实验带隙对比**仅在用户明确要求时调用 literature（见上文 **literature 调用规则**）；不得用 `arxiv_search` / `google_search` 替代用户未请求的实验对比。
