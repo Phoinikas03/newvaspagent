@@ -6,17 +6,17 @@
 
 按以下顺序串行执行：
 
-1. `bg_CdTe`
-2. `bg_Cu2O`
-3. `bg_Ga2O3`
-4. `bg_GaAs`
+1. `bg_GaN`
+2. `bg_GaP`
+3. `bg_InGaP2`
+4. `bg_InP`
 
 对应 POSCAR 路径分别是：
 
-- `/mnt/data_x3/xiazeyu/newvaspagent/data/bandgap/CdTe`
-- `/mnt/data_x3/xiazeyu/newvaspagent/data/bandgap/Cu2O`
-- `/mnt/data_x3/xiazeyu/newvaspagent/data/bandgap/Ga2O3`
-- `/mnt/data_x3/xiazeyu/newvaspagent/data/bandgap/GaAs`
+- `/home/xiazeyu21/newvaspagent/data/bandgap/GaN`
+- `/home/xiazeyu21/newvaspagent/data/bandgap/GaP`
+- `/home/xiazeyu21/newvaspagent/data/bandgap/InGaP2`
+- `/home/xiazeyu21/newvaspagent/data/bandgap/InP`
 
 ## 固定用户意图
 

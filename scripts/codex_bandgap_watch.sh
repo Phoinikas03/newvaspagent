@@ -17,14 +17,17 @@ LOG="${BG_WATCH_LOG:-$RUNS/codex_bandgap_watch.log}"
 LOCK_DIR="${BG_WATCH_LOCK_DIR:-$RUNS/codex_bandgap_watch.lock}"
 LOCK_PID_FILE="$LOCK_DIR/pid"
 LOCK_HEARTBEAT_FILE="$LOCK_DIR/heartbeat"
+CLI_READY_TIMEOUT="${BG_CLI_READY_TIMEOUT:-120}"
+CODEX_EXEC_TIMEOUT="${BG_CODEX_EXEC_TIMEOUT:-300}"
 PY="${VASP_AGENT_PYTHON:-/data/xiazeyu/conda/envs/claude/bin/python}"
 CONDA_SH="${VASP_AGENT_CONDA_SH:-/data/xiazeyu/conda/etc/profile.d/conda.sh}"
+CONDA_ENV="${VASP_AGENT_CONDA_ENV:-claude}"
 MAIN="$REPO/main.py"
 CODEX="${CODEX_CLI:-$(command -v codex || true)}"
 INSTRUCTIONS_MD="$REPO/docs/codexwatch_bandgap_instructions.md"
 BG_DATA_ROOT="${BG_DATA_ROOT:-$REPO/data/bandgap}"
 
-read -r -a TASK_DIRS <<<"${BG_TASK_DIRS:-bg_CdTe bg_Cu2O bg_Ga2O3 bg_GaAs}"
+read -r -a TASK_DIRS <<<"${BG_TASK_DIRS:-bg_GaN bg_GaP bg_InGaP2 bg_InP}"
 
 mkdir -p "$RUNS"
 
@@ -92,17 +95,17 @@ initial_prompt_for() {
   local material="${run_dir#bg_}"
   local poscar_path="$BG_DATA_ROOT/$material"
   case "$run_dir" in
-    bg_CdTe)
-      echo "我要计算CdTe的能带，POSCAR位于$poscar_path。这个POSCAR已经过结构弛豫，但仍然要做ENCUT和KSPACING收敛测试。使用GPU，PBE阶段使用2张GPU，HSE阶段使用8张GPU。"
+    bg_GaN)
+      echo "我要计算GaN的能带，POSCAR位于$poscar_path。这个POSCAR已经过结构弛豫，但仍然要做ENCUT和KSPACING收敛测试。使用GPU，PBE阶段使用2张GPU，HSE阶段使用8张GPU。"
       ;;
-    bg_Cu2O)
-      echo "我要计算Cu2O的能带，POSCAR位于$poscar_path。这个POSCAR已经过结构弛豫，但仍然要做ENCUT和KSPACING收敛测试。使用GPU，PBE阶段使用2张GPU，HSE阶段使用8张GPU。"
+    bg_GaP)
+      echo "我要计算GaP的能带，POSCAR位于$poscar_path。这个POSCAR已经过结构弛豫，但仍然要做ENCUT和KSPACING收敛测试。使用GPU，PBE阶段使用2张GPU，HSE阶段使用8张GPU。"
       ;;
-    bg_Ga2O3)
-      echo "我要计算Ga2O3的能带，POSCAR位于$poscar_path。这个POSCAR已经过结构弛豫，但仍然要做ENCUT和KSPACING收敛测试。使用GPU，PBE阶段使用2张GPU，HSE阶段使用8张GPU。"
+    bg_InGaP2)
+      echo "我要计算InGaP2的能带，POSCAR位于$poscar_path。这个POSCAR已经过结构弛豫，但仍然要做ENCUT和KSPACING收敛测试。使用GPU，PBE阶段使用2张GPU，HSE阶段使用8张GPU。"
       ;;
-    bg_GaAs)
-      echo "我要计算GaAs的能带，POSCAR位于$poscar_path。这个POSCAR已经过结构弛豫，但仍然要做ENCUT和KSPACING收敛测试。使用GPU，PBE阶段使用2张GPU，HSE阶段使用8张GPU。"
+    bg_InP)
+      echo "我要计算InP的能带，POSCAR位于$poscar_path。这个POSCAR已经过结构弛豫，但仍然要做ENCUT和KSPACING收敛测试。使用GPU，PBE阶段使用2张GPU，HSE阶段使用8张GPU。"
       ;;
     *)
       return 1
@@ -145,19 +148,29 @@ can_resume() {
 has_bandgap_result() {
   local d="$1"
   local ws="$RUNS/$d"
+  local result_dir=""
   [[ -d "$ws" ]] || return 1
-  [[ -f "$ws/vasprun.xml" ]] || return 1
-  [[ -f "$ws/INCAR_hse" ]] || return 1
-  grep -Eq "LHFCALC|HSE06" "$ws/OUTCAR" 2>/dev/null || return 1
+
+  if [[ -d "$ws/hse_scf" ]]; then
+    result_dir="$ws/hse_scf"
+  elif [[ -d "$ws/hse_calc" ]]; then
+    result_dir="$ws/hse_calc"
+  else
+    result_dir="$ws"
+  fi
+
+  [[ -f "$result_dir/vasprun.xml" ]] || return 1
+  [[ -f "$result_dir/INCAR_hse" ]] || return 1
+  grep -Eq "LHFCALC|HSE06" "$result_dir/OUTCAR" 2>/dev/null || return 1
 
   local status_json
-  status_json="$("$PY" "$REPO/.claude/skills/run_vasp/scripts/check_convergence.py" "$ws" 2>/dev/null || true)"
+  status_json="$("$PY" "$REPO/.claude/skills/run_vasp/scripts/check_convergence.py" "$result_dir" 2>/dev/null || true)"
   if [[ -z "$status_json" ]]; then
     return 1
   fi
   python -c 'import json, sys; d=json.load(sys.stdin); raise SystemExit(0 if d.get("status") in {"converged", "incomplete_postprocess"} else 1)' <<<"$status_json" >/dev/null 2>&1 || return 1
 
-  "$PY" "$REPO/.claude/skills/bandgap/scripts/gap.py" "$ws/vasprun.xml" >/dev/null 2>&1
+  "$PY" "$REPO/.claude/skills/bandgap/scripts/gap.py" "$result_dir/vasprun.xml" >/dev/null 2>&1
 }
 
 next_incomplete_dir() {
@@ -178,8 +191,53 @@ conversation_has_user_turn() {
   grep -q '"role": "user"' "$p"
 }
 
+wait_for_cli_prompt() {
+  local timeout_s="${1:-$CLI_READY_TIMEOUT}"
+  local waited=0
+  local pane=""
+
+  while ((waited < timeout_s)); do
+    pane="$(tmux_capture 80)"
+    if grep -q 'You>' <<<"$pane"; then
+      return 0
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  return 1
+}
+
+inject_initial_prompt_if_needed() {
+  local nd="$1"
+  local first_msg=""
+
+  if conversation_has_user_turn "$nd"; then
+    return 0
+  fi
+
+  if ! wait_for_cli_prompt "$CLI_READY_TIMEOUT"; then
+    echo "[warn] CLI 在 ${CLI_READY_TIMEOUT}s 内未出现 You> 提示，暂不注入首句: $nd" | tee -a "$LOG"
+    return 0
+  fi
+
+  first_msg="$(initial_prompt_for "$nd")"
+  echo "[auto] 注入首句任务说明: $nd" | tee -a "$LOG"
+  tmux_send_literal "$first_msg"
+  sleep 2
+
+  if ! conversation_has_user_turn "$nd"; then
+    echo "[warn] 首句未落盘，重试一次: $nd" | tee -a "$LOG"
+    tmux_send_literal "$first_msg"
+  fi
+}
+
 auto_start_next_if_idle() {
   if agent_running; then
+    local curd=""
+    curd="$(current_main_dir)"
+    if [[ -n "$curd" ]] && ! conversation_has_user_turn "$curd"; then
+      inject_initial_prompt_if_needed "$curd"
+    fi
     return 0
   fi
 
@@ -193,21 +251,14 @@ auto_start_next_if_idle() {
   mkdir -p "$RUNS/$nd"
   local cmd
   if can_resume "$nd"; then
-    cmd="source $CONDA_SH && conda activate claude && cd $REPO && $PY $MAIN --mode cli --dir $nd"
+    cmd="source $CONDA_SH && conda activate $CONDA_ENV && cd $REPO && $PY $MAIN --mode cli --dir $nd"
   else
-    cmd="source $CONDA_SH && conda activate claude && cd $REPO && $PY $MAIN --mode cli --dir $nd --no-resume"
+    cmd="source $CONDA_SH && conda activate $CONDA_ENV && cd $REPO && $PY $MAIN --mode cli --dir $nd --no-resume"
   fi
 
   echo "[auto] 启动下一任务: $nd" | tee -a "$LOG"
   tmux_send_literal "$cmd"
-  sleep 8
-
-  if ! conversation_has_user_turn "$nd"; then
-    local first_msg
-    first_msg="$(initial_prompt_for "$nd")"
-    echo "[auto] 注入首句任务说明: $nd" | tee -a "$LOG"
-    tmux_send_literal "$first_msg"
-  fi
+  inject_initial_prompt_if_needed "$nd"
 }
 
 build_prompt() {
@@ -297,16 +348,28 @@ run_watch_iteration() {
 
   log "[watch] 启动 codex exec"
   set +e
-  "$CODEX" exec --disable apps \
-    --dangerously-bypass-approvals-and-sandbox \
-    -C "$REPO" \
-    -o "$msg_file" \
-    "$prompt" >>"$LOG" 2>&1
+  if command -v timeout >/dev/null 2>&1; then
+    timeout --foreground "${CODEX_EXEC_TIMEOUT}s" \
+      "$CODEX" exec --disable apps \
+      --dangerously-bypass-approvals-and-sandbox \
+      -C "$REPO" \
+      -o "$msg_file" \
+      "$prompt" >>"$LOG" 2>&1
+  else
+    "$CODEX" exec --disable apps \
+      --dangerously-bypass-approvals-and-sandbox \
+      -C "$REPO" \
+      -o "$msg_file" \
+      "$prompt" >>"$LOG" 2>&1
+  fi
   ec=$?
   set -e
   log "[watch] codex exec 完成 exit=$ec"
 
   if [[ "$ec" -ne 0 ]]; then
+    if [[ "$ec" -eq 124 ]]; then
+      log "[warn] codex exec 超时 ${CODEX_EXEC_TIMEOUT}s，跳过本轮"
+    fi
     log "[warn] codex exec 退出码 $ec"
     rm -f "$msg_file"
     return 0
