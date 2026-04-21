@@ -34,4 +34,4 @@ export BG_CODEX_EXEC_TIMEOUT="${BG_CODEX_EXEC_TIMEOUT:-300}"
 export BG_WATCH_SUPERVISOR_SESSION="${BG_WATCH_SUPERVISOR_SESSION:-bgwatch}"
 
 # 串行任务列表
-export BG_TASK_DIRS="${BG_TASK_DIRS:-bg_GaN bg_GaP bg_InGaP2 bg_InP}"
+export BG_TASK_DIRS="${BG_TASK_DIRS:-bg_InP bg_InSe bg_MoS2 bg_PbS}"

@@ -95,17 +95,8 @@ initial_prompt_for() {
   local material="${run_dir#bg_}"
   local poscar_path="$BG_DATA_ROOT/$material"
   case "$run_dir" in
-    bg_GaN)
-      echo "我要计算GaN的能带，POSCAR位于$poscar_path。这个POSCAR已经过结构弛豫，但仍然要做ENCUT和KSPACING收敛测试。使用GPU，PBE阶段使用2张GPU，HSE阶段使用8张GPU。"
-      ;;
-    bg_GaP)
-      echo "我要计算GaP的能带，POSCAR位于$poscar_path。这个POSCAR已经过结构弛豫，但仍然要做ENCUT和KSPACING收敛测试。使用GPU，PBE阶段使用2张GPU，HSE阶段使用8张GPU。"
-      ;;
-    bg_InGaP2)
-      echo "我要计算InGaP2的能带，POSCAR位于$poscar_path。这个POSCAR已经过结构弛豫，但仍然要做ENCUT和KSPACING收敛测试。使用GPU，PBE阶段使用2张GPU，HSE阶段使用8张GPU。"
-      ;;
-    bg_InP)
-      echo "我要计算InP的能带，POSCAR位于$poscar_path。这个POSCAR已经过结构弛豫，但仍然要做ENCUT和KSPACING收敛测试。使用GPU，PBE阶段使用2张GPU，HSE阶段使用8张GPU。"
+    bg_*)
+      echo "我要计算${material}的能带，POSCAR位于$poscar_path。这个POSCAR已经过结构弛豫，但仍然要做ENCUT和KSPACING收敛测试。使用GPU，PBE阶段使用2张GPU，HSE阶段使用8张GPU。"
       ;;
     *)
       return 1
@@ -220,7 +211,15 @@ inject_initial_prompt_if_needed() {
     return 0
   fi
 
-  first_msg="$(initial_prompt_for "$nd")"
+  if ! first_msg="$(initial_prompt_for "$nd")"; then
+    echo "[warn] 未找到首句任务模板，跳过自动注入: $nd" | tee -a "$LOG"
+    return 0
+  fi
+  if [[ -z "$first_msg" ]]; then
+    echo "[warn] 首句任务模板为空，跳过自动注入: $nd" | tee -a "$LOG"
+    return 0
+  fi
+
   echo "[auto] 注入首句任务说明: $nd" | tee -a "$LOG"
   tmux_send_literal "$first_msg"
   sleep 2
