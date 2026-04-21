@@ -10,7 +10,7 @@ export BG_DATA_ROOT="${BG_DATA_ROOT:-/home/xiazeyu21/newvaspagent/data/bandgap}"
 export VASP_AGENT_PYTHON="${VASP_AGENT_PYTHON:-/gpfs/junlab/xiazeyu21/miniconda3/envs/vaspagent/bin/python}"
 export VASP_AGENT_CONDA_SH="${VASP_AGENT_CONDA_SH:-/gpfs/junlab/xiazeyu21/miniconda3/etc/profile.d/conda.sh}"
 export VASP_AGENT_CONDA_ENV="${VASP_AGENT_CONDA_ENV:-vaspagent}"
-export CODEX_CLI="${CODEX_CLI:-/home/xiazeyu21/.vscode-server/extensions/openai.chatgpt-26.415.20818-linux-x64/bin/linux-x86_64/codex}"
+export CODEX_CLI="${CODEX_CLI:-$(command -v codex || ls -d "$HOME"/.vscode-server/extensions/openai.chatgpt-*/bin/linux-x86_64/codex 2>/dev/null | sort | tail -n 1)}"
 
 # 网络代理
 export HTTP_PROXY="${HTTP_PROXY:-http://127.0.0.1:7890}"
