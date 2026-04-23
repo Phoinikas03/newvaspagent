@@ -4,13 +4,13 @@
 # 主逻辑脚本会在启动时自动 source 这里的变量。
 
 # newvaspagent 数据根目录
-export BG_DATA_ROOT="${BG_DATA_ROOT:-/home/xiazeyu21/newvaspagent/data/bandgap}"
+export BG_DATA_ROOT="${BG_DATA_ROOT:-/mnt/data_x3/xiazeyu/newvaspagent/data/bandgap}"
 
 # vaspagent / watcher 运行环境
-export VASP_AGENT_PYTHON="${VASP_AGENT_PYTHON:-/gpfs/junlab/xiazeyu21/miniconda3/envs/vaspagent/bin/python}"
-export VASP_AGENT_CONDA_SH="${VASP_AGENT_CONDA_SH:-/gpfs/junlab/xiazeyu21/miniconda3/etc/profile.d/conda.sh}"
-export VASP_AGENT_CONDA_ENV="${VASP_AGENT_CONDA_ENV:-vaspagent}"
-export CODEX_CLI="${CODEX_CLI:-/home/xiazeyu21/.vscode-server/extensions/openai.chatgpt-26.415.20818-linux-x64/bin/linux-x86_64/codex}"
+export VASP_AGENT_PYTHON="${VASP_AGENT_PYTHON:-/data/xiazeyu/conda/envs/claude/bin/python}"
+export VASP_AGENT_CONDA_SH="${VASP_AGENT_CONDA_SH:-/data/xiazeyu/conda/etc/profile.d/conda.sh}"
+export VASP_AGENT_CONDA_ENV="${VASP_AGENT_CONDA_ENV:-claude}"
+export CODEX_CLI="${CODEX_CLI:-/data/xiazeyu/conda/bin/codex}"
 
 # 网络代理
 export HTTP_PROXY="${HTTP_PROXY:-http://127.0.0.1:7890}"
@@ -34,4 +34,4 @@ export BG_CODEX_EXEC_TIMEOUT="${BG_CODEX_EXEC_TIMEOUT:-300}"
 export BG_WATCH_SUPERVISOR_SESSION="${BG_WATCH_SUPERVISOR_SESSION:-bgwatch}"
 
 # 串行任务列表
-export BG_TASK_DIRS="${BG_TASK_DIRS:-bg_GaN bg_GaP bg_InGaP2 bg_InP}"
+export BG_TASK_DIRS="${BG_TASK_DIRS:-bg_CdTe bg_Cu2O bg_Ga2O3 bg_GaAs}"

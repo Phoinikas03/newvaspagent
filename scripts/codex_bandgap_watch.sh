@@ -145,43 +145,15 @@ can_resume() {
   grep -q "session_id" "$RUNS/$d/log.txt"
 }
 
-has_bandgap_result() {
-  local d="$1"
-  local ws="$RUNS/$d"
-  local result_dir=""
-  [[ -d "$ws" ]] || return 1
-
-  if [[ -d "$ws/hse_scf" ]]; then
-    result_dir="$ws/hse_scf"
-  elif [[ -d "$ws/hse_calc" ]]; then
-    result_dir="$ws/hse_calc"
-  else
-    result_dir="$ws"
-  fi
-
-  [[ -f "$result_dir/vasprun.xml" ]] || return 1
-  [[ -f "$result_dir/INCAR_hse" ]] || return 1
-  grep -Eq "LHFCALC|HSE06" "$result_dir/OUTCAR" 2>/dev/null || return 1
-
-  local status_json
-  status_json="$("$PY" "$REPO/.claude/skills/run_vasp/scripts/check_convergence.py" "$result_dir" 2>/dev/null || true)"
-  if [[ -z "$status_json" ]]; then
-    return 1
-  fi
-  python -c 'import json, sys; d=json.load(sys.stdin); raise SystemExit(0 if d.get("status") in {"converged", "incomplete_postprocess"} else 1)' <<<"$status_json" >/dev/null 2>&1 || return 1
-
-  "$PY" "$REPO/.claude/skills/bandgap/scripts/gap.py" "$result_dir/vasprun.xml" >/dev/null 2>&1
-}
-
-next_incomplete_dir() {
+known_task() {
+  local wanted="$1"
   local d
   for d in "${TASK_DIRS[@]}"; do
-    if ! has_bandgap_result "$d"; then
-      echo "$d"
+    if [[ "$d" == "$wanted" ]]; then
       return 0
     fi
   done
-  echo ""
+  return 1
 }
 
 conversation_has_user_turn() {
@@ -232,53 +204,71 @@ inject_initial_prompt_if_needed() {
 }
 
 auto_start_next_if_idle() {
-  if agent_running; then
-    local curd=""
-    curd="$(current_main_dir)"
-    if [[ -n "$curd" ]] && ! conversation_has_user_turn "$curd"; then
-      inject_initial_prompt_if_needed "$curd"
-    fi
+  return 0
+}
+
+start_named_task() {
+  local nd="$1"
+  local curd=""
+  local cmd=""
+
+  if ! known_task "$nd"; then
+    log "[parse] WATCH_START 未识别任务: $nd"
     return 0
   fi
 
-  local nd
-  nd="$(next_incomplete_dir)"
-  if [[ -z "$nd" ]]; then
-    echo "[auto] 四个 bandgap 任务均已完成，无需再启动 main.py" | tee -a "$LOG"
+  curd="$(current_main_dir)"
+  if agent_running; then
+    if [[ "$curd" == "$nd" ]]; then
+      log "[parse] WATCH_START 请求的任务已在运行: $nd"
+      inject_initial_prompt_if_needed "$nd"
+      return 0
+    fi
+    log "[parse] WATCH_START 请求 $nd，但当前仍有任务在运行: ${curd:-unknown}"
     return 0
   fi
 
   mkdir -p "$RUNS/$nd"
-  local cmd
   if can_resume "$nd"; then
     cmd="source $CONDA_SH && conda activate $CONDA_ENV && cd $REPO && $PY $MAIN --mode cli --dir $nd"
   else
     cmd="source $CONDA_SH && conda activate $CONDA_ENV && cd $REPO && $PY $MAIN --mode cli --dir $nd --no-resume"
   fi
 
-  echo "[auto] 启动下一任务: $nd" | tee -a "$LOG"
+  log "[parse] WATCH_START -> $nd"
   tmux_send_literal "$cmd"
   inject_initial_prompt_if_needed "$nd"
 }
 
 build_prompt() {
+  local task_list=""
+  local d=""
+  for d in "${TASK_DIRS[@]}"; do
+    task_list="${task_list}- ${d} （POSCAR: ${BG_DATA_ROOT}/${d#bg_}）"$'\n'
+  done
   cat <<EOF
 仓库根目录：$REPO
 tmux 会话：$SESSION
+带隙任务顺序：
+${task_list}
 
 请按以下顺序工作：
 1. 阅读说明文件：$INSTRUCTIONS_MD
 2. 用 Bash 检查 tmux 会话 $SESSION、当前运行的 main.py、以及 runs/bg_* 下相关 log.txt / conversation_turns.jsonl / OUTCAR / OSZICAR / vasprun.xml 状态
-3. 判断当前是否需要向 You> 注入一句回复，或者当前体系是否已经可以退出
+3. 由你独立判断：当前是否需要启动某个体系、是否需要向 You> 注入一句回复、是否应该结束当前体系
 
 要求：
 - 不能依赖固定规则模板，必须根据当下真实提问内容判断
-- 如果当前没有出现明确需要回复的用户提问，输出 WATCH_SKIP
+- Shell 只是执行层，不负责判断哪个体系已完成、哪个体系该启动；这些都由你决定
+- 如果当前没有出现明确需要回复的用户提问，也不需要启动/结束任何任务，输出 WATCH_SKIP
+- 如果当前没有 main.py 在运行，而你判断应当启动下一体系，输出 WATCH_START|<任务目录名>
 - 如果当前体系已经完成并且可以安全结束该 CLI 会话，输出 WATCH_QUIT
 - 如果需要代替人工回复，只输出一行最合适的中文回复到 WATCH_INJECT
 
 最后一行且仅一行必须是：
 WATCH_SKIP
+或
+WATCH_START|<任务目录名>
 或
 WATCH_INJECT|<完整一行回复>
 或
@@ -300,13 +290,26 @@ handle_watch_action() {
     return 0
   fi
 
+  local start_pfx="WATCH_START|"
+  if [[ "$last" == "$start_pfx"* ]]; then
+    local target="${last#$start_pfx}"
+    if [[ -n "$target" ]]; then
+      start_named_task "$target"
+    else
+      log "[parse] WATCH_START 为空，跳过"
+    fi
+    return 0
+  fi
+
   if [[ "$last" == "WATCH_QUIT" ]]; then
     curd="$(current_main_dir)"
     echo "[parse] WATCH_QUIT" | tee -a "$LOG"
-    tmux_send_literal "quit"
-    sleep 6
     if [[ -n "$curd" ]]; then
+      tmux_send_literal "quit"
+      sleep 6
       echo "[parse] 已请求退出当前会话: $curd" | tee -a "$LOG"
+    else
+      echo "[parse] 当前无运行中的 main.py，忽略 WATCH_QUIT" | tee -a "$LOG"
     fi
     return 0
   fi
@@ -337,8 +340,6 @@ run_watch_iteration() {
 
   log ""
   log "######## $(date -Is) 第 $i/$COUNT 次 ########"
-
-  auto_start_next_if_idle || log "[warn] auto_start_next_if_idle 失败，但主循环继续"
 
   msg_file="$(mktemp /tmp/codex_bandgap_watch_msg.XXXXXX)" || {
     log "[warn] mktemp 失败"
