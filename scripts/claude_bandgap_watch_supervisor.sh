@@ -29,5 +29,9 @@ while true; do
   ec=$?
   set -e
   log "[supervisor] watcher 退出 exit=$ec $(date -Is)"
+  if [[ "$ec" -eq 0 ]]; then
+    log "[supervisor] watcher 正常退出，不再自动重启"
+    break
+  fi
   sleep "$RESTART_DELAY"
 done
