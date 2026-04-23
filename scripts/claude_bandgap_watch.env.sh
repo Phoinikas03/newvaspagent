@@ -3,6 +3,14 @@
 # 迁移到新服务器时，优先修改这个文件。
 # Claude 版 watcher 主逻辑会在启动时自动 source 这里的变量。
 
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PROJECT_ENV_FILE="${PROJECT_ENV_FILE:-$REPO_ROOT/.env}"
+
+if [[ -f "$PROJECT_ENV_FILE" ]]; then
+  # shellcheck disable=SC1090
+  source "$PROJECT_ENV_FILE"
+fi
+
 # 非交互 shell 启动 watcher 时，主动从交互式 bash 中继承已配置的 API 环境变量。
 if [[ -z "${GLM_API_KEY:-}" && -z "${ANTHROPIC_API_KEY:-}" ]] && command -v bash >/dev/null 2>&1; then
   _glm_api_key_from_bashrc="$(bash -ic 'printf "%s" "${GLM_API_KEY:-}"' 2>/dev/null || true)"
@@ -29,7 +37,8 @@ export CLAUDE_MODEL="${CLAUDE_MODEL:-glm-5.1}"
 # Claude Code 走 Anthropic 协议时所需的上游配置。
 # 若当前 shell 已提前 export 了这些变量，这里不会覆盖。
 export ANTHROPIC_BASE_URL="${ANTHROPIC_BASE_URL:-https://api.sfkey.cn}"
-export ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-${GLM_API_KEY:-}}"
+export GLM_API_KEY="${GLM_API_KEY:-${UPSTREAM_API_KEY:-}}"
+export ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-${GLM_API_KEY:-${UPSTREAM_API_KEY:-}}}"
 
 # 网络代理
 export HTTP_PROXY="${HTTP_PROXY:-http://127.0.0.1:7890}"
@@ -53,4 +62,4 @@ export BG_CLAUDE_PRINT_TIMEOUT="${BG_CLAUDE_PRINT_TIMEOUT:-300}"
 export BG_WATCH_SUPERVISOR_SESSION="${BG_WATCH_SUPERVISOR_SESSION:-bgclaudewatch}"
 
 # 串行任务列表
-export BG_TASK_DIRS="${BG_TASK_DIRS:-bg_GaAs bg_PbS bg_ZnS}"
+export BG_TASK_DIRS="${BG_TASK_DIRS:-bg_PbS bg_ZnS}"

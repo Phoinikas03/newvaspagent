@@ -29,6 +29,7 @@ INSTRUCTIONS_MD="$REPO/scripts/claudewatch_bandgap_instructions.md"
 BG_DATA_ROOT="${BG_DATA_ROOT:-$REPO/data/bandgap}"
 
 read -r -a TASK_DIRS <<<"${BG_TASK_DIRS:-bg_GaN bg_GaP bg_InGaP2 bg_InP}"
+WATCHER_SHOULD_EXIT=0
 
 mkdir -p "$RUNS"
 
@@ -151,6 +152,22 @@ known_task() {
     fi
   done
   return 1
+}
+
+is_last_task() {
+  local wanted="$1"
+  local total="${#TASK_DIRS[@]}"
+  [[ "$total" -gt 0 ]] || return 1
+  [[ "${TASK_DIRS[$((total - 1))]}" == "$wanted" ]]
+}
+
+schedule_tmux_session_shutdown() {
+  local target_session="$1"
+  (
+    sleep 8
+    tmux has-session -t "$target_session" 2>/dev/null || exit 0
+    tmux kill-session -t "$target_session" >/dev/null 2>&1 || true
+  ) >/dev/null 2>&1 &
 }
 
 conversation_has_user_turn() {
@@ -311,6 +328,11 @@ handle_watch_action() {
       tmux_send_literal "quit"
       sleep 6
       echo "[parse] 已请求退出当前会话: $curd" | tee -a "$LOG"
+      if is_last_task "$curd"; then
+        echo "[parse] 最后一个任务已完成，准备关闭 tmux 会话并结束 watcher: $curd" | tee -a "$LOG"
+        schedule_tmux_session_shutdown "$SESSION"
+        WATCHER_SHOULD_EXIT=1
+      fi
     else
       echo "[parse] 当前无运行中的 main.py，忽略 WATCH_QUIT" | tee -a "$LOG"
     fi
@@ -414,6 +436,10 @@ run_watch_iteration() {
 
 for ((i = 1; i <= COUNT; i++)); do
   run_watch_iteration "$i" || log "[warn] 第 $i 轮异常退出，但主循环继续"
+  if [[ "$WATCHER_SHOULD_EXIT" -eq 1 ]]; then
+    log "[watch] 已完成最终任务，结束 watcher 主循环"
+    break
+  fi
 done
 
 log "==== claude bandgap watch 结束 $(date -Is) ===="

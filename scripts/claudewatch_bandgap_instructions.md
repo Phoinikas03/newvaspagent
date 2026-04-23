@@ -14,17 +14,13 @@ Shell 只是执行层，不负责判断哪个体系完成、哪个体系该启�
 
 按以下顺序串行执行：
 
-1. `bg_CdTe`
-2. `bg_Cu2O`
-3. `bg_Ga2O3`
-4. `bg_GaAs`
+1. `bg_PbS`
+2. `bg_ZnS`
 
 对应 POSCAR 路径分别是：
 
-- `/mnt/data_x3/xiazeyu/newvaspagent/data/bandgap/CdTe`
-- `/mnt/data_x3/xiazeyu/newvaspagent/data/bandgap/Cu2O`
-- `/mnt/data_x3/xiazeyu/newvaspagent/data/bandgap/Ga2O3`
-- `/mnt/data_x3/xiazeyu/newvaspagent/data/bandgap/GaAs`
+- `/mnt/data_x3/xiazeyu/newvaspagent/data/bandgap/PbS`
+- `/mnt/data_x3/xiazeyu/newvaspagent/data/bandgap/ZnS`
 
 ## 固定用户意图
 
@@ -72,7 +68,7 @@ Shell 只是执行层，不负责判断哪个体系完成、哪个体系该启�
 
 ## 何时输出 WATCH_QUIT
 
-只有在你判断当前体系已完成时才输出 `WATCH_QUIT`。判断依据可以综合：
+只有在你判断当前体系已完成时才输出 `WATCH_QUIT`。如果当前体系已经是最后一个任务，shell 会在退出当前 CLI 会话后自动收掉 watcher 与 tmux 会话。判断依据可以综合：
 
 - 当前 run 目录下已出现可信的 HSE 结果文件
 - `run_vasp/scripts/check_convergence.py` 显示已完成
@@ -91,10 +87,8 @@ Shell 只是执行层，不负责判断哪个体系完成、哪个体系该启�
 
 才输出：
 
-- `WATCH_START|bg_CdTe`
-- `WATCH_START|bg_Cu2O`
-- `WATCH_START|bg_Ga2O3`
-- `WATCH_START|bg_GaAs`
+- `WATCH_START|bg_PbS`
+- `WATCH_START|bg_ZnS`
 
 由 shell 去执行启动与首句注入，但“该启动谁”必须由你判断。
 
