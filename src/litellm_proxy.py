@@ -31,7 +31,9 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
+from urllib.request import Request, urlopen
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CONFIG_PATH = REPO_ROOT / "litellm_autostart_config.yaml"
@@ -218,6 +220,20 @@ def normalize_upstream_model_for_litellm(model: str) -> str:
     return f"{p}/{m}"
 
 
+def direct_model_from_upstream(model: str) -> str:
+    """
+    提取直连 Anthropic 兼容接口时应使用的裸模型名。
+    例如 ``anthropic/glm-5.1`` -> ``glm-5.1``。
+    """
+    m = model.strip()
+    if not m:
+        return m
+    if "/" not in m:
+        return m
+    _prov, rest = m.split("/", 1)
+    return rest.strip() or m
+
+
 def _build_yaml(model: str, api_base: str, api_key: str) -> str:
     normalized = normalize_upstream_model_for_litellm(model)
     base = normalize_upstream_api_base_for_litellm(api_base)
@@ -299,6 +315,91 @@ def run_litellm_proxy_main() -> int:
     sys.argv[0] = "litellm"
     rc = run_server()
     return int(rc) if rc is not None else 0
+
+
+def maybe_prefer_direct_upstream(base_url: str) -> tuple[str, str]:
+    """
+    若当前仍是本机默认/代理地址，且 ``UPSTREAM_*`` 提供的上游已支持 Anthropic ``/v1/messages``，
+    则优先把 Claude Agent SDK 直连到远端；否则保留原本的本机地址，后续可继续回退到 LiteLLM。
+    """
+    host, _ignored_port = host_port_from_base_url(base_url)
+    if host and not _is_local_host(host):
+        return base_url, (os.environ.get("ANTHROPIC_API_KEY") or "").strip()
+
+    model = (os.environ.get("UPSTREAM_MODEL") or "").strip()
+    api_base = (os.environ.get("UPSTREAM_API_BASE") or "").strip()
+    api_key = (os.environ.get("UPSTREAM_API_KEY") or "").strip()
+    if not (model and api_base and api_key):
+        return base_url, (os.environ.get("ANTHROPIC_API_KEY") or "").strip()
+
+    direct_base = normalize_upstream_api_base_for_litellm(api_base)
+    direct_model = direct_model_from_upstream(model)
+    if not direct_base or not direct_model:
+        return base_url, (os.environ.get("ANTHROPIC_API_KEY") or "").strip()
+
+    ok, detail = probe_anthropic_messages_endpoint(
+        base_url=direct_base,
+        api_key=api_key,
+        model=direct_model,
+    )
+    if not ok:
+        print(
+            f"[llm] 远端 Anthropic 直连探测失败，回退 LiteLLM: {detail}",
+            flush=True,
+        )
+        return base_url, (os.environ.get("ANTHROPIC_API_KEY") or "").strip()
+
+    direct_base = direct_base.rstrip("/")
+    os.environ["ANTHROPIC_BASE_URL"] = direct_base
+    os.environ["ANTHROPIC_API_KEY"] = api_key
+    _merge_no_proxy_for_url(direct_base)
+    print(f"[llm] 远端 Anthropic 直连可用，跳过 LiteLLM: {direct_base}", flush=True)
+    return direct_base, api_key
+
+
+def probe_anthropic_messages_endpoint(
+    *,
+    base_url: str,
+    api_key: str,
+    model: str,
+    timeout: float = 8.0,
+) -> tuple[bool, str]:
+    """
+    轻量探测远端是否能处理 Anthropic ``/v1/messages``。
+
+    返回 ``(是否可直连, 说明)``。仅作为路由判定，不代表后续所有推理都必定成功。
+    """
+    endpoint = base_url.strip().rstrip("/") + "/v1/messages"
+    body = json.dumps(
+        {
+            "model": model,
+            "max_tokens": 1,
+            "messages": [{"role": "user", "content": "ping"}],
+        }
+    ).encode("utf-8")
+    req = Request(
+        endpoint,
+        data=body,
+        method="POST",
+        headers={
+            "content-type": "application/json",
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+        },
+    )
+    try:
+        with urlopen(req, timeout=timeout) as resp:
+            status = getattr(resp, "status", 200)
+            return 200 <= int(status) < 300, f"HTTP {status}"
+    except HTTPError as e:
+        detail = ""
+        with suppress(Exception):
+            detail = e.read(512).decode("utf-8", errors="replace").strip()
+        return False, f"HTTP {e.code}{': ' + detail if detail else ''}"
+    except URLError as e:
+        return False, f"{type(e.reason).__name__}: {e.reason}"
+    except OSError as e:
+        return False, f"{type(e).__name__}: {e}"
 
 
 def maybe_start_litellm(base_url: str, *, disable: bool = False) -> None:

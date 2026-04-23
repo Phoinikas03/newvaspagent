@@ -34,7 +34,12 @@ from webui.web_history import (
     write_user_turn_log,
 )
 from src.conversation_store import PERSIST_FILENAME, load_persist_context_for_prompt, persist_on_sdk_message
-from src.litellm_proxy import configure_anthropic_for_litellm, maybe_start_litellm
+from src.litellm_proxy import (
+    configure_anthropic_for_litellm,
+    direct_model_from_upstream,
+    maybe_prefer_direct_upstream,
+    maybe_start_litellm,
+)
 
 load_dotenv(REPO_ROOT / ".env")
 
@@ -167,12 +172,19 @@ The following was saved by VASP Agent to `{PERSIST_FILENAME}` under this workspa
         except OSError:
             pass
 
+    model_name = (
+        os.environ.get("CLAUDE_CODE_MODEL")
+        or direct_model_from_upstream(os.environ.get("UPSTREAM_MODEL", ""))
+        or None
+    )
+
     return ClaudeAgentOptions(
         cwd=workspace,
         resume=resume,
         setting_sources=["project"],
         permission_mode="bypassPermissions",
         stderr=_cli_stderr,
+        model=model_name,
         system_prompt=f"""Your workspace directory is: {workspace}
 All VASP input/output files should be read from and written to this directory.
 
@@ -733,6 +745,7 @@ def main() -> None:
         base_url=args.base_url,
         api_key=args.api_key,
     )
+    applied_url, _ = maybe_prefer_direct_upstream(applied_url)
     maybe_start_litellm(applied_url, disable=args.no_litellm_autostart)
     final_llm_url = (os.environ.get("ANTHROPIC_BASE_URL") or applied_url).strip().rstrip("/")
     print(f"[llm] ANTHROPIC_BASE_URL={final_llm_url}", flush=True)
