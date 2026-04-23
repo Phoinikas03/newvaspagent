@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-import os
-import sys
-import time
 import argparse
-import subprocess
+import json
+import os
 import shlex
 import shutil
+import subprocess
+import sys
+import time
 from collections import deque
 from pathlib import Path
 
@@ -15,6 +16,154 @@ DEFAULT_MIN_GPU_FREE_MIB = 10240.0
 DEFAULT_MAX_GPU_UTIL_PERCENT = 10.0
 # 空卡判定：memory.used (MiB) 不超过该值时视为「空」，优先分配；0 表示不区分空卡（仅用门控）
 DEFAULT_EMPTY_GPU_MAX_USED_MIB = 512.0
+
+STATE_SCHEMA_VERSION = 1
+RUNNER_VERSION = "1.1.0"
+STATE_FILE_NAME = ".vasp_run_state.json"
+
+
+def utc_now_iso() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def state_file_for_dir(work_dir: Path) -> Path:
+    return work_dir / STATE_FILE_NAME
+
+
+def load_state(state_path: Path) -> dict | None:
+    if not state_path.exists():
+        return None
+    try:
+        return json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def write_state(state_path: Path, data: dict) -> None:
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = state_path.with_suffix(state_path.suffix + ".tmp")
+    tmp_path.write_text(
+        json.dumps(data, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    tmp_path.replace(state_path)
+
+
+def mutate_state(state_path: Path, **updates) -> dict:
+    state = load_state(state_path) or {}
+    state.update(updates)
+    write_state(state_path, state)
+    return state
+
+
+def build_task_state(
+    dir_path: Path,
+    task_idx: int,
+    total_tasks: int,
+    mode: str,
+    np: int,
+    exe: str,
+    env_script: str,
+    log_name: str,
+    gpu_ids: list[int],
+) -> dict:
+    timestamp = int(time.time())
+    run_id = f"{mode}-{timestamp}-{os.getpid()}-{task_idx}"
+    resolved_env = ""
+    if env_script:
+        env_p = Path(env_script)
+        resolved_env = str(env_p.resolve()) if env_p.exists() else env_script
+    return {
+        "schema_version": STATE_SCHEMA_VERSION,
+        "runner_version": RUNNER_VERSION,
+        "run_id": run_id,
+        "task_index": task_idx,
+        "total_tasks": total_tasks,
+        "mode": mode,
+        "workdir": str(dir_path),
+        "state_file": str(state_file_for_dir(dir_path)),
+        "log_file": log_name,
+        "log_path": str(dir_path / log_name),
+        "exe": exe,
+        "np": int(np),
+        "gpu_ids": list(gpu_ids),
+        "gpu_per_task": len(gpu_ids),
+        "env_script": resolved_env,
+        "status": "prepared",
+        "created_at": utc_now_iso(),
+        "started_at": None,
+        "ended_at": None,
+        "launch_cmd": "",
+        "pid": None,
+        "pgid": None,
+        "returncode": None,
+        "scheduler_job_id": None,
+        "termination_reason": None,
+        "failure_reason": None,
+    }
+
+
+def pid_is_alive(pid: int | None) -> bool:
+    if not pid or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def slurm_job_is_active(job_id: str | None) -> bool:
+    if not job_id:
+        return False
+    if shutil.which("squeue"):
+        proc = subprocess.run(
+            ["squeue", "-h", "-j", str(job_id), "-o", "%T"],
+            capture_output=True,
+            text=True,
+        )
+        if proc.returncode == 0:
+            states = [line.strip().upper() for line in proc.stdout.splitlines() if line.strip()]
+            return any(
+                state not in {"COMPLETED", "FAILED", "CANCELLED", "TIMEOUT", "NODE_FAIL"}
+                for state in states
+            )
+    return True
+
+
+def active_run_summary(state: dict) -> str:
+    bits = [
+        f"run_id={state.get('run_id', 'unknown')}",
+        f"status={state.get('status', 'unknown')}",
+    ]
+    if state.get("pid"):
+        bits.append(f"pid={state['pid']}")
+    if state.get("pgid"):
+        bits.append(f"pgid={state['pgid']}")
+    if state.get("scheduler_job_id"):
+        bits.append(f"job_id={state['scheduler_job_id']}")
+    return ", ".join(bits)
+
+
+def ensure_no_active_owned_run(dir_path: Path) -> None:
+    state_path = state_file_for_dir(dir_path)
+    state = load_state(state_path)
+    if not state:
+        return
+    status = str(state.get("status", "")).lower()
+    if status in {"running", "launched", "submitted"}:
+        if state.get("mode") == "local" and pid_is_alive(state.get("pid")):
+            raise RuntimeError(
+                "existing owned local run is still active in "
+                f"{dir_path}: {active_run_summary(state)}"
+            )
+        if state.get("mode") == "slurm" and slurm_job_is_active(state.get("scheduler_job_id")):
+            raise RuntimeError(
+                "existing owned scheduler run is still active in "
+                f"{dir_path}: {active_run_summary(state)}"
+            )
 
 
 def resolve_log_file_name(
@@ -156,7 +305,7 @@ def query_gpu_used_mib() -> dict[int, float]:
 
 
 def gpu_indices_for_local_batch(num_tasks: int, gpu_per_task: int) -> list[int]:
-    """本地并行时将要绑定的物理 GPU 索引（与 create_local_batch_script 中逻辑一致）。"""
+    """本地并行时将要绑定的物理 GPU 索引。"""
     if gpu_per_task <= 0 or num_tasks <= 0:
         return []
     seen: set[int] = set()
@@ -274,15 +423,86 @@ def build_mpirun_shell(
     exe: str,
     env_script: str,
 ) -> str:
+    env_prefix = ""
+    if cuda_visible_devices:
+        env_prefix = f"CUDA_VISIBLE_DEVICES={cuda_visible_devices} "
     inner = (
         f"cd {shlex.quote(str(dir_path))} && "
-        f"CUDA_VISIBLE_DEVICES={cuda_visible_devices} "
+        f"{env_prefix}"
         f"mpirun -np {int(np)} {shlex.quote(exe)} > {shlex.quote(log_file)} 2>&1"
     )
     env_p = Path(env_script) if env_script else None
     if env_p and env_p.exists():
         inner = f"source {shlex.quote(str(env_p.resolve()))} && " + inner
     return inner
+
+
+def mark_local_task_started(state_path: Path, proc: subprocess.Popen, launch_cmd: str) -> None:
+    pgid = None
+    try:
+        pgid = os.getpgid(proc.pid)
+    except OSError:
+        pgid = proc.pid
+    mutate_state(
+        state_path,
+        status="running",
+        started_at=utc_now_iso(),
+        launch_cmd=launch_cmd,
+        pid=proc.pid,
+        pgid=pgid,
+        failure_reason=None,
+        termination_reason=None,
+    )
+
+
+def mark_task_finished(state_path: Path, returncode: int) -> None:
+    mutate_state(
+        state_path,
+        status="finished" if returncode == 0 else "failed",
+        ended_at=utc_now_iso(),
+        returncode=int(returncode),
+    )
+
+
+def launch_local_task(
+    task_idx: int,
+    total_tasks: int,
+    dir_path: Path,
+    np: int,
+    exe: str,
+    env_script: str,
+    log_name: str,
+    gpu_ids: list[int],
+) -> tuple[subprocess.Popen, Path, str]:
+    ensure_no_active_owned_run(dir_path)
+    state_path = state_file_for_dir(dir_path)
+    state = build_task_state(
+        dir_path=dir_path,
+        task_idx=task_idx,
+        total_tasks=total_tasks,
+        mode="local",
+        np=np,
+        exe=exe,
+        env_script=env_script,
+        log_name=log_name,
+        gpu_ids=gpu_ids,
+    )
+    write_state(state_path, state)
+    cuda_vis = ",".join(str(g) for g in gpu_ids)
+    cmd = build_mpirun_shell(dir_path, log_name, cuda_vis, np, exe, env_script)
+    try:
+        proc = subprocess.Popen(["bash", "-c", cmd], start_new_session=True)
+    except OSError as exc:
+        mutate_state(
+            state_path,
+            status="failed",
+            ended_at=utc_now_iso(),
+            failure_reason=str(exc),
+            launch_cmd=cmd,
+        )
+        raise
+    mark_local_task_started(state_path, proc, cmd)
+    return proc, state_path, cmd
 
 
 def gpus_tier_load_ok(
@@ -360,6 +580,11 @@ def pick_gpu_slot_two_tier(
     return None, "none"
 
 
+def preflight_task_dirs(work_dirs: list[str]) -> None:
+    for wdir in work_dirs:
+        ensure_no_active_owned_run(Path(wdir).resolve())
+
+
 def run_local_gpu_flexible_queue(
     work_dirs: list[str],
     np: int,
@@ -382,6 +607,7 @@ def run_local_gpu_flexible_queue(
     """
     if gpu_per_task < 1:
         return 0
+    preflight_task_dirs(work_dirs)
     pending: deque[tuple[int, str]] = deque(enumerate(work_dirs))
     running: list[dict] = []
     assigned: set[int] = set()
@@ -399,7 +625,6 @@ def run_local_gpu_flexible_queue(
     )
 
     while pending or running:
-        # 回收已结束任务
         still: list[dict] = []
         for job in running:
             rc = job["proc"].poll()
@@ -409,19 +634,17 @@ def run_local_gpu_flexible_queue(
             max_rc = max(max_rc, rc)
             for g in job["gpus"]:
                 assigned.discard(g)
+            mark_task_finished(job["state_path"], rc)
             print(
                 f"[flex-gpu] task {job['idx']} on GPU(s) {job['gpus']} exit={rc} dir={job['wdir']}",
                 file=sys.stderr,
             )
         running = still
 
-        # 尽量从队列中启动新任务
         while pending:
             free_map = query_gpu_free_mib()
             util_map = query_gpu_utilization_percent()
-            used_map = (
-                query_gpu_used_mib() if empty_max_used_mib > 0 else {}
-            )
+            used_map = query_gpu_used_mib() if empty_max_used_mib > 0 else {}
             if min_free_mib > 0 and not free_map:
                 print(
                     "ERROR: flex-gpu needs nvidia-smi to query GPU memory.",
@@ -452,14 +675,19 @@ def run_local_gpu_flexible_queue(
             resolved_log = resolve_log_file_name(
                 task_idx, len(work_dirs), log_file, log_prefix
             )
-            cuda_vis = ",".join(str(g) for g in slot)
-            cmd = build_mpirun_shell(
-                dir_path, resolved_log, cuda_vis, np, exe, env_script
-            )
             try:
-                proc = subprocess.Popen(["bash", "-c", cmd])
-            except OSError as e:
-                print(f"ERROR: failed to start task {task_idx}: {e}", file=sys.stderr)
+                proc, state_path, cmd = launch_local_task(
+                    task_idx=task_idx,
+                    total_tasks=len(work_dirs),
+                    dir_path=dir_path,
+                    np=np,
+                    exe=exe,
+                    env_script=env_script,
+                    log_name=resolved_log,
+                    gpu_ids=list(slot),
+                )
+            except (OSError, RuntimeError) as exc:
+                print(f"ERROR: failed to start task {task_idx}: {exc}", file=sys.stderr)
                 return 1
             for g in slot:
                 assigned.add(g)
@@ -469,12 +697,13 @@ def run_local_gpu_flexible_queue(
                     "gpus": list(slot),
                     "idx": task_idx,
                     "wdir": str(dir_path),
+                    "state_path": state_path,
                 }
             )
             stall_start = None
             print(
                 "[flex-gpu] start task "
-                f"{task_idx} tier={tier} CUDA_VISIBLE_DEVICES={cuda_vis} "
+                f"{task_idx} tier={tier} CUDA_VISIBLE_DEVICES={','.join(str(g) for g in slot)} "
                 f"log={dir_path / resolved_log} cmd={cmd}",
                 file=sys.stderr,
             )
@@ -500,46 +729,93 @@ def run_local_gpu_flexible_queue(
     return max_rc
 
 
-def create_local_batch_script(work_dirs, np, exe, env_script, gpu_per_task, log_file, log_prefix):
-    """场景1 & 场景3：生成包含后台并行与 GPU 绑定的本地执行脚本"""
-    script_content = ["#!/bin/bash", ""]
-    if env_script and Path(env_script).exists():
-        script_content.append(f"source {env_script}")
-    
-    for i, wdir in enumerate(work_dirs):
+def run_local_fixed_batch(
+    work_dirs: list[str],
+    np: int,
+    exe: str,
+    env_script: str,
+    gpu_per_task: int,
+    log_file: str,
+    log_prefix: str,
+) -> int:
+    preflight_task_dirs(work_dirs)
+    running: list[dict] = []
+    max_rc = 0
+    launch_failed = False
+
+    for task_idx, wdir in enumerate(work_dirs):
         dir_path = Path(wdir).resolve()
-        resolved_log = resolve_log_file_name(i, len(work_dirs), log_file, log_prefix)
-        
-        env_vars = ""
-        # 场景3: GPU 隔离逻辑
+        resolved_log = resolve_log_file_name(task_idx, len(work_dirs), log_file, log_prefix)
+        gpu_ids: list[int] = []
         if gpu_per_task > 0:
-            gpu_start = i * gpu_per_task
-            gpu_ids = ",".join(str(g) for g in range(gpu_start, gpu_start + gpu_per_task))
-            env_vars = f"CUDA_VISIBLE_DEVICES={gpu_ids} "
-        
-        cmd = f"cd {dir_path} && {env_vars}mpirun -np {np} {exe} > {resolved_log} 2>&1 &"
-        script_content.append(f"echo '[local-run] dir={dir_path} log={dir_path / resolved_log}'")
-        script_content.append(cmd)
-    
-    script_content.append("wait") # 等待所有后台任务完成
-    script_content.append("echo 'All local VASP tasks completed.'")
-    return "\n".join(script_content)
+            gpu_start = task_idx * gpu_per_task
+            gpu_ids = list(range(gpu_start, gpu_start + gpu_per_task))
+        try:
+            proc, state_path, cmd = launch_local_task(
+                task_idx=task_idx,
+                total_tasks=len(work_dirs),
+                dir_path=dir_path,
+                np=np,
+                exe=exe,
+                env_script=env_script,
+                log_name=resolved_log,
+                gpu_ids=gpu_ids,
+            )
+        except (OSError, RuntimeError) as exc:
+            print(f"ERROR: failed to start task {task_idx}: {exc}", file=sys.stderr)
+            launch_failed = True
+            max_rc = max(max_rc, 1)
+            continue
+        running.append(
+            {
+                "proc": proc,
+                "idx": task_idx,
+                "wdir": str(dir_path),
+                "state_path": state_path,
+            }
+        )
+        print(
+            f"[local-run] task={task_idx} dir={dir_path} log={dir_path / resolved_log} cmd={cmd}",
+            file=sys.stderr,
+        )
+
+    while running:
+        still: list[dict] = []
+        for job in running:
+            rc = job["proc"].poll()
+            if rc is None:
+                still.append(job)
+                continue
+            mark_task_finished(job["state_path"], rc)
+            max_rc = max(max_rc, rc)
+            print(
+                f"[local-run] task {job['idx']} exit={rc} dir={job['wdir']}",
+                file=sys.stderr,
+            )
+        running = still
+        if running:
+            time.sleep(1.0)
+
+    if launch_failed:
+        print("ERROR: one or more local tasks failed to launch.", file=sys.stderr)
+    print("All local VASP tasks completed.", file=sys.stderr)
+    return max_rc
+
 
 def create_slurm_script(work_dirs, np, exe, env_script, template_path, log_file, log_prefix):
     """场景2：基于模板生成 Slurm 脚本并提交"""
     if not Path(template_path).exists():
         raise FileNotFoundError(f"Slurm template not found at {template_path}")
-        
-    with open(template_path, 'r') as f:
+
+    with open(template_path, "r", encoding="utf-8") as f:
         template = f.read()
 
-    # 此处为简化演示，实际可使用 jinja2 或更复杂的替换
     template = template.replace("{{NTASKS}}", str(np))
-    
+
     run_commands = []
     if env_script and Path(env_script).exists():
         run_commands.append(f"source {env_script}")
-        
+
     for i, wdir in enumerate(work_dirs):
         dir_path = Path(wdir).resolve()
         resolved_log = resolve_log_file_name(i, len(work_dirs), log_file, log_prefix)
@@ -547,14 +823,22 @@ def create_slurm_script(work_dirs, np, exe, env_script, template_path, log_file,
         run_commands.append(f"echo '[slurm-run] dir={dir_path} log={dir_path / resolved_log}'")
         run_commands.append(f"mpirun -np {np} {exe} > {resolved_log} 2>&1")
         run_commands.append("cd - > /dev/null")
-        
+
     template = template.replace("{{COMMANDS}}", "\n".join(run_commands))
     return template
 
+
+def parse_sbatch_job_id(stdout: str) -> str | None:
+    for token in stdout.replace("\n", " ").split():
+        if token.isdigit():
+            return token
+    return None
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="VASP Task Orchestrator")
-    parser.add_argument("--dirs", nargs='+', required=True, help="List of task directories")
-    parser.add_argument("--mode", choices=['local', 'slurm'], required=True)
+    parser.add_argument("--dirs", nargs="+", required=True, help="List of task directories")
+    parser.add_argument("--mode", choices=["local", "slurm"], required=True)
     parser.add_argument("--np", type=int, default=4, help="MPI tasks PER directory")
     parser.add_argument("--exe", type=str, default="vasp_std")
     parser.add_argument("--gpu-per-task", type=int, default=0, help="GPUs to bind per task")
@@ -629,8 +913,6 @@ if __name__ == "__main__":
         )
         sys.exit(2)
 
-    run_script_path = Path("vasp_orchestration_run.sh")
-
     if args.mode == "local":
         verify_local_dependencies(args.exe, args.env_script)
         if args.gpu_per_task > 0 and not args.fixed_gpu_layout:
@@ -667,7 +949,7 @@ if __name__ == "__main__":
                     max(1.0, args.gpu_ready_poll_sec),
                     max(0.0, args.gpu_ready_timeout_sec),
                 )
-            content = create_local_batch_script(
+            rc = run_local_fixed_batch(
                 args.dirs,
                 args.np,
                 args.exe,
@@ -676,20 +958,16 @@ if __name__ == "__main__":
                 args.log_file,
                 args.log_prefix,
             )
-            run_script_path.write_text(content)
-            os.chmod(run_script_path, 0o755)
-            print(f"Generated local execution script: {run_script_path}")
-            print("Starting execution (background tasks managed by wait)...")
-            proc = subprocess.run(["bash", run_script_path.name])
-            if proc.returncode != 0:
+            if rc != 0:
                 print(
-                    f"ERROR: local orchestration script exited with code {proc.returncode}. "
-                    "Check vasp_run_*.log in each task directory and stderr above.",
+                    f"ERROR: local orchestration exited with code {rc}. "
+                    "Check task state files and vasp logs in each task directory.",
                     file=sys.stderr,
                 )
-                sys.exit(proc.returncode)
+                sys.exit(rc)
 
-    elif args.mode == 'slurm':
+    elif args.mode == "slurm":
+        preflight_task_dirs(args.dirs)
         content = create_slurm_script(
             args.dirs,
             args.np,
@@ -700,10 +978,42 @@ if __name__ == "__main__":
             args.log_prefix,
         )
         submit_script = Path("submit_vasp.slurm")
-        submit_script.write_text(content)
+        submit_script.write_text(content, encoding="utf-8")
         print(f"Generated Slurm submission script: {submit_script}")
         print("Submitting to cluster...")
-        proc = subprocess.run(["sbatch", submit_script.name])
+        proc = subprocess.run(
+            ["sbatch", submit_script.name],
+            capture_output=True,
+            text=True,
+        )
+        if proc.stdout:
+            print(proc.stdout.strip())
+        if proc.stderr:
+            print(proc.stderr.strip(), file=sys.stderr)
         if proc.returncode != 0:
             print(f"ERROR: sbatch failed with code {proc.returncode}", file=sys.stderr)
             sys.exit(proc.returncode)
+        job_id = parse_sbatch_job_id(proc.stdout)
+        for task_idx, wdir in enumerate(args.dirs):
+            dir_path = Path(wdir).resolve()
+            resolved_log = resolve_log_file_name(task_idx, len(args.dirs), args.log_file, args.log_prefix)
+            state = build_task_state(
+                dir_path=dir_path,
+                task_idx=task_idx,
+                total_tasks=len(args.dirs),
+                mode="slurm",
+                np=args.np,
+                exe=args.exe,
+                env_script=args.env_script,
+                log_name=resolved_log,
+                gpu_ids=[],
+            )
+            state.update(
+                {
+                    "status": "submitted",
+                    "started_at": utc_now_iso(),
+                    "launch_cmd": f"sbatch {submit_script.name}",
+                    "scheduler_job_id": job_id,
+                }
+            )
+            write_state(state_file_for_dir(dir_path), state)

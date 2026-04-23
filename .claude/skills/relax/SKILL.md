@@ -31,6 +31,7 @@ relax/
 - `visit_webpage`：提取网页全文
 - `Skill` (`literature`)：检索特定材料的 DFT 计算参数文献及实验对比值
 - `Skill` (`convergence`)：对**固定 POSCAR** 做静态单点（`NSW=0`）**ENCUT** 与 **`KSPACING`** 收敛测试（1 meV/atom），产出 **`Convergence_Report.md`**。在需要严格确定截断能与 K 点网格、或与后续静态/EOS/带隙计算参数对齐时使用；**不**替代本 skill 中的离子松弛
+- `Skill` (`vasp_error`)：当松弛计算失败、未收敛、疑似卡住、或需要判断是否应先停止当前 run 再修改参数重跑时使用
 - `setup_vasp_inputs`：生成 POTCAR 与 POSCAR 拷贝；若 **INCAR** 中含 **`KSPACING`** 则仅用 INCAR 定义 K 点、**不**生成 **KPOINTS**；否则按 `kpoints_density` 生成 **KPOINTS**
 - `Write` / `Edit`：生成和修改工作区文件
 - `Bash`：文件管理、运行后处理脚本
@@ -115,7 +116,27 @@ python scripts/check_convergence.py .
 | `electronic_converged` | `true` | 检查 `errors` 字段，参考 `troubleshooting.md` 调整 ALGO/NELM |
 | `contcar_exists` | `true` | 若为 `false`，说明计算异常退出，检查 `errors` 和 `last_lines` |
 
-若遇到报错，**先 `Read references/troubleshooting.md` 查阅处理方案**，未收录的报错再联网搜索。
+若遇到报错、未收敛、或日志长时间无更新，处理顺序必须是：
+
+1. 先 `Read references/troubleshooting.md`
+2. 再调用：
+
+```bash
+cd "<Repository root>" && python .claude/skills/vasp_error/scripts/analyze_error.py --work-dir "<当前松弛目录>"
+```
+
+3. 依据 `vasp_error` 的结构化输出判断：
+   - 是否只是继续等待
+   - 是否应修改 `NELM` / `ALGO` / `NSW` / `POTIM` 等参数后续算
+   - 是否建议**先停止当前 run**
+
+4. 若 `vasp_error` 建议先停旧 run，**必须先向用户说明证据与拟修改方案，并等待用户明确同意**。只有在用户明确同意后，才允许：
+
+```bash
+cd "<Repository root>" && python .claude/skills/run_vasp/scripts/terminate.py --work-dir "<当前松弛目录>" --reason "<停止原因>"
+```
+
+5. **禁止**在旧 run 可能仍存活时，直接在同一目录补开新的 `vasp_runner.py` / `mpirun`
 
 ---
 
@@ -142,7 +163,7 @@ python scripts/analyze_result.py .
 - 松弛是否收敛，最终能量和最大力
 - 最终结构文件位置（`CONTCAR`，后续计算应以此为起点）
 - 所有关键文件位置：`INCAR`、`INCAR_explanation.md`、`CONTCAR`、`OUTCAR`
-- 是否建议进行后续计算（如能带结构计算，可调用 `Skill: bandgap`）
+- 是否建议进行后续计算（如电子结构或高精度带隙计算，可调用 `Skill: electronic-structure`）
 
 ---
 
@@ -153,5 +174,6 @@ python scripts/analyze_result.py .
 - **ENCUT/K 点收敛**：需要生产级 **ENCUT** 与 **KSPACING**（1 meV/atom）时，**须先征得用户同意**再进入 **`convergence`**；该流程为**静态单点**，与离子步松弛分离，完成后将参数并入松弛 **INCAR**。
 - **物理严谨性**：时刻关注材料的电子结构分类（金属/半导体、磁性/非磁性），确保 ISMEAR/MAGMOM 等参数设置合理。
 - **续算而非重算**：离子步未收敛时，将 CONTCAR 复制为 POSCAR 续算，而不是从头开始。
+- **失败/卡住先走 `vasp_error`**：若松弛失败、长期无新输出、或准备判断是否终止旧 run，优先用 `vasp_error` 做证据化诊断；只有在用户明确同意后，才可调用 `terminate.py`。
 - **步骤透明**：每完成一个重要节点（获取结构、生成 INCAR、完成收敛检查），向用户简要汇报进度。
 - **日志落盘**：正式计算日志应优先落在工作目录中的显式文件（如 `vasp_relax.log`），不要只停留在外层 Bash/任务系统输出。
