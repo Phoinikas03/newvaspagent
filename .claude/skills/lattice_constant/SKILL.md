@@ -31,6 +31,7 @@ lattice_constant/
 - `get_poscar_from_md`：根据特定材料生成或获取初始 POSCAR
 - `setup_vasp_inputs`：生成 POTCAR；若 **INCAR** 含 **`KSPACING`** 则**不**生成 **KPOINTS**
 - Skill（`run_vasp`）：按该 skill 与系统 orchestration 规则，用 Bash /（必要时）**非阻塞** `TaskOutput` / 作业调度运行 VASP（MCP 工具 `run_vasp` 已移除，勿再调用）
+- Skill（`vasp_error`）：统一诊断 VASP 报错、卡住与是否应先终止旧任务再重跑
 - `Write` / `Edit`：生成和修改工作区文件
 - `Bash`：文件管理、运行预处理与后处理脚本
 - `Read` / `Grep`：读取日志和输出文件
@@ -99,7 +100,8 @@ lattice_constant/
 3. 按 Skill `run_vasp` 与 orchestration 规则，**通过 Bash 调用 `python .claude/skills/run_vasp/scripts/vasp_runner.py`**（`run_in_background: true`）及上文 **Web / IDE 等待规则** 在该子目录**单独**提交并完成一次 VASP 计算（一点一任务）；**禁止**长时间阻塞式 `TaskOutput` 冻结会话，也**不得**直接手写 `mpirun ... vasp_std/vasp_gpu`。
 4. 该目录计算结束后，`Bash`：`python .claude/skills/run_vasp/scripts/check_convergence.py .`
    - 确认 `electronic_converged: true`。
-   - 若未收敛，查阅 `references/troubleshooting.md`，可能需要增加 `NELM` 或调整 `ALGO` 算法后重试该点。
+   - 若未收敛、报错或长时间无新输出，先 `Read references/troubleshooting.md`，再调用 `python .claude/skills/vasp_error/scripts/analyze_error.py --work-dir .` 做统一诊断，判断是继续等待、修改参数后重跑，还是必须先终止旧任务。
+   - 只有在用户明确同意后，才可调用 `python .claude/skills/run_vasp/scripts/terminate.py --work-dir . --reason "<原因>"` 终止当前目录下由 runner 管理的旧任务；在旧 run 可能仍存活时，严禁在同一 `scale_*` 目录补开第二个活跃 VASP 进程。
 
 ---
 
@@ -135,4 +137,5 @@ lattice_constant/
 - **参数绝对一致**：在第 4 步的批量计算中，所有子任务的 `ENCUT`、`POTCAR` 类别和 K 点网格划分方式必须**完全一致**。改变基点截断能会导致 Pulay 应力带来的巨大误差。
 - **静态计算优先**：EOS 拟合过程中，各个比例下的 VASP 计算必须是**单点静态计算 (ISIF=2 且 NSW=0)**，不能在内部再次进行晶胞体积松弛，否则能量-体积对应关系将失效。
 - **异常点剔除**：若 `fit_eos.py` 报错或拟合曲线存在明显偏离抛物线底部的异常点（例如 SCF 未真正收敛导致的能量畸变），必须重新检查该点的 `OUTCAR`。
+- **失败/卡住先走 `vasp_error`**：若某个 `scale_*` 点报错、未收敛或疑似卡住，先看本地 `references/troubleshooting.md`，再调用 `vasp_error` 做统一诊断；只有在用户明确同意后，才可用 `terminate.py` 停掉该点的旧 run 并重跑。
 - **日志规范**：EOS 目录批量运行时应显式使用 `--log-prefix`，让每个 `scale_*` 子目录中都有稳定、可追溯的运行日志。

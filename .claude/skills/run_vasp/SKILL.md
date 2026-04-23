@@ -13,8 +13,11 @@ version: "1.0.2"
 - `python .claude/skills/run_vasp/scripts/vasp_runner.py ...`
 - `python .claude/skills/run_vasp/scripts/quick_test.py ...`（仅快速试错）
 - `python .claude/skills/run_vasp/scripts/check_convergence.py <workdir>`（运行后统一状态检查）
+- `python .claude/skills/run_vasp/scripts/terminate.py --work-dir <dir>`（仅在已证明归属、且用户明确同意停止时使用）
 
 除非是在 **`vasp_runner.py` 生成/驱动的脚本内部**，否则 assistant **不得**直接在 Bash 里手写 `mpirun -np ... vasp_std/vasp_gpu` 作为正式提交命令。也就是说：**`run_vasp` skill 的意义不只是“先读规则”，而是要把实际执行收敛到 runner 脚本。**
+
+**运行状态持久化（新）**：`vasp_runner.py` 现在会在每个任务目录中写入 **`.vasp_run_state.json`**，记录 `run_id`、`pid/pgid`（本地）或 `job_id`（Slurm）、日志路径、启动命令与状态。后续的 `terminate.py` 与 `vasp_error` 都应以此文件作为“归属证据”的第一来源。
 
 若用户不仅要“运行”，还要你**根据硬件修改 `INCAR` 并优化并行参数**，本 skill 不负责拍板 `KPAR/NCORE/NPAR` 的具体值。此时应先加载 `performance` skill，先问清用户设备并改好 `INCAR`，然后再回到本 skill 执行。
 
@@ -159,3 +162,4 @@ version: "1.0.2"
 - `references/orchestration.md`：登录节点禁忌、内存、GPU 与依赖探测
 - `template/env_local.sh`：本地/交互环境初始化模板（取消注释并填写 `module load` 等）
 - `template/job_slurm.sh`：Slurm 模板占位符说明
+- `scripts/terminate.py`：基于 `.vasp_run_state.json` 的定点终止入口

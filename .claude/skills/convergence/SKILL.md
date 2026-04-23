@@ -29,6 +29,7 @@ convergence/
 
 - `setup_vasp_inputs`：生成 POTCAR 与 POSCAR 拷贝；**INCAR** 中含 **`KSPACING`** 时**不**生成 **KPOINTS**
 - Skill（`run_vasp`）：运行 VASP 前须载入全文并按 GPU/CPU 规则调用
+- Skill（`vasp_error`）：当某个测试点失败、未收敛、疑似卡住、或需要判断是否应先停止当前 run 再调整参数重跑时使用
 - `Write` / `Edit`、`Bash`、`Read` / `Grep`
 
 **VASP 启动（硬性）**：任何将执行 `mpirun`、直接调用 `vasp_std` / `vasp_gpu` 或等价命令的步骤，**必须先**通过工具调用 **`Skill: run_vasp`** 载入其全文，并按其中「核心执行准则」与用户已确认的 **GPU / CPU** 方案确定 `--np`、`--exe`、`--gpu-per-task`（及 `env_script`）。正式提交时，**必须通过** `python .claude/skills/run_vasp/scripts/vasp_runner.py`，**严禁** assistant 直接手写 `mpirun -np ...` 作为提交命令。
@@ -106,6 +107,28 @@ cd "<Repository root>" && python .claude/skills/run_vasp/scripts/check_convergen
 
 若 `electronic_converged` 为 false，勿用于收敛判定；先按 `references/convergence_rules.md` 与项目内其它 troubleshooting 调整 **NELM** / **ALGO** 等后重算该点。
 
+若某个测试点非零退出、长期无新输出、或你需要判断是否应先终止旧 run，再按以下顺序处理：
+
+1. 先检查该点的 INCAR、日志与 `references/convergence_rules.md`
+2. 再调用：
+
+```bash
+cd "<Repository root>" && python .claude/skills/vasp_error/scripts/analyze_error.py --work-dir "<测试点子目录>"
+```
+
+3. 根据 `vasp_error` 输出判断：
+   - 继续等待
+   - 调整 `NELM` / `ALGO` / 混合参数后重跑该点
+   - 或建议**先停止当前该点的旧 run**
+
+4. 若建议先停旧 run，必须先向用户说明证据、拟修改项与新的 runner 命令；只有在用户明确同意后，才允许：
+
+```bash
+cd "<Repository root>" && python .claude/skills/run_vasp/scripts/terminate.py --work-dir "<测试点子目录>" --reason "<停止原因>"
+```
+
+5. **禁止**在旧测试点 run 可能仍活着时，向同一子目录补开第二个活跃 VASP 进程
+
 ---
 
 ### 4. 写出报告
@@ -134,6 +157,7 @@ cd "<Repository root>" && python .claude/skills/run_vasp/scripts/check_convergen
 - **静态单点**：收敛测试全程 **`NSW = 0`**，不在此阶段做离子步或变胞。
 - **K 点仅用 INCAR**：依赖 **`KSPACING`**；**`setup_vasp_inputs`** 在含 **`KSPACING`** 时不写 **KPOINTS**；若目录中有旧 **KPOINTS**，应删除以免覆盖 INCAR。
 - **禁止 monolithic 多点 VASP**：禁止单脚本单作业内顺序跑满多组 ENCUT/KSPACING；允许多个独立任务并行。
+- **单点失败先走 `vasp_error`**：收敛测试中的单个点一旦失败、卡住或长期无新输出，先做诊断，再决定是否终止旧 run 并只重跑该点。
 - **日志规范**：单目录显式用 `--log-file`，多目录显式用 `--log-prefix`；不要让关键运行日志只存在于外层 Bash 任务输出。
 
 ---
