@@ -1,0 +1,434 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO="$(cd "$(dirname "$0")/.." && pwd)"
+ENV_FILE_DEFAULT="$REPO/scripts/claude_relax_watch.env.sh"
+ENV_FILE="${RX_WATCH_ENV_FILE:-$ENV_FILE_DEFAULT}"
+if [[ -f "$ENV_FILE" ]]; then
+  # shellcheck disable=SC1090
+  source "$ENV_FILE"
+fi
+
+RUNS="$REPO/runs"
+SESSION="${RX_TMUX_SESSION:-rxvasp}"
+INTERVAL="${RX_WATCH_INTERVAL:-45}"
+COUNT="${RX_WATCH_COUNT:-4000}"
+LOG="${RX_WATCH_LOG:-$RUNS/claude_relax_watch.log}"
+LOCK_DIR="${RX_WATCH_LOCK_DIR:-$RUNS/claude_relax_watch.lock}"
+LOCK_PID_FILE="$LOCK_DIR/pid"
+LOCK_HEARTBEAT_FILE="$LOCK_DIR/heartbeat"
+CLI_READY_TIMEOUT="${RX_CLI_READY_TIMEOUT:-120}"
+CLAUDE_PRINT_TIMEOUT="${RX_CLAUDE_PRINT_TIMEOUT:-300}"
+PY="${VASP_AGENT_PYTHON:-/data/xiazeyu/conda/envs/claude/bin/python}"
+CONDA_SH="${VASP_AGENT_CONDA_SH:-/data/xiazeyu/conda/etc/profile.d/conda.sh}"
+CONDA_ENV="${VASP_AGENT_CONDA_ENV:-claude}"
+MAIN="$REPO/main.py"
+CLAUDE="${CLAUDE_CLI:-$(command -v claude || true)}"
+CLAUDE_MODEL="${CLAUDE_MODEL:-glm-5.1}"
+INSTRUCTIONS_MD="$REPO/scripts/rx_run.md"
+RX_DATA_ROOT="${RX_DATA_ROOT:-$REPO/data/relax}"
+
+read -r -a TASK_DIRS <<<"${RX_TASK_DIRS:-rx_Au rx_Bi2Te3 rx_CaCO3 rx_Cr rx_Fe rx_FeSe rx_La2CuO4 rx_Li10Ge(PS6)2 rx_Li2S rx_Li4Ti5O12 rx_Li7La3Zr2O12 rx_LiCoO2 rx_LiFeAs rx_LiFePO4 rx_LiMn2O4 rx_LiNbO3 rx_Mg rx_MgB2 rx_MgO rx_NaCl rx_Nb3Sn rx_NbN}"
+
+mkdir -p "$RUNS"
+
+log() {
+  echo "$*" | tee -a "$LOG"
+}
+
+update_heartbeat() {
+  date -Is >"$LOCK_HEARTBEAT_FILE"
+}
+
+release_lock() {
+  rm -f "$LOCK_PID_FILE" "$LOCK_HEARTBEAT_FILE" 2>/dev/null || true
+  rmdir "$LOCK_DIR" 2>/dev/null || true
+}
+
+acquire_lock() {
+  if mkdir "$LOCK_DIR" 2>/dev/null; then
+    echo "$$" >"$LOCK_PID_FILE"
+    update_heartbeat
+    return 0
+  fi
+
+  if [[ -f "$LOCK_PID_FILE" ]]; then
+    local old_pid
+    old_pid="$(cat "$LOCK_PID_FILE" 2>/dev/null || true)"
+    if [[ -n "$old_pid" ]] && kill -0 "$old_pid" 2>/dev/null; then
+      echo "已有 watcher 在运行: pid=$old_pid lock=$LOCK_DIR" >&2
+      return 1
+    fi
+    echo "检测到陈旧 watcher 锁，清理后继续: pid=${old_pid:-unknown} lock=$LOCK_DIR" >&2
+  else
+    echo "检测到无 PID 的陈旧 watcher 锁，清理后继续: lock=$LOCK_DIR" >&2
+  fi
+
+  rm -f "$LOCK_PID_FILE" "$LOCK_HEARTBEAT_FILE" 2>/dev/null || true
+  rmdir "$LOCK_DIR" 2>/dev/null || rm -rf "$LOCK_DIR"
+  mkdir "$LOCK_DIR"
+  echo "$$" >"$LOCK_PID_FILE"
+  update_heartbeat
+}
+
+on_exit() {
+  local ec="$1"
+  log "[exit] code=$ec pid=$$"
+  release_lock
+}
+
+trap 'on_exit $?' EXIT
+trap 'ec=$?; log "[err] code=$ec line=$LINENO cmd=${BASH_COMMAND}"; true' ERR
+
+acquire_lock || exit 1
+
+if [[ -z "$CLAUDE" ]]; then
+  echo "未找到 claude CLI" >&2
+  exit 1
+fi
+
+if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
+  echo "未设置 ANTHROPIC_API_KEY（也未从 GLM_API_KEY 继承）" >&2
+  exit 1
+fi
+
+if [[ ! -f "$INSTRUCTIONS_MD" ]]; then
+  echo "未找到说明文件: $INSTRUCTIONS_MD" >&2
+  exit 1
+fi
+
+if ! tmux has-session -t "$SESSION" 2>/dev/null; then
+  tmux new-session -d -s "$SESSION" "bash"
+fi
+
+initial_prompt_for() {
+  local run_dir="$1"
+  local material="${run_dir#rx_}"
+  local poscar_path="$RX_DATA_ROOT/$material"
+  case "$run_dir" in
+    rx_*)
+      echo "我要计算${poscar_path}的结构优化"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+tmux_send_literal() {
+  local text="$1"
+  tmux send-keys -t "$SESSION" -l "$text"
+  tmux send-keys -t "$SESSION" C-m
+}
+
+tmux_capture() {
+  local lines_back="${1:-200}"
+  tmux capture-pane -t "$SESSION" -p -S "-${lines_back}" 2>/dev/null || true
+}
+
+agent_running() {
+  pgrep -af "[p]ython.*main.py" | grep -q -- "--mode cli"
+}
+
+current_main_dir() {
+  local line
+  line="$(pgrep -af '[p]ython.*main.py' | head -1 || true)"
+  [[ -z "$line" ]] && {
+    echo ""
+    return
+  }
+  if [[ "$line" =~ --dir[[:space:]]+([^[:space:]]+) ]]; then
+    echo "${BASH_REMATCH[1]}"
+  else
+    echo ""
+  fi
+}
+
+can_resume() {
+  local d="$1"
+  [[ -f "$RUNS/$d/log.txt" ]] || return 1
+  grep -q "session_id" "$RUNS/$d/log.txt"
+}
+
+known_task() {
+  local wanted="$1"
+  local d
+  for d in "${TASK_DIRS[@]}"; do
+    if [[ "$d" == "$wanted" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+conversation_has_user_turn() {
+  local d="$1"
+  local p="$RUNS/$d/conversation_turns.jsonl"
+  [[ -f "$p" ]] || return 1
+  grep -q '"role": "user"' "$p"
+}
+
+wait_for_cli_prompt() {
+  local timeout_s="${1:-$CLI_READY_TIMEOUT}"
+  local waited=0
+  local pane=""
+
+  while ((waited < timeout_s)); do
+    pane="$(tmux_capture 80)"
+    if grep -q 'You>' <<<"$pane"; then
+      return 0
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  return 1
+}
+
+inject_initial_prompt_if_needed() {
+  local nd="$1"
+  local first_msg=""
+
+  if conversation_has_user_turn "$nd"; then
+    return 0
+  fi
+
+  if ! wait_for_cli_prompt "$CLI_READY_TIMEOUT"; then
+    echo "[warn] CLI 在 ${CLI_READY_TIMEOUT}s 内未出现 You> 提示，暂不注入首句: $nd" | tee -a "$LOG"
+    return 0
+  fi
+
+  if ! first_msg="$(initial_prompt_for "$nd")"; then
+    echo "[warn] 未找到首句任务模板，跳过自动注入: $nd" | tee -a "$LOG"
+    return 0
+  fi
+  if [[ -z "$first_msg" ]]; then
+    echo "[warn] 首句任务模板为空，跳过自动注入: $nd" | tee -a "$LOG"
+    return 0
+  fi
+
+  echo "[auto] 注入首句任务说明: $nd" | tee -a "$LOG"
+  tmux_send_literal "$first_msg"
+  sleep 2
+
+  if ! conversation_has_user_turn "$nd"; then
+    echo "[warn] 首句未落盘，重试一次: $nd" | tee -a "$LOG"
+    tmux_send_literal "$first_msg"
+  fi
+}
+
+start_named_task() {
+  local nd="$1"
+  local curd=""
+  local cmd=""
+  local env_prefix=""
+
+  if ! known_task "$nd"; then
+    log "[parse] WATCH_START 未识别任务: $nd"
+    return 0
+  fi
+
+  curd="$(current_main_dir)"
+  if agent_running; then
+    if [[ "$curd" == "$nd" ]]; then
+      log "[parse] WATCH_START 请求的任务已在运行: $nd"
+      inject_initial_prompt_if_needed "$nd"
+      return 0
+    fi
+    log "[parse] WATCH_START 请求 $nd，但当前仍有任务在运行: ${curd:-unknown}"
+    return 0
+  fi
+
+  mkdir -p "$RUNS/$nd"
+  env_prefix="unset ANTHROPIC_BASE_URL ANTHROPIC_API_KEY BASE_URL API_KEY &&"
+  if can_resume "$nd"; then
+    cmd="source $CONDA_SH && conda activate $CONDA_ENV && cd $REPO && $env_prefix $PY $MAIN --mode cli --dir $nd"
+  else
+    cmd="source $CONDA_SH && conda activate $CONDA_ENV && cd $REPO && $env_prefix $PY $MAIN --mode cli --dir $nd --no-resume"
+  fi
+
+  log "[parse] WATCH_START -> $nd"
+  tmux_send_literal "$cmd"
+  inject_initial_prompt_if_needed "$nd"
+}
+
+build_prompt() {
+  local task_list=""
+  local d=""
+  local material=""
+  local poscar_path=""
+
+  for d in "${TASK_DIRS[@]}"; do
+    material="${d#rx_}"
+    poscar_path="${RX_DATA_ROOT}/${material}"
+    task_list="${task_list}- ${d} （POSCAR: ${poscar_path}）"$'\n'
+  done
+
+  cat <<EOF
+仓库根目录：$REPO
+tmux 会话：$SESSION
+结构优化任务顺序：
+${task_list}
+
+任务说明文件：$INSTRUCTIONS_MD
+
+请按以下顺序工作：
+1. 阅读说明文件：$INSTRUCTIONS_MD
+2. 用 Bash 检查 tmux 会话 $SESSION、当前运行的 main.py、以及 runs/rx_* 下相关 log.txt / conversation_turns.jsonl / OUTCAR / OSZICAR / vasprun.xml / vasp_relax.log 状态
+3. 由你独立判断：当前是否需要启动某个体系、是否需要向 You> 注入一句回复、是否应该结束当前体系
+
+要求：
+- 启动新任务时，首句任务说明应对应为：我要计算<POSCAR绝对路径>的结构优化
+- 若当前问题是在确认 GPU 数量或并行方式，回复应参考 $INSTRUCTIONS_MD，明确表示使用 8 GPU 并行计算
+- 若当前问题是在确认是否执行已准备好的 VASP 命令，可以直接回复：同意
+- 不能只按固定规则机械输出，必须根据当下真实提问内容、日志状态和任务完成度判断
+- 如果当前没有出现明确需要回复的用户提问，也不需要启动/结束任何任务，输出 WATCH_SKIP
+- 如果当前没有 main.py 在运行，而你判断应当启动下一体系，输出 WATCH_START|<任务目录名>
+- 如果当前体系已经完成并且可以安全结束该 CLI 会话，输出 WATCH_QUIT
+- 如果需要代替人工回复，只输出一行最合适的中文回复到 WATCH_INJECT
+
+最后一行且仅一行必须是：
+WATCH_SKIP
+或 WATCH_START|<任务目录名>
+或 WATCH_INJECT|<完整一行回复>
+或 WATCH_QUIT
+EOF
+}
+
+parse_watch_line() {
+  local msg_file="$1"
+  awk 'NF { line = $0 } END { print line }' "$msg_file"
+}
+
+handle_watch_action() {
+  local last="$1"
+  local curd=""
+
+  if [[ "$last" == "WATCH_SKIP" ]]; then
+    echo "[parse] WATCH_SKIP" | tee -a "$LOG"
+    return 0
+  fi
+
+  local start_pfx="WATCH_START|"
+  if [[ "$last" == "$start_pfx"* ]]; then
+    local target="${last#$start_pfx}"
+    if [[ -n "$target" ]]; then
+      start_named_task "$target"
+    else
+      log "[parse] WATCH_START 为空，跳过"
+    fi
+    return 0
+  fi
+
+  if [[ "$last" == "WATCH_QUIT" ]]; then
+    curd="$(current_main_dir)"
+    echo "[parse] WATCH_QUIT" | tee -a "$LOG"
+    if [[ -n "$curd" ]]; then
+      tmux_send_literal "quit"
+      sleep 6
+      echo "[parse] 已请求退出当前会话: $curd" | tee -a "$LOG"
+    else
+      echo "[parse] 当前无运行中的 main.py，忽略 WATCH_QUIT" | tee -a "$LOG"
+    fi
+    return 0
+  fi
+
+  local pfx="WATCH_INJECT|"
+  if [[ "$last" == "$pfx"* ]]; then
+    local payload="${last#$pfx}"
+    if [[ -n "$payload" ]]; then
+      echo "[parse] WATCH_INJECT -> $payload" | tee -a "$LOG"
+      tmux_send_literal "$payload"
+    else
+      echo "[parse] WATCH_INJECT 为空，跳过" | tee -a "$LOG"
+    fi
+    return 0
+  fi
+
+  echo "[parse] 未识别最后一行: ${last:0:200}" | tee -a "$LOG"
+}
+
+run_watch_iteration() {
+  local i="$1"
+  local msg_file prompt ec last
+
+  update_heartbeat
+  if ((i > 1)); then
+    sleep "$INTERVAL"
+  fi
+
+  log ""
+  log "######## $(date -Is) 第 $i/$COUNT 次 ########"
+
+  msg_file="$(mktemp /tmp/claude_relax_watch_msg.XXXXXX)" || {
+    log "[warn] mktemp 失败"
+    return 0
+  }
+  prompt="$(build_prompt)"
+
+  log "[watch] 启动 claude --print"
+  set +e
+  if command -v timeout >/dev/null 2>&1; then
+    timeout --foreground "${CLAUDE_PRINT_TIMEOUT}s" \
+      env \
+        ANTHROPIC_BASE_URL="${ANTHROPIC_BASE_URL:-}" \
+        ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}" \
+      "$CLAUDE" \
+        --bare \
+        --model "$CLAUDE_MODEL" \
+        --permission-mode bypassPermissions \
+        --add-dir "$REPO" \
+        -p \
+        "$prompt" >"$msg_file" 2>>"$LOG"
+  else
+    env \
+      ANTHROPIC_BASE_URL="${ANTHROPIC_BASE_URL:-}" \
+      ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}" \
+    "$CLAUDE" \
+      --bare \
+      --model "$CLAUDE_MODEL" \
+      --permission-mode bypassPermissions \
+      --add-dir "$REPO" \
+      -p \
+      "$prompt" >"$msg_file" 2>>"$LOG"
+  fi
+  ec=$?
+  set -e
+  log "[watch] claude --print 完成 exit=$ec"
+
+  if [[ "$ec" -ne 0 ]]; then
+    if [[ "$ec" -eq 124 ]]; then
+      log "[warn] claude --print 超时 ${CLAUDE_PRINT_TIMEOUT}s，跳过本轮"
+    fi
+    log "[warn] claude --print 退出码 $ec"
+    rm -f "$msg_file"
+    return 0
+  fi
+
+  if [[ ! -s "$msg_file" ]]; then
+    log "[warn] claude --print 未写出最终消息"
+    rm -f "$msg_file"
+    return 0
+  fi
+
+  last="$(parse_watch_line "$msg_file")"
+  rm -f "$msg_file"
+  if [[ -z "$last" ]]; then
+    log "[warn] 未解析到 WATCH 行"
+    return 0
+  fi
+  handle_watch_action "$last" || log "[warn] handle_watch_action 失败"
+  update_heartbeat
+  return 0
+}
+
+{
+  echo "==== claude relax watch 开始 $(date -Is) ===="
+  echo "session=$SESSION interval=${INTERVAL}s count=$COUNT"
+  echo "model=$CLAUDE_MODEL log=$LOG"
+} | tee -a "$LOG"
+
+for ((i = 1; i <= COUNT; i++)); do
+  run_watch_iteration "$i" || log "[warn] 第 $i 轮异常退出，但主循环继续"
+done
+
+log "==== claude relax watch 结束 $(date -Is) ===="
