@@ -130,7 +130,7 @@ version: "1.0.2"
 
 ### Step 4: 执行与追踪 (Execution & Tracking)
 - 与用户确认策略与 **env_script** 后，先完成 **「核心执行准则 §2」**：展示硬件摘要与**完整拟执行命令**（或作业脚本内 `mpirun` 片段），**取得用户明确同意**，再通过 Bash 调用 `python .claude/skills/run_vasp/scripts/vasp_runner.py`（传入 `--dirs`、`--mode`、`--np`、`--exe`、`--env-script`、`--gpu-per-task`、`--log-file/--log-prefix` 等）或提交 Slurm/PBS。
-- **`vasp_runner` 已启动后的等待方式（与仓库 system_prompt 一致）：** Bash 必须使用 **`run_in_background: true`**。等待阶段鼓励**周期性检查**而不是高频刷新：对长作业优先采用较粗的检查间隔（例如 5 分钟），仅在接近完成或排查异常时临时加密。可以使用 **`TaskOutput` + `block: false`** 按周期查询同一 `task_id`，也可以使用带 `sleep` 的**后台** Bash 辅助脚本定期检查各目录 `OUTCAR`、日志与进程状态；完成后再读日志与做下游检查。避免 **`TaskOutput` + `block: true` + 超长 `timeout`** 单次阻塞到 VASP 结束，因为这会冻结 Web/IDE。
+- **`vasp_runner` 已启动后的等待方式（与仓库 system_prompt 一致）：** Bash 必须使用 **`run_in_background: true`**。等待阶段鼓励**周期性检查**而不是高频刷新：对长作业应主动采用较粗的检查间隔，并可按任务耗时适当延长每次等待时间，例如先 `sleep 20m` 再查看；仅在接近完成或排查异常时临时加密。可以使用 **`TaskOutput` + `block: false`** 按周期查询同一 `task_id`，也可以使用带 `sleep` 的**后台** Bash 辅助脚本定期检查各目录 `OUTCAR`、日志与进程状态；完成后再读日志与做下游检查。避免 **`TaskOutput` + `block: true` + 超长 `timeout`** 单次阻塞到 VASP 结束，因为这会冻结 Web/IDE。
 - 告知用户日志路径；优先引用工作目录中的显式日志文件（`--log-file` 或 `--log-prefix` 产物），不要只让日志停留在外层 Bash 任务输出。Slurm 场景再辅以 `squeue -u $USER` 等帮助追踪队列状态。
 - **与项目 ITERATIVE EXECUTION RULE 对齐**：若上游 skill 要求**逐点**收敛（多 ENCUT/K 点）或**逐目录**核查（如多个 `scale_*`），**禁止**单次 `vasp_runner.py --dirs` 把全部点或全部目录一次性排队跑完而不在中间读 OUTCAR/日志；应分多次调用（或每批少量目录），每步确认后再继续。
 

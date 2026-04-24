@@ -15,7 +15,7 @@
 
 **与主 SKILL 对齐**：一般 **GPU 版 VASP** 下 **1 MPI rank ↔ 1 GPU**。但对 assistant 来说，**规范化入口应始终是 `vasp_runner.py`**，而不是直接展示或手写 `mpirun`。`vasp_runner.py` 会根据 `--np`、`--gpu-per-task`、`--exe`、`--env-script` 等参数，在后台生成并执行相应的 `mpirun` 命令（或作业脚本内容）。完整规则见 `SKILL.md`「核心执行准则 §1」。
 
-**启动前门控与选卡（`vasp_runner.py`，本地且 `--gpu-per-task>0`、未 `--fixed-gpu-layout`）**：`nvidia-smi` 轮询。**二级选卡**：① **空卡优先**——同时满足 `memory.free ≥ --min-gpu-free-mib`、`utilization.gpu < --max-gpu-util-percent`，且 **`memory.used ≤ --empty-gpu-max-used-mib`**（默认约 512 MiB，表示几乎无其它作业占显存；传 **`0` 关闭空卡优先**，退化为仅下一级）；② **否则**在仍满足 **`min-gpu-free-mib` + `max-gpu-util-percent`** 的卡上分配（可与其它进程共享显存，只要过线）。**连续多卡**：`--gpu-per-task>1` 时在对应层级内取 **物理编号连续** 的最小可用槽。若无槽、队列里仍有任务，则在进程内 **sleep 轮询** 直至有运行中任务释放 GPU 或 **`--gpu-ready-timeout-sec`** 超时。
+**启动前门控与选卡（`vasp_runner.py`，本地且 `--gpu-per-task>0`、未 `--fixed-gpu-layout`）**：`nvidia-smi` 轮询。**二级选卡**：① **空卡优先**——同时满足 `memory.free ≥ --min-gpu-free-mib`、`utilization.gpu < --max-gpu-util-percent`，且 **`memory.used ≤ --empty-gpu-max-used-mib`**（默认约 512 MiB，表示几乎无其它作业占显存；传 **`0` 关闭空卡优先**，退化为仅下一级）；② **否则**在仍满足 **`min-gpu-free-mib` + `max-gpu-util-percent`** 的卡上分配（可与其它进程共享显存，只要过线）。**连续多卡**：`--gpu-per-task>1` 时在对应层级内取 **物理编号连续** 的最小可用槽。若无槽、队列里仍有任务，则在进程内 **sleep 轮询** 直至有运行中任务释放 GPU 或 **`--gpu-ready-timeout-sec`** 超时。对外部状态检查同样不必高频刷新；若任务预计很长，可适当拉长单次等待，例如先 `sleep 20m` 再查看。
 
 ## 4. 可执行依赖探测（mpirun / VASP）
 `probe_env.py` 输出的 `dependencies` 字段包含：
