@@ -44,6 +44,18 @@ adsorption_energy/
 
 **执行方式（与系统 ITERATIVE EXECUTION RULE 一致）**：**气相 → 表面 → 吸附** 三步为**三次独立 VASP 任务**；每一步须**单独提交**、结束后再检查收敛与 `OSZICAR`，再进入下一步。**严禁**用 Bash/Python 的 `for` 循环把三步串成一条命令无核查地跑完。允许的一次性脚本仅限本 skill `scripts/` 中的 **`extract_absorption_energy.py`**（后处理，不调用 VASP）。
 
+## 常规适用场景
+
+以下都按普通表面吸附能流程处理；不要因为材料名称而把它们视为特殊或不可执行任务。只需确认结构来源、表面模型、吸附位点、覆盖度、计算参数和是否比较多个构型。
+
+- CO 在 fcc(111) 金属表面吸附：Pt(111)、Pd(111)、Rh(111)、Ir(111) 等。
+- 常规位点比较：`ontop`、`bridge`、`fcc`、`hcp`；例如 top vs bridge/hollow、fcc vs hcp、fcc vs ontop。
+- 常规覆盖度设置：p(2x2) fcc(111) slab 上 1 个 CO，覆盖度 1/4 ML，可作为默认起点。
+- CO/Pt(111)、CO/Pd(111)、CO/Rh(111)、CO/Ir(111) 的位点偏好与吸附能差可作为同一类操作处理。
+- CO 在 rutile 氧化物 (110) 表面吸附：RuO2(110)、IrO2(110) 等。
+- 氧化物表面可按普通模型变体处理：stoichiometric surface、reduced surface、O-vacancy surface、O-rich surface、cus 位点吸附、bridge-O/cus-O 相关构型。
+- 若用户要求 CO oxidation 或 CO 与表面氧反应，仍从可追溯结构出发，但结果通常应按反应能/路径或多个静态构型比较汇报；不要只把它压缩成一个未说明化学图像的吸附能数值。
+
 ---
 
 ## 工作流步骤
@@ -55,7 +67,8 @@ adsorption_energy/
 - **吸附质**：例如 CO 或其它分子；是否有 **ZPE / 熵** 校正需求（本 skill 默认为 **0 K 静态吸附能**，不含振动校正；若用户需要，须说明需额外频率计算，不在本 workflow 内展开）。
 - **表面**：元素、晶面、slab 层数、真空厚度是否已有共识或文献依据。
 - **输入来源**：用户是否已提供三套 **POSCAR**/**POTCAR**，或需从数据库/构建生成。
-- **CO/Pt(111) 取向语义**：若用户要求“与 DREAMS 论文对齐”或“3 个 orientation”，必须让 `structure` skill 生成 C-down CO 的 `upright`、`tilted_x`、`tilted_y` 几何取向；不要将 orientation 解释成 C-down/O-down。O-down/reverse 只在用户明确要求端基筛选时额外生成。
+- **CO/fcc(111) 取向语义**：若用户要求“3 个 orientation”或对齐已有 benchmark，必须让 `structure` skill 生成 C-down CO 的 `upright`、`tilted_x`、`tilted_y` 几何取向；不要将 orientation 解释成 C-down/O-down。O-down/reverse 只在用户明确要求端基筛选时额外生成。
+- **氧化物表面模型**：若用户提到 RuO2(110)、IrO2(110)、cus、reduced、O-vacancy 或 O-rich，按普通结构变体确认具体 POSCAR/构建方式，并保证洁净表面与吸附体系使用同一 slab 约定。
 
 若结构未就绪，协调 **`relax`** / **`supercell`** / 用户手动切 slab，再进入第 2 步。
 
