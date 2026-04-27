@@ -254,6 +254,10 @@ _HTML = """<!DOCTYPE html>
     font-size: 14px; font-weight: 600; cursor: pointer; height: 44px; flex-shrink: 0;
   }
   #send-btn:hover { background: #79c0ff; }
+  #send-btn.stop {
+    background: var(--error); color: #fff;
+  }
+  #send-btn.stop:hover { background: #ff6b64; }
   #send-btn:disabled { background: #21262d; color: var(--muted); cursor: not-allowed; }
 
   /* --- 右侧 Todo 栏 --- */
@@ -368,6 +372,7 @@ const logPathEl = document.getElementById('log-path');
 const todoListEl = document.getElementById('todo-list');
 
 let curBubble = null, textStackEl = null, toolsStackEl = null;
+let isThinking = false;
 /** @type {Record<string, HTMLElement>} 按 tool_use_id 合并「请求+返回」到同一卡片 */
 let toolCardByUseId = {};
 
@@ -432,8 +437,11 @@ function renderTodoPanel(todos) {
 }
 
 function setStatus(text, thinking) {
+  isThinking = !!thinking;
   statusBadge.textContent = text;
-  statusBadge.className = thinking ? 'thinking' : '';
+  statusBadge.className = isThinking ? 'thinking' : '';
+  sendBtn.textContent = isThinking ? '停止' : '发送';
+  sendBtn.classList.toggle('stop', isThinking);
 }
 function scrollBottom() { chat.scrollTop = chat.scrollHeight; }
 
@@ -607,18 +615,31 @@ function appendUserMsg(text) {
 
 function send() {
   const text = inputEl.value.trim();
-  if (!text) return;
+  if (!text && !isThinking) return;
   if (ws.readyState !== WebSocket.OPEN) {
     setStatus('连接未就绪，请稍后重试', false);
     sendBtn.disabled = false;
     return;
   }
-  appendUserMsg(text);
-  ws.send(JSON.stringify({ type: 'user_message', text }));
-  inputEl.value = '';
-  inputEl.style.height = '';
-  sendBtn.disabled = true;
-  setStatus('思考中...', true);
+  if (isThinking) {
+    if (text) {
+      appendUserMsg(text);
+      ws.send(JSON.stringify({ type: 'interrupt', text }));
+      inputEl.value = '';
+      inputEl.style.height = '';
+      setStatus('正在打断并发送新指令...', true);
+    } else {
+      ws.send(JSON.stringify({ type: 'interrupt', text: '' }));
+      setStatus('正在停止当前回复...', true);
+    }
+  } else {
+    appendUserMsg(text);
+    ws.send(JSON.stringify({ type: 'user_message', text }));
+    inputEl.value = '';
+    inputEl.style.height = '';
+    setStatus('思考中...', true);
+  }
+  sendBtn.disabled = false;
   curBubble = textStackEl = toolsStackEl = null;
   /* 不在此处清空 Todo：右侧列表由服务端下发的 todo_update 驱动；若清空会在下一轮首个 TodoWrite 之前长时间显示「暂无任务」。 */
 }
@@ -717,7 +738,12 @@ class WebUI:
                     data = json.loads(msg.data)
                     if data.get("type") == "user_message":
                         self._history.append(data)
-                        await self.input_queue.put(data["text"])
+                        await self.input_queue.put({"type": "user_message", "text": data["text"]})
+                    elif data.get("type") == "interrupt":
+                        text = str(data.get("text") or "")
+                        if text.strip():
+                            self._history.append({"type": "user_message", "text": text})
+                        await self.input_queue.put({"type": "interrupt", "text": text})
                 except Exception:
                     pass
             elif msg.type in (aiohttp.WSMsgType.ERROR, aiohttp.WSMsgType.CLOSE):
