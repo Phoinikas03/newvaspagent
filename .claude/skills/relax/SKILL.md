@@ -26,7 +26,7 @@ relax/
 
 ## 可用工具
 
-- `get_poscar_from_md`：根据 Materials Project ID 获取 POSCAR
+- `Skill`（`structure`）：根据 Materials Project ID 获取 POSCAR，或构建/校验初始结构
 - `duckduckgo_search` / `google_search`：搜索文档、参数建议、报错解决方案
 - `visit_webpage`：提取网页全文
 - `Skill` (`literature`)：检索特定材料的 DFT 计算参数文献及实验对比值
@@ -49,8 +49,8 @@ relax/
 
 询问用户属于以下哪种情况，等待回复：
 
-- **A. 提供材料名称**：搜索 Materials Project ID，再调用 `get_poscar_from_md` 下载 POSCAR
-- **B. 提供 mp-id**：直接调用 `get_poscar_from_md` 下载 POSCAR
+- **A. 提供材料名称**：搜索 Materials Project ID，再使用 `Skill: structure` 下载或构建 POSCAR
+- **B. 提供 mp-id**：直接使用 `Skill: structure` 的 `fetch_mp_poscar.py` 下载 POSCAR
 - **C. 已有 POSCAR**：请用户提供文件的具体路径
 
 ---

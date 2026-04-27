@@ -59,7 +59,7 @@ convergence/
 
 ### 1. 准备结构与 INCAR 模板
 
-1. 确认工作目录中有可靠的 **`POSCAR`**（来自 `get_poscar_from_md` 或用户路径）。
+1. 确认工作目录中有可靠的 **`POSCAR`**（来自 `Skill: structure` 或用户路径）。
 2. `Read templates/INCAR_static_convergence`，复制为工作区中的 **`INCAR`** 或 **`INCAR_template`**，按体系设置 **`ISMEAR` / `SIGMA`**、**`ISPIN` / `MAGMOM`** 等（与后续正式计算保持一致）。
 3. 尚未有 **POTCAR** 时，可先调用 **`setup_vasp_inputs`**（传入 `poscar_path` 与 `incar_path`）生成 **POTCAR**；**INCAR 须含 `KSPACING`**（模板已预留占位符），以便不写 **KPOINTS**。
 
