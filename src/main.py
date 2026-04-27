@@ -554,6 +554,10 @@ async def _dispatch_message_to_web(
         return
 
     if isinstance(msg, ResultMessage):
+        has_pending_interrupt = bool(
+            session_state is not None
+            and (session_state.get("pending_interrupt_text") or "").strip()
+        )
         result_text = (getattr(msg, "result", None) or "").strip()
         if session_state is not None and not result_text and session_state.get("last_tool_error"):
             await ui.send({"type": "agent_text", "text": EMPTY_RESULT_WITH_TOOL_ERROR_FALLBACK})
@@ -567,8 +571,11 @@ async def _dispatch_message_to_web(
             "subtype": getattr(msg, "subtype", None) or "",
             "summary": getattr(msg, "result", None) or "",
         })
-        await ui.send({"type": "status", "text": "就绪 — 请在下方输入", "thinking": False})
-        await ui.send({"type": "done"})
+        if has_pending_interrupt:
+            await ui.send({"type": "status", "text": "已打断，正在切换到新指令...", "thinking": True})
+        else:
+            await ui.send({"type": "status", "text": "就绪 — 请在下方输入", "thinking": False})
+            await ui.send({"type": "done"})
 
 
 async def _web_sdk_receive_loop(
@@ -584,6 +591,16 @@ async def _web_sdk_receive_loop(
             _append_sdk_log_line(log_file, msg)
             persist_on_sdk_message(workspace, msg, session_state)
             await _dispatch_message_to_web(msg, ui, session_state)
+            if isinstance(msg, ResultMessage):
+                session_state["busy"] = False
+                session_state["interrupt_in_flight"] = False
+                pending = (session_state.pop("pending_interrupt_text", "") or "").strip()
+                if pending:
+                    await ui.send({"type": "status", "text": "处理中断后的新指令...", "thinking": True})
+                    write_user_turn_log(log_file, pending)
+                    session_state["last_tool_error"] = False
+                    session_state["busy"] = True
+                    await client.query(pending)
     except asyncio.CancelledError:
         raise
     except Exception as e:
@@ -601,16 +618,59 @@ async def web_agent_loop(
     drain = asyncio.create_task(
         _web_sdk_receive_loop(client, log_file, ui, session_state, workspace),
     )
+
+    async def submit_user_message(text: str) -> None:
+        await ui.send({"type": "status", "text": "思考中...", "thinking": True})
+        write_user_turn_log(log_file, text)
+        session_state["last_tool_error"] = False
+        session_state["busy"] = True
+        await client.query(text)
+
+    async def interrupt_current_turn(text: str) -> None:
+        pending = text.strip()
+        if pending:
+            session_state["pending_interrupt_text"] = pending
+            await ui.send({"type": "status", "text": "正在打断并准备新指令...", "thinking": True})
+        else:
+            session_state.pop("pending_interrupt_text", None)
+            await ui.send({"type": "status", "text": "正在停止当前回复...", "thinking": True})
+
+        if session_state.get("interrupt_in_flight"):
+            return
+        session_state["interrupt_in_flight"] = True
+        try:
+            await client.interrupt()
+        except Exception as e:
+            session_state["interrupt_in_flight"] = False
+            await ui.send({"type": "agent_text", "text": f"[错误] 打断失败: {e}"})
+            await ui.send({"type": "status", "text": "打断失败，仍在等待当前回复...", "thinking": True})
+
     try:
         while True:
-            user_input = await ui.input_queue.get()
+            event = await ui.input_queue.get()
+            if isinstance(event, dict):
+                event_type = event.get("type") or "user_message"
+                user_input = str(event.get("text") or "")
+            else:
+                event_type = "user_message"
+                user_input = str(event)
             if user_input.lower() in ("quit", "exit"):
                 break
 
-            await ui.send({"type": "status", "text": "思考中...", "thinking": True})
-            write_user_turn_log(log_file, user_input)
-            session_state["last_tool_error"] = False
-            await client.query(user_input)
+            if event_type == "interrupt":
+                if session_state.get("busy"):
+                    await interrupt_current_turn(user_input)
+                elif user_input.strip():
+                    await submit_user_message(user_input)
+                else:
+                    await ui.send({"type": "status", "text": "就绪 — 请在下方输入", "thinking": False})
+                    await ui.send({"type": "done"})
+                continue
+
+            if session_state.get("busy"):
+                await interrupt_current_turn(user_input)
+            else:
+                await submit_user_message(user_input)
     finally:
         drain.cancel()
         with suppress(asyncio.CancelledError):
@@ -664,6 +724,8 @@ async def web_main(
                 asyncio.create_task(_notify_log())
 
                 web_session_state: dict[str, Any] = {
+                    "busy": False,
+                    "interrupt_in_flight": False,
                     "last_tool_error": False,
                     "persist_assistant_buf": "",
                 }
