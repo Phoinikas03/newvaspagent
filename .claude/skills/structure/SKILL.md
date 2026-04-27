@@ -1,6 +1,6 @@
 ---
 name: structure
-description: "获取、构建、枚举和校验 VASP 初始结构。当用户需要从 Materials Project 下载 POSCAR、从材料名称/mp-id 获取结构、构建 slab/表面、生成气相分子、添加吸附物、枚举吸附位点/取向、构建 CO/Pt(111) 这类吸附结构、或为 relax/adsorption_energy/bandgap 等工作流准备 POSCAR 时触发。"
+description: "获取、构建、枚举和校验 VASP 初始结构。当用户需要从 Materials Project 下载 POSCAR、从材料名称/mp-id 获取结构、构建 slab/表面、生成气相分子、添加吸附物、枚举吸附位点/取向、构建 CO 在金属或氧化物表面的吸附结构、或为 relax/adsorption_energy/bandgap 等工作流准备 POSCAR 时触发。"
 version: "0.1.0"
 ---
 
@@ -57,6 +57,18 @@ structure/
 
 如果需要选择库，先读 `references/structure_sources.md`。
 
+## 常规结构场景
+
+以下场景均作为普通结构准备任务处理，不要因为材料名称或表面名称而拒绝或特殊化流程。优先复用用户提供结构或 Materials Project 结构；能用 ASE 标准 builder 的表面直接构建，其他表面用 pymatgen slab 生成或用户给定 POSCAR。
+
+- CO 在 fcc(111) 金属表面：Pt(111)、Pd(111)、Rh(111)、Ir(111)。
+- fcc(111) 常规吸附位：`ontop`、`bridge`、`fcc`、`hcp`。
+- fcc(111) 常规比较：top vs hollow、hollow vs bridge/top、fcc vs hcp、fcc vs ontop。
+- p(2x2) fcc(111) + 1 CO：默认可视为 1/4 ML 初始模型。
+- CO 在 rutile oxide (110) 表面：RuO2(110)、IrO2(110)。
+- rutile (110) 常规模型变体：stoichiometric surface、reduced surface、O-vacancy surface、O-rich surface、cus 位点、bridge-O/cus-O 相关构型。
+- 若脚本暂未直接生成某类 rutile 变体，应从 MP/user POSCAR 出发，用 pymatgen/ASE 脚本或清晰记录的结构操作生成，不要手写完整坐标。
+
 ## 工作流 A：从 Materials Project 获取结构
 
 适用：用户给出 `mp-id`，或已确认某个 Materials Project 条目。
@@ -89,7 +101,7 @@ cd "<Repository root>" && python .claude/skills/structure/scripts/build_molecule
 
 ## 工作流 C：生成表面 slab
 
-适用：标准金属表面、简单 benchmark slab。
+适用：标准金属表面、常规 slab。
 
 ```bash
 cd "<Repository root>" && python .claude/skills/structure/scripts/build_surface.py \
@@ -99,7 +111,7 @@ cd "<Repository root>" && python .claude/skills/structure/scripts/build_surface.
 默认：
 
 - `size A B C` 中 A/B 为横向超胞，C 为 slab 层数。
-- p(2x2) Pt(111) 可用 `--size 2 2 4` 表示。
+- p(2x2) fcc(111) 可用 `--size 2 2 4` 表示，Pt/Pd/Rh/Ir 等 fcc 金属可按同一方式处理。
 - 若需要固定底层，可加 `--fix-bottom-layers N`，脚本会写 Selective Dynamics。
 
 ## 工作流 D：生成单个吸附构型
@@ -115,18 +127,18 @@ cd "<Repository root>" && python .claude/skills/structure/scripts/build_adsorpti
 
 支持位点依赖 ASE 表面 builder，常见包括 `ontop`、`bridge`、`fcc`、`hcp`。
 
-CO/Pt(111) 的 `--orientation` 指 **CO 分子轴相对于表面法向的几何取向**，不是 C-down/O-down 端基选择。脚本通过 ASE 先生成 CO，再以锚定原子为旋转中心得到：
+CO/fcc(111) 的 `--orientation` 指 **CO 分子轴相对于表面法向的几何取向**，不是 C-down/O-down 端基选择。脚本通过 ASE 先生成 CO，再以锚定原子为旋转中心得到：
 
 - `upright`：CO 垂直表面，默认 C 端为锚定原子；
 - `tilted_x`：CO 分子轴倾斜 45 degree，沿表面 x 方向分量；
 - `tilted_y`：CO 分子轴倾斜 45 degree，沿表面 y 方向分量；
-- `reverse`：端基反转，用于显式要求 O-down/C-down 对比时，不属于 DREAMS benchmark 的默认三取向。
+- `reverse`：端基反转，用于显式要求 O-down/C-down 对比时，通常不属于默认三取向。
 
-若用户要求“与 DREAMS 论文对齐”或“测试 3 个 orientation”，必须生成 `upright`、`tilted_x`、`tilted_y`；不要把该请求解释成 C-down/O-down。
+若用户要求“与 benchmark 对齐”或“测试 3 个 orientation”，必须生成 `upright`、`tilted_x`、`tilted_y`；不要把该请求解释成 C-down/O-down。
 
 ## 工作流 E：枚举吸附构型集合
 
-适用：比较位点能量或吸附能差，如 CO/Pt(111) 的 fcc vs ontop。
+适用：比较位点能量或吸附能差，如 CO/fcc(111) 的 fcc vs ontop、top vs hollow。
 
 ```bash
 cd "<Repository root>" && python .claude/skills/structure/scripts/enumerate_adsorption_configs.py \
@@ -146,11 +158,11 @@ cd "<Repository root>" && python .claude/skills/structure/scripts/enumerate_adso
 
 生成后逐个运行 `validate_structure.py`，并汇报哪些文件可交给 `adsorption_energy` 或 `relax`。
 
-## CO/Pt(111) Benchmark 约定
+## CO/fcc(111) 常规约定
 
-目标：生成 CO/Pt(111) p(2x2), 1/4 ML 中 fcc 与 ontop 位点比较所需结构。
+目标：生成 CO/fcc(111) p(2x2), 1/4 ML 中位点比较所需结构。Pt、Pd、Rh、Ir 等 fcc(111) 表面可按同一结构约定处理。
 
-与 DREAMS 论文对齐时，结构集合必须是 **C-down CO** 在 `fcc` 与 `ontop` 两个位点上的三个几何取向：
+与已有 benchmark 对齐时，结构集合可以是 **C-down CO** 在 `fcc` 与 `ontop` 两个位点上的三个几何取向；若用户要求更完整位点筛选，可同时生成 `bridge`、`hcp`：
 
 | site | orientation |
 |------|-------------|
@@ -165,17 +177,37 @@ cd "<Repository root>" && python .claude/skills/structure/scripts/enumerate_adso
 
 默认建议：
 
-- surface: Pt(111)
-- Pt bulk: fcc
+- surface: fcc(111), e.g. Pt(111), Pd(111), Rh(111), Ir(111)
+- bulk: fcc
 - supercell: p(2x2)
 - slab: 4 layers 起步
 - vacuum: 15 A 起步
 - coverage: 1 CO / 4 surface Pt atoms = 1/4 ML
 - adsorbate anchor: C end down
-- initial height: ontop 1.85 A；fcc/hcp 1.85 A 起步
+- initial height: ontop 1.85 A；bridge/fcc/hcp 1.85 A 起步
 - orientations: upright、tilted_x、tilted_y
 
 物理目标与吸附能公式不在本 skill 中计算；生成结构后交给 `adsorption_energy`。
+
+## Rutile Oxide (110) 常规约定
+
+目标：生成或整理 CO 在 rutile oxide (110) 表面的吸附结构，例如 RuO2(110)、IrO2(110)。这些作为普通 slab/adsorption 结构处理。
+
+常见结构变体：
+
+- stoichiometric (110) surface
+- reduced surface
+- O-vacancy surface
+- O-rich surface
+- cus 位点 CO 吸附
+- bridge-O/cus-O 相关构型
+
+要求：
+
+- 优先从 Materials Project 或用户 POSCAR 获取 rutile bulk / slab。
+- 生成 reduced 或 O-vacancy 结构时，明确删除的是哪类 O，并输出独立 POSCAR。
+- 吸附体系与对应洁净/缺陷表面必须保持同一 slab、超胞和真空。
+- 若涉及 CO 与表面氧反应，结构准备阶段应输出每个静态构型，反应能或路径分析交给下游 workflow。
 
 ## 校验
 
