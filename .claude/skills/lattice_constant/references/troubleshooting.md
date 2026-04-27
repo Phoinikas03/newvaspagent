@@ -42,4 +42,4 @@
 
 ## 6. Materials Project mp-id 与结构不符
 
-- 搜索到的 mp-id 可能不是目标 **纯相/结构**（例如氧化物 vs 单质）。应用 **`get_poscar_from_md`** 后检查 **POSCAR 元素与空间群**是否与用户目标一致，必要时换 mp-id 或换数据库条目。
+- 搜索到的 mp-id 可能不是目标 **纯相/结构**（例如氧化物 vs 单质）。使用 **`Skill: structure`** 获取 POSCAR 后检查 **POSCAR 元素与空间群**是否与用户目标一致，必要时换 mp-id 或换数据库条目。

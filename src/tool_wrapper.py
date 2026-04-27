@@ -1,26 +1,6 @@
-from .tool import duckduckgo_search_impl, get_poscar_impl, visit_webpage_impl, google_search_impl, arxiv_search_impl, setup_vasp_inputs_impl, semanticscholar_search_impl
+from .tool import duckduckgo_search_impl, visit_webpage_impl, google_search_impl, arxiv_search_impl, setup_vasp_inputs_impl, semanticscholar_search_impl
 from claude_agent_sdk import tool
 from typing import Dict, Any, Optional
-
-# ==========================================
-# POSCAR 获取工具
-# ==========================================
-def poscar_tool(workspace_dir: str):
-    """闭包函数：注入 workspace_dir 并返回组装好的 Tool"""
-    
-    @tool(
-        name="get_poscar_from_md", 
-        description="Get POSCAR from Materials Project by Materials Project ID, and save it to the workspace.", 
-        input_schema={"mp_id": str}
-    )
-    async def get_poscar_from_md(args: Dict[str, Any]) -> Dict[str, Any]:
-        # 仅负责参数提取和转发
-        return await get_poscar_impl(
-            mp_id=args["mp_id"], 
-            workspace_dir=workspace_dir
-        )
-            
-    return get_poscar_from_md
 
 # ==========================================
 # VASP 输入文件生成工具

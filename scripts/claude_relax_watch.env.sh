@@ -34,9 +34,9 @@ _rx_repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export RX_DATA_ROOT="${RX_DATA_ROOT:-${_rx_repo}/data/relax}"
 
 # vaspagent / watcher 运行环境
-export VASP_AGENT_PYTHON="${VASP_AGENT_PYTHON:-/gpfs/junlab/xiazeyu21/miniconda3/envs/vaspagent/bin/python}"
-export VASP_AGENT_CONDA_SH="${VASP_AGENT_CONDA_SH:-/gpfs/junlab/xiazeyu21/miniconda3/etc/profile.d/conda.sh}"
-export VASP_AGENT_CONDA_ENV="${VASP_AGENT_CONDA_ENV:-vaspagent}"
+export VASP_AGENT_PYTHON="${VASP_AGENT_PYTHON:-/data/xiazeyu/conda/envs/claude/bin/python}"
+export VASP_AGENT_CONDA_SH="${VASP_AGENT_CONDA_SH:-/data/xiazeyu/conda/etc/profile.d/conda.sh}"
+export VASP_AGENT_CONDA_ENV="${VASP_AGENT_CONDA_ENV:-claude}"
 export CLAUDE_CLI="${CLAUDE_CLI:-$(command -v claude || true)}"
 export CLAUDE_MODEL="${CLAUDE_MODEL:-glm-5.1}"
 
@@ -66,6 +66,6 @@ export RX_CLAUDE_PRINT_TIMEOUT="${RX_CLAUDE_PRINT_TIMEOUT:-300}"
 export RX_WATCH_SUPERVISOR_SESSION="${RX_WATCH_SUPERVISOR_SESSION:-rxclaudewatch}"
 
 # 串行任务列表
-export RX_TASK_DIRS="${RX_TASK_DIRS:-rx_Au rx_Bi2Te3 rx_CaCO3 rx_Cr rx_Fe rx_FeSe rx_La2CuO4 rx_Li10Ge(PS6)2 rx_Li2S rx_Li4Ti5O12 rx_Li7La3Zr2O12 rx_LiCoO2 rx_LiFeAs rx_LiFePO4 rx_LiMn2O4 rx_LiNbO3 rx_Mg rx_MgB2 rx_MgO rx_NaCl rx_Nb3Sn rx_NbN}"
+export RX_TASK_DIRS="${RX_TASK_DIRS:-rx_Ni rx_Sb2Te3 rx_SiO2 rx_SnSe rx_Sr2RuO4 rx_TePb rx_Ti rx_TiC rx_TiPbO3 rx_Zn}"
 
 unset _rx_repo

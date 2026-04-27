@@ -28,7 +28,7 @@ lattice_constant/
 - `duckduckgo_search` / `Google Search`：搜索实验晶格常数、空间群信息
 - `Skill` (`convergence`)：**ENCUT / KSPACING** 收敛测试（1 meV/atom），产出 **`Convergence_Report.md`**
 - `Skill` (`literature`)：检索特定材料的可靠实验晶格常数及标准 EOS 拟合文献
-- `get_poscar_from_md`：根据特定材料生成或获取初始 POSCAR
+- `Skill`（`structure`）：根据特定材料生成、获取或校验初始 POSCAR
 - `setup_vasp_inputs`：生成 POTCAR；若 **INCAR** 含 **`KSPACING`** 则**不**生成 **KPOINTS**
 - Skill（`run_vasp`）：按该 skill 与系统 orchestration 规则，用 Bash /（必要时）**非阻塞** `TaskOutput` / 作业调度运行 VASP（MCP 工具 `run_vasp` 已移除，勿再调用）
 - Skill（`vasp_error`）：统一诊断 VASP 报错、卡住与是否应先终止旧任务再重跑
@@ -60,7 +60,7 @@ lattice_constant/
 
 1. 确认用户是否提供了目标材料的**元素组成**和**晶体结构类型**（如 FCC, BCC, 金刚石结构）。若未提供，询问用户并等待回复。
 2. 检索实验参考值：调用 `Skill: literature` 获取该材料的实验晶格常数。
-3. 构建初始结构：调用 `get_poscar_from_md` 或使用脚本，以实验晶格常数为基准生成初始的 `POSCAR`。
+3. 构建初始结构：使用 `Skill: structure` 或脚本，以实验晶格常数为基准生成初始的 `POSCAR`。
 
 ---
 

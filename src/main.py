@@ -22,7 +22,7 @@ from claude_agent_sdk import (
 )
 from claude_agent_sdk.types import StreamEvent
 from src.tool_wrapper import (
-    poscar_tool, setup_vasp_inputs_tool,
+    setup_vasp_inputs_tool,
     duckduckgo_search_tool, google_search_tool, visit_webpage_tool, arxiv_search_tool,
 )
 from src.result_message import result_message_indicates_failure
@@ -150,7 +150,6 @@ The following was saved by VASP Agent to `{PERSIST_FILENAME}` under this workspa
     mcp_server = create_sdk_mcp_server(
         name=mcp_name,
         tools=[
-            poscar_tool(workspace),
             setup_vasp_inputs_tool(workspace),
             duckduckgo_search_tool(),
             google_search_tool(),
@@ -195,7 +194,7 @@ SKILL & `.claude` PATH RULE (mandatory):
 - Any Bash that loads or runs skill assets (Python scripts under `.claude/skills/`, `vasp_runner.py`, `probe_env.py`, `quick_test.py`, sourcing templates, etc.) MUST start by changing directory to the repository root: prefix with `cd "{repo_root}" && ...`, **or** use absolute paths beginning with `{repo_root}/`.
 - Do **not** assume `.claude` exists under the session workspace.
 
-VASP FILE PROVENANCE (mandatory): You MUST NOT use Write, Edit, or Bash/heredocs to manually author the full contents of **POSCAR**, **POTCAR**, or **KPOINTS**. Obtain crystal structures only through **`get_poscar_from_md`** (or other retrieval tools such as search + documented procedures—not by typing lattice vectors and coordinates from memory). Generate **POTCAR** (and the POSCAR copy used with them in the workspace) **only** via **`setup_vasp_inputs`**. Prefer **KSPACING** (and optionally **KGAMMA**) in **INCAR** so **`setup_vasp_inputs`** does not create a **KPOINTS** file; only when **KSPACING** is absent does the tool write **KPOINTS** from density. You MAY create or adjust **INCAR** by copying skill templates and changing parameters (ENCUT, ISMEAR, KSPACING, etc.).
+VASP FILE PROVENANCE (mandatory): You MUST NOT use Write, Edit, or Bash/heredocs to manually author the full contents of **POSCAR**, **POTCAR**, or **KPOINTS**. Obtain and construct crystal structures through **`Skill: structure`** and its scripts (for example `.claude/skills/structure/scripts/fetch_mp_poscar.py`, `build_surface.py`, or `build_adsorption.py`), or through explicitly documented external retrieval procedures—not by typing lattice vectors and coordinates from memory. Generate **POTCAR** (and the POSCAR copy used with them in the workspace) **only** via **`setup_vasp_inputs`**. Prefer **KSPACING** (and optionally **KGAMMA**) in **INCAR** so **`setup_vasp_inputs`** does not create a **KPOINTS** file; only when **KSPACING** is absent does the tool write **KPOINTS** from density. You MAY create or adjust **INCAR** by copying skill templates and changing parameters (ENCUT, ISMEAR, KSPACING, etc.).
 
 CRITICAL INTERACTION RULE: You MUST NOT call or attempt to use the `AskUserQuestion` tool. Instead, whenever you finish a major workflow step, encounter an error, or need permission to proceed to a computationally expensive task (like running VASP), you MUST output a plain text block. In this text block, clearly summarize what you have achieved so far, and explicitly ask the user for confirmation to proceed to the next step. NEVER terminate your turn silently without reporting your status.
 
@@ -273,7 +272,6 @@ POTCAR SELECTION RULE: When selecting pseudopotentials (POTCARs), if multiple ve
         mcp_servers={mcp_name: mcp_server},
         allowed_tools=[
             "Skill",
-            f"mcp__{mcp_name}__get_poscar_from_md",
             f"mcp__{mcp_name}__setup_vasp_inputs",
             f"mcp__{mcp_name}__duckduckgo_search",
             f"mcp__{mcp_name}__google_search",

@@ -150,6 +150,27 @@ can_resume() {
   grep -q "session_id" "$RUNS/$d/log.txt"
 }
 
+task_done() {
+  local d="$1"
+  [[ -f "$RUNS/$d/.relax_done" ]] && return 0
+  [[ -f "$RUNS/$d/OUTCAR" ]] || return 1
+  grep -q "reached required accuracy - stopping structural energy minimisation" "$RUNS/$d/OUTCAR" \
+    && grep -q "General timing and accounting informations for this job" "$RUNS/$d/OUTCAR"
+}
+
+mark_task_done() {
+  local d="$1"
+  mkdir -p "$RUNS/$d"
+  {
+    echo "done_at=$(date -Is)"
+    echo "source=claude_relax_watch"
+  } >"$RUNS/$d/.relax_done"
+}
+
+cli_idle() {
+  tmux_capture 80 | grep -q 'You>'
+}
+
 known_task() {
   local wanted="$1"
   local d
@@ -166,6 +187,17 @@ conversation_has_user_turn() {
   local p="$RUNS/$d/conversation_turns.jsonl"
   [[ -f "$p" ]] || return 1
   grep -q '"role": "user"' "$p"
+}
+
+next_unfinished_task() {
+  local d
+  for d in "${TASK_DIRS[@]}"; do
+    if ! task_done "$d"; then
+      echo "$d"
+      return 0
+    fi
+  done
+  return 1
 }
 
 wait_for_cli_prompt() {
@@ -234,8 +266,19 @@ start_named_task() {
       inject_initial_prompt_if_needed "$nd"
       return 0
     fi
-    log "[parse] WATCH_START 请求 $nd，但当前仍有任务在运行: ${curd:-unknown}"
-    return 0
+    if [[ -n "$curd" ]] && task_done "$curd" && cli_idle; then
+      log "[parse] WATCH_START 请求 $nd；当前任务 $curd 已完成且 CLI 空闲，先退出旧会话"
+      mark_task_done "$curd"
+      tmux_send_literal "quit"
+      sleep 6
+      if agent_running; then
+        log "[parse] 旧会话仍在运行，暂不启动 $nd: ${curd:-unknown}"
+        return 0
+      fi
+    else
+      log "[parse] WATCH_START 请求 $nd，但当前仍有任务在运行: ${curd:-unknown}"
+      return 0
+    fi
   fi
 
   mkdir -p "$RUNS/$nd"
@@ -279,6 +322,7 @@ ${task_list}
 要求：
 - 启动新任务时，首句任务说明应对应为：我要计算<POSCAR绝对路径>的结构优化
 - 若当前问题是在确认 GPU 数量或并行方式，回复应参考 $INSTRUCTIONS_MD，明确表示使用 8 GPU 并行计算
+- 若询问是否需要收敛测试，回答不需要
 - 若当前问题是在确认是否执行已准备好的 VASP 命令，可以直接回复：同意
 - 不能只按固定规则机械输出，必须根据当下真实提问内容、日志状态和任务完成度判断
 - 如果当前没有出现明确需要回复的用户提问，也不需要启动/结束任何任务，输出 WATCH_SKIP
@@ -323,6 +367,7 @@ handle_watch_action() {
     curd="$(current_main_dir)"
     echo "[parse] WATCH_QUIT" | tee -a "$LOG"
     if [[ -n "$curd" ]]; then
+      mark_task_done "$curd"
       tmux_send_literal "quit"
       sleep 6
       echo "[parse] 已请求退出当前会话: $curd" | tee -a "$LOG"
@@ -349,7 +394,7 @@ handle_watch_action() {
 
 run_watch_iteration() {
   local i="$1"
-  local msg_file prompt ec last
+  local msg_file prompt ec last bootstrap_task
 
   update_heartbeat
   if ((i > 1)); then
@@ -358,6 +403,17 @@ run_watch_iteration() {
 
   log ""
   log "######## $(date -Is) 第 $i/$COUNT 次 ########"
+
+  if ! agent_running; then
+    bootstrap_task="$(next_unfinished_task || true)"
+    if [[ -n "$bootstrap_task" ]]; then
+      log "[bootstrap] 当前空闲，先启动首个未完成任务: $bootstrap_task"
+      start_named_task "$bootstrap_task"
+      update_heartbeat
+      return 0
+    fi
+    log "[bootstrap] 任务列表均已完成，无需启动新任务"
+  fi
 
   msg_file="$(mktemp /tmp/claude_relax_watch_msg.XXXXXX)" || {
     log "[warn] mktemp 失败"

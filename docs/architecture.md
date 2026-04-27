@@ -44,11 +44,12 @@
   - 把底层实现封装成 SDK 可注册的 tool
 - `src/tool.py`
   - 真正的工具逻辑实现，包括：
-  - Materials Project 结构抓取
   - VASP 输入文件生成
   - DuckDuckGo / Google 搜索
   - 网页抓取
   - arXiv / Semantic Scholar 学术检索
+- `.claude/skills/structure`
+  - 负责 Materials Project 结构抓取、ASE/pymatgen 结构构建、slab/吸附结构枚举与校验
 
 ### 状态与恢复层
 

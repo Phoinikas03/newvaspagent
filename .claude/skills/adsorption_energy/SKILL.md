@@ -30,7 +30,7 @@ adsorption_energy/
 
 ## 可用工具
 
-- `get_poscar_from_md`：获取体相或原型结构（表面 slab 常需用户或 `Skill`（`supercell`）进一步处理）
+- `Skill`（`structure`）：获取体相/原型结构，生成气相分子、slab、吸附位点和取向枚举结构
 - `Skill`（`supercell`）：构建超胞或 slab（若任务涉及）
 - `Skill`（`relax`）：若用户仅有未松弛的体相，可先松弛再切表面（依用户目标决定）
 - `Skill`（`convergence`）：在固定几何下做 **ENCUT/KSPACING** 收敛（`NSW=0`），供三步优化 **共用** 同一截断能与 K 点密度；**须先征得用户同意**再执行（见该 skill §0）
@@ -55,6 +55,7 @@ adsorption_energy/
 - **吸附质**：例如 CO 或其它分子；是否有 **ZPE / 熵** 校正需求（本 skill 默认为 **0 K 静态吸附能**，不含振动校正；若用户需要，须说明需额外频率计算，不在本 workflow 内展开）。
 - **表面**：元素、晶面、slab 层数、真空厚度是否已有共识或文献依据。
 - **输入来源**：用户是否已提供三套 **POSCAR**/**POTCAR**，或需从数据库/构建生成。
+- **CO/Pt(111) 取向语义**：若用户要求“与 DREAMS 论文对齐”或“3 个 orientation”，必须让 `structure` skill 生成 C-down CO 的 `upright`、`tilted_x`、`tilted_y` 几何取向；不要将 orientation 解释成 C-down/O-down。O-down/reverse 只在用户明确要求端基筛选时额外生成。
 
 若结构未就绪，协调 **`relax`** / **`supercell`** / 用户手动切 slab，再进入第 2 步。
 

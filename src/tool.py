@@ -2,39 +2,6 @@ import os
 import asyncio
 from pathlib import Path
 from typing import Dict, Any
-# ==========================================
-# 获取 POSCAR (MPRester 异步优化版)
-# ==========================================
-def _fetch_and_save_structure_sync(mp_id: str, output_filename: Path, api_key: str):
-    """(同步函数) 实际执行网络请求和文件写入的阻塞任务"""
-    from mp_api.client import MPRester
-    
-    with MPRester(api_key) as mpr:
-        structure = mpr.get_structure_by_material_id(mp_id)
-        if structure is None:
-            raise ValueError(f"Structure not found for {mp_id}")
-            
-        # 写入文件同样是阻塞 I/O，一起放在这里处理
-        structure.to(fmt="poscar", filename=str(output_filename))
-
-async def get_poscar_impl(mp_id: str, workspace_dir: str) -> Dict[str, Any]:
-    """(异步接口) 供 Tool 调用的核心逻辑"""
-    workdir = Path(workspace_dir)
-    api_key = os.getenv("MP_API")
-    
-    if not api_key:
-        return {"content": [{"type": "text", "text": "Error: MP_API environment variable is missing."}]}
-        
-    workdir.mkdir(parents=True, exist_ok=True)
-    output_filename = (workdir / f"POSCAR_{mp_id}").resolve()
-    
-    try:
-        # 将同步网络请求和磁盘读写推送到后台线程
-        await asyncio.to_thread(_fetch_and_save_structure_sync, mp_id, output_filename, api_key)
-        return {"content": [{"type": "text", "text": f"POSCAR_{mp_id} saved to {output_filename}"}]}
-    except Exception as e:
-        return {"content": [{"type": "text", "text": f"Error: {str(e)}"}]}
-
 
 # ==========================================
 # 设置 VASP 输入文件 (POTCAR 智能回退增强版)

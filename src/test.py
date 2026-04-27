@@ -12,7 +12,6 @@ if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
 
 from src.tool import (
-    get_poscar_impl,
     duckduckgo_search_impl, 
     google_search_impl, 
     visit_webpage_impl,
@@ -20,14 +19,6 @@ from src.tool import (
     setup_vasp_inputs_impl,
     semanticscholar_search_impl  # 导入新增的 Semantic Scholar 实现
 )
-
-
-async def test_get_poscar_from_md():
-    print("=== 开始测试 get POSCAR from Materials Project ===")
-    result = await get_poscar_impl("mp-2815", workspace_dir="/mnt/data_x3/xiazeyu/learn-claude-code/workspace")
-    print(result)
-    print("=== get POSCAR from Materials Project 测试通过 ===\n")
-    return result
 
 
 async def test_duckduckgo_search():
@@ -145,8 +136,6 @@ async def main():
     # await test_duckduckgo_search()
     # await test_arxiv_search()
     # await test_setup_vasp_inputs()
-    # await test_get_poscar_from_md()
-    
     # 运行新增的 Semantic Scholar 测试
     await test_semanticscholar_search()
 

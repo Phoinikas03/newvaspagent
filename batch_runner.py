@@ -122,7 +122,7 @@ async def run_single_task(
         AssistantMessage, ResultMessage, TextBlock,
     )
     from src.tool_wrapper import (
-        poscar_tool, setup_vasp_inputs_tool,
+        setup_vasp_inputs_tool,
         duckduckgo_search_tool, google_search_tool,
         visit_webpage_tool, arxiv_search_tool,
     )
@@ -133,7 +133,6 @@ async def run_single_task(
     mcp_server = create_sdk_mcp_server(
         name=mcp_name,
         tools=[
-            poscar_tool(workspace),
             setup_vasp_inputs_tool(workspace),
             duckduckgo_search_tool(),
             google_search_tool(),
@@ -149,7 +148,6 @@ async def run_single_task(
         mcp_servers={mcp_name: mcp_server},
         allowed_tools=[
             "Skill",
-            f"mcp__{mcp_name}__get_poscar_from_md",
             f"mcp__{mcp_name}__setup_vasp_inputs",
             f"mcp__{mcp_name}__duckduckgo_search",
             f"mcp__{mcp_name}__google_search",
