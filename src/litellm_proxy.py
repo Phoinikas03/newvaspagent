@@ -89,7 +89,10 @@ def _merge_no_proxy_for_url(base_url: str) -> None:
     existing = os.environ.get("NO_PROXY") or os.environ.get("no_proxy") or ""
     parts = [p.strip() for p in existing.split(",") if p.strip()]
     seen = set(parts)
-    for h in ("127.0.0.1", "localhost", "0.0.0.0", host):
+    hosts = ["127.0.0.1", "localhost", "0.0.0.0"]
+    if host in {"127.0.0.1", "localhost", "0.0.0.0", "::1"}:
+        hosts.append(host)
+    for h in hosts:
         if h and h not in seen:
             seen.add(h)
             parts.append(h)
@@ -362,7 +365,7 @@ def probe_anthropic_messages_endpoint(
     base_url: str,
     api_key: str,
     model: str,
-    timeout: float = 8.0,
+    timeout: float = 20.0,
 ) -> tuple[bool, str]:
     """
     轻量探测远端是否能处理 Anthropic ``/v1/messages``。
@@ -377,29 +380,43 @@ def probe_anthropic_messages_endpoint(
             "messages": [{"role": "user", "content": "ping"}],
         }
     ).encode("utf-8")
-    req = Request(
-        endpoint,
-        data=body,
-        method="POST",
-        headers={
-            "content-type": "application/json",
-            "x-api-key": api_key,
-            "anthropic-version": "2023-06-01",
-        },
-    )
-    try:
-        with urlopen(req, timeout=timeout) as resp:
-            status = getattr(resp, "status", 200)
-            return 200 <= int(status) < 300, f"HTTP {status}"
-    except HTTPError as e:
-        detail = ""
-        with suppress(Exception):
-            detail = e.read(512).decode("utf-8", errors="replace").strip()
-        return False, f"HTTP {e.code}{': ' + detail if detail else ''}"
-    except URLError as e:
-        return False, f"{type(e.reason).__name__}: {e.reason}"
-    except OSError as e:
-        return False, f"{type(e).__name__}: {e}"
+    attempts = [
+        (
+            "Bearer",
+            {
+                "content-type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+                "anthropic-version": "2023-06-01",
+            },
+        ),
+        (
+            "x-api-key",
+            {
+                "content-type": "application/json",
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+            },
+        ),
+    ]
+    failures: list[str] = []
+    for label, headers in attempts:
+        req = Request(endpoint, data=body, method="POST", headers=headers)
+        try:
+            with urlopen(req, timeout=timeout) as resp:
+                status = getattr(resp, "status", 200)
+                if 200 <= int(status) < 300:
+                    return True, f"HTTP {status} ({label})"
+                failures.append(f"{label}: HTTP {status}")
+        except HTTPError as e:
+            detail = ""
+            with suppress(Exception):
+                detail = e.read(512).decode("utf-8", errors="replace").strip()
+            failures.append(f"{label}: HTTP {e.code}{': ' + detail if detail else ''}")
+        except URLError as e:
+            failures.append(f"{label}: {type(e.reason).__name__}: {e.reason}")
+        except OSError as e:
+            failures.append(f"{label}: {type(e).__name__}: {e}")
+    return False, "; ".join(failures)
 
 
 def maybe_start_litellm(base_url: str, *, disable: bool = False) -> None:

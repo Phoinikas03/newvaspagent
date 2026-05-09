@@ -1,0 +1,25 @@
+# 静态单点能 — EOS 计算（NSW=0）
+# Al FCC，使用收敛参数
+
+SYSTEM = Al FCC - EOS calculation
+PREC   = Accurate
+
+# --- 收敛参数（来自 Convergence_Report.md） ---
+ENCUT    = 400
+KSPACING = 0.15
+KGAMMA   = .TRUE.
+
+# --- 电子步参数 (金属) ---
+ISMEAR = 1
+SIGMA  = 0.1
+EDIFF  = 1E-6
+NELM   = 100
+
+# --- 离子步：必须静态 ---
+NSW    = 0
+ISIF   = 2
+IBRION = -1
+
+# --- 输出控制 ---
+LWAVE  = .FALSE.
+LCHARG = .FALSE.

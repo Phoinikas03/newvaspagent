@@ -1,0 +1,22 @@
+! Convergence test for diamond C
+! Static calculation (NSW=0) for ENCUT and KSPACING convergence
+
+SYSTEM = Diamond C - Convergence Test
+
+! Electronic relaxation
+ISMEAR = 0
+SIGMA = 0.05
+NELM = 100
+EDIFF = 1e-6
+
+! Static calculation (no ionic relaxation)
+NSW = 0
+ISIF = 2
+
+! K-point spacing (will be swept)
+KSPACING = 0.25
+
+! Output
+LWAVE = .FALSE.
+LCHARG = .FALSE.
+LELF = .FALSE.

@@ -1,0 +1,37 @@
+SYSTEM = Au Full Structural Relaxation (atoms + cell shape + volume)
+# --- 电子结构 ---
+ISTART  = 0          # 从头开始
+ICHARG  = 2          # 从叠加原子电荷密度初始化
+PREC    = Accurate
+ENCUT   = 520        # Au 的 ENMAX 约 230 eV，取 1.3 倍约 300 eV，此处用 520 确保高精度
+EDIFF   = 1E-6       # 电子步收敛标准
+NELM    = 100        # 最大电子步数
+
+# --- 交换关联 ---
+GGA     = PE         # PBE 泛函
+
+# --- 展宽（Au 为金属）---
+ISMEAR  = 1          # Methfessel-Paxton 一阶展宽，适合金属
+SIGMA   = 0.2        # 较大展宽，改善 K 点收敛
+
+# --- 离子弛豫 ---
+IBRION  = 2          # 共轭梯度 CG
+ISIF    = 3          # 同时优化原子位置 + 晶胞形状 + 体积
+NSW     = 200        # 最大离子步数
+EDIFFG  = -0.02      # 力收敛标准 (eV/Å)
+POTIM   = 0.5        # CG 步长
+
+# --- 算法 ---
+ALGO    = Normal
+
+# --- 输出 ---
+LWAVE   = .FALSE.
+LCHARG  = .FALSE.
+
+# --- K 点（金属可收紧 KSPACING）---
+KSPACING = 0.15      # 金属体系用较密的 K 点网格
+KGAMMA   = .TRUE.
+
+# --- 并行（GPU）---
+KPAR    = 4          # K 点并行数
+NCORE   = 1          # GPU 版本推荐 NCORE=1

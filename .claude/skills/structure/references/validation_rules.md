@@ -17,4 +17,6 @@
 
 - The adsorbate should be above the intended surface, not embedded in the slab.
 - The adsorbate should not overlap with surface atoms.
+- For CO on metal slabs, check adsorbate-slab distances explicitly, e.g. `--slab-elements Pt --adsorbate-elements C O --min-adsorbate-slab-distance 1.4`; values below this often indicate the wrong CO end was anchored or the molecule was tilted into the slab.
 - For site comparisons, the same slab, same cell, same adsorbate, and comparable initial heights must be used across configurations.
+- If bottom slab layers are fixed, clean slab and adsorbed slab should use the same fixed-layer convention.

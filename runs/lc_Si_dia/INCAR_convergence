@@ -1,0 +1,24 @@
+! Convergence test for Si diamond structure
+! Static calculation (NSW=0) for ENCUT and KSPACING convergence
+
+SYSTEM = Si diamond
+
+! Electronic relaxation
+ENCUT = 520
+KSPACING = 0.27
+ISMEAR = 0
+SIGMA = 0.05
+
+! Ionic relaxation (disabled for static calculation)
+NSW = 0
+IBRION = -1
+
+! Output control
+LWAVE = .FALSE.
+LCHARG = .FALSE.
+PREC = Accurate
+ALGO = Fast
+
+! Convergence criteria
+EDIFF = 1E-06
+NELM = 100

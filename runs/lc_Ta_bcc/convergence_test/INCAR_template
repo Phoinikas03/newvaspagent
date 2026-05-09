@@ -1,0 +1,24 @@
+# 静态单点能模板 — 用于 EOS 各 scale 子目录
+# 使用说明：复制到工作目录后改名为 INCAR，并根据收敛测试填入 ENCUT 和 KSPACING（及必要时 ISMEAR/SIGMA）
+
+SYSTEM = static single-point for EOS
+PREC   = Accurate
+
+# --- 收敛测试参数 (需替换) ---
+ENCUT    = 450          # <-- 替换为截断能收敛测试得到的值
+KSPACING = 0.10
+KGAMMA   = .TRUE.       # <-- 推荐开启，使用以 Gamma 点为中心的网格
+
+# --- 电子步参数 ---
+ISMEAR = 0
+SIGMA  = 0.05
+EDIFF  = 1E-6
+
+# --- 离子步参数 (静态计算) ---
+NSW    = 0
+ISIF   = 2
+IBRION = -1
+
+# --- 输出控制 ---
+LWAVE  = .FALSE.
+LCHARG = .FALSE.

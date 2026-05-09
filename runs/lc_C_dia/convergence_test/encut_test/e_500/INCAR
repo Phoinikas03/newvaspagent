@@ -1,0 +1,24 @@
+! ENCUT convergence test for diamond C
+! Static calculation (NSW=0)
+
+SYSTEM = Diamond C - ENCUT Test
+
+! Electronic relaxation
+ENCUT = 500
+ISMEAR = 0
+SIGMA = 0.05
+NELM = 100
+EDIFF = 1e-6
+
+! Static calculation
+NSW = 0
+ISIF = 2
+
+! K-point spacing (fixed at dense value for ENCUT test)
+KSPACING = 0.15
+KGAMMA = .TRUE.
+
+! Output
+LWAVE = .FALSE.
+LCHARG = .FALSE.
+LELF = .FALSE.

@@ -25,8 +25,10 @@ CONDA_ENV="${VASP_AGENT_CONDA_ENV:-claude}"
 MAIN="$REPO/main.py"
 CLAUDE="${CLAUDE_CLI:-$(command -v claude || true)}"
 CLAUDE_MODEL="${CLAUDE_MODEL:-glm-5.1}"
-INSTRUCTIONS_MD="$REPO/scripts/claudewatch_bandgap_instructions.md"
+INSTRUCTIONS_MD="${BG_WATCH_INSTRUCTIONS_MD:-$REPO/scripts/claudewatch_bandgap_instructions.md}"
 BG_DATA_ROOT="${BG_DATA_ROOT:-$REPO/data/bandgap}"
+BG_PBE_GPUS="${BG_PBE_GPUS:-2}"
+BG_HSE_GPUS="${BG_HSE_GPUS:-8}"
 
 read -r -a TASK_DIRS <<<"${BG_TASK_DIRS:-bg_GaN bg_GaP bg_InGaP2 bg_InP}"
 WATCHER_SHOULD_EXIT=0
@@ -103,7 +105,7 @@ initial_prompt_for() {
   local poscar_path="$BG_DATA_ROOT/$material"
   case "$run_dir" in
     bg_*)
-      echo "我要计算${material}的能带，POSCAR位于$poscar_path。这个POSCAR已经过结构弛豫，但仍然要做ENCUT和KSPACING收敛测试。使用GPU，PBE阶段使用2张GPU，HSE阶段使用8张GPU。"
+      echo "我要计算${material}的能带，POSCAR位于$poscar_path。这个POSCAR已经过结构弛豫，但仍然要做ENCUT和KSPACING收敛测试。使用GPU，PBE阶段使用${BG_PBE_GPUS}张GPU，HSE阶段使用${BG_HSE_GPUS}张GPU。"
       ;;
     *)
       return 1

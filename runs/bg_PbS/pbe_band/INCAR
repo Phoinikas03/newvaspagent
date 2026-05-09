@@ -1,0 +1,25 @@
+SYSTEM = PbS PBE Band Structure (non-self-consistent)
+# --- 电子结构 ---
+ISTART  = 1          # 读取WAVECAR
+ICHARG  = 11         # 非自洽：从CHGCAR读取固定电荷密度
+PREC    = Accurate
+ENCUT   = 400        # 必须与SCF一致
+EDIFF   = 1E-6
+NELM    = 100
+
+# --- 交换关联 ---
+GGA     = PE
+
+# --- 展宽 ---
+ISMEAR  = 0
+SIGMA   = 0.05
+
+# --- 输出 ---
+LWAVE   = .FALSE.
+LCHARG  = .FALSE.
+
+# --- 算法 ---
+ALGO    = Normal
+
+# --- 并行 ---
+NCORE   = 4

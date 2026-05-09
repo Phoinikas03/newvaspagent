@@ -1,0 +1,29 @@
+SYSTEM = PBE Static SCF for Cu2O Band Structure Pre-calculation
+# --- 电子结构 ---
+ISTART  = 0
+ICHARG  = 2
+PREC    = Accurate
+ENCUT   = 500
+EDIFF   = 1E-6
+NELM    = 100
+
+# --- 交换关联 ---
+GGA     = PE
+
+# --- 展宽 ---
+ISMEAR  = 0
+SIGMA   = 0.05
+
+# --- 输出：必须保留 WAVECAR 和 CHGCAR 供 HSE 续算 ---
+LWAVE   = .TRUE.
+LCHARG  = .TRUE.
+
+# --- 算法 ---
+ALGO    = Normal
+
+# --- K 点 ---
+KSPACING = 0.20
+KGAMMA   = .TRUE.
+
+# --- 并行 (2 GPU) ---
+KPAR = 2

@@ -20,17 +20,54 @@ def _surface_builder(surface_name):
     return builders[surface_name]
 
 
-def _orient_adsorbate(atoms, orientation):
+def _fix_bottom_layers(atoms, slab_element, n_layers):
+    if n_layers <= 0:
+        return
+    from ase.constraints import FixAtoms
+
+    slab_indices = [i for i, atom in enumerate(atoms) if atom.symbol == slab_element]
+    z_values = [atoms[i].position[2] for i in slab_indices]
+    unique_layers = sorted({round(float(z), 5) for z in z_values})
+    fixed_layer_z = set(unique_layers[:n_layers])
+    mask = [
+        atom.symbol == slab_element and round(float(atom.position[2]), 5) in fixed_layer_z
+        for atom in atoms
+    ]
+    atoms.set_constraint(FixAtoms(mask=mask))
+
+
+def _resolve_anchor_index(atoms, adsorbate_name, mol_index, anchor_symbol):
+    if mol_index is not None and anchor_symbol is not None:
+        raise ValueError("Use only one of --mol-index or --anchor-symbol.")
+    if mol_index is not None:
+        if mol_index < 0 or mol_index >= len(atoms):
+            raise ValueError(f"--mol-index {mol_index} is outside adsorbate atom range 0..{len(atoms) - 1}.")
+        return mol_index
+
+    symbols = atoms.get_chemical_symbols()
+    if anchor_symbol is None and adsorbate_name.upper() == "CO":
+        anchor_symbol = "C"
+    if anchor_symbol is not None:
+        for i, symbol in enumerate(symbols):
+            if symbol == anchor_symbol:
+                return i
+        raise ValueError(f"Anchor symbol '{anchor_symbol}' not found in adsorbate symbols {symbols}.")
+
+    return 0
+
+
+def _orient_adsorbate(atoms, orientation, anchor_index):
+    center = atoms.positions[anchor_index]
     if orientation == "upright":
         return atoms
     if orientation == "tilted_x":
-        atoms.rotate(45.0, "y", center=atoms.positions[0], rotate_cell=False)
+        atoms.rotate(45.0, "y", center=center, rotate_cell=False)
         return atoms
     if orientation == "tilted_y":
-        atoms.rotate(45.0, "x", center=atoms.positions[0], rotate_cell=False)
+        atoms.rotate(45.0, "x", center=center, rotate_cell=False)
         return atoms
     if orientation == "reverse":
-        atoms.rotate(180.0, "x", center=atoms.positions[0], rotate_cell=False)
+        atoms.rotate(180.0, "x", center=center, rotate_cell=False)
         return atoms
     raise ValueError("orientation must be one of: upright, tilted_x, tilted_y, reverse")
 
@@ -45,7 +82,17 @@ def main():
     parser.add_argument("--site", required=True, help="Adsorption site, e.g. ontop, bridge, fcc, hcp")
     parser.add_argument("--height", type=float, default=1.85, help="Adsorption height in Angstrom")
     parser.add_argument("--orientation", default="upright", help="upright, tilted_x, tilted_y, or reverse")
-    parser.add_argument("--mol-index", type=int, default=0, help="Adsorbate atom index placed at the site")
+    parser.add_argument(
+        "--mol-index",
+        type=int,
+        default=None,
+        help="Adsorbate atom index placed at the site. Defaults to the C atom for CO, otherwise atom 0.",
+    )
+    parser.add_argument(
+        "--anchor-symbol",
+        help="Adsorbate element symbol placed at the site, e.g. C for C-down CO. Mutually exclusive with --mol-index.",
+    )
+    parser.add_argument("--fix-bottom-layers", type=int, default=0, help="Add Selective Dynamics for bottom N slab layers")
     parser.add_argument("--output", default="POSCAR_adsorbed", help="Output POSCAR path")
     parser.add_argument("--sort", action="store_true", help="Sort atoms in VASP output")
     args = parser.parse_args()
@@ -60,8 +107,10 @@ def main():
     try:
         slab = _surface_builder(args.surface)(args.element, size=tuple(args.size), vacuum=args.vacuum)
         ads = molecule(args.adsorbate)
-        ads = _orient_adsorbate(ads, args.orientation)
-        add_adsorbate(slab, ads, height=args.height, position=args.site, mol_index=args.mol_index)
+        anchor_index = _resolve_anchor_index(ads, args.adsorbate, args.mol_index, args.anchor_symbol)
+        ads = _orient_adsorbate(ads, args.orientation, anchor_index)
+        add_adsorbate(slab, ads, height=args.height, position=args.site, mol_index=anchor_index)
+        _fix_bottom_layers(slab, args.element, args.fix_bottom_layers)
     except Exception as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
@@ -75,7 +124,10 @@ def main():
     print(f"ATOMS: {len(slab)}")
     print(f"SITE: {args.site}")
     print(f"ORIENTATION: {args.orientation}")
+    print(f"ANCHOR_INDEX: {anchor_index}")
+    print(f"ANCHOR_SYMBOL: {ads[anchor_index].symbol}")
     print(f"HEIGHT_A: {args.height:.6f}")
+    print(f"FIX_BOTTOM_LAYERS: {args.fix_bottom_layers}")
     return 0
 
 

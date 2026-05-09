@@ -1,0 +1,28 @@
+! Lattice constant calculation for FCC Ag
+! EOS fitting with isotropic scaling
+! Parameters from convergence test: ENCUT=400, KSPACING=0.15
+
+SYSTEM = FCC Ag
+
+! Electronic relaxation (metal)
+ENCUT = 400
+ISMEAR = 1
+SIGMA = 0.1
+NELM = 100
+EDIFF = 1e-6
+
+! Ionic relaxation
+NSW = 50
+IBRION = 2
+POTIM = 0.5
+EDIFFG = -1e-4
+
+! Cell relaxation (isotropic)
+ISIF = 3
+KSPACING = 0.15
+KGAMMA = .TRUE.
+
+! Output
+LWAVE = .FALSE.
+LCHARG = .FALSE.
+LELF = .FALSE.

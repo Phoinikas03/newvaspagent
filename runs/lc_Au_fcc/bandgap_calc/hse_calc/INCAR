@@ -1,0 +1,32 @@
+SYSTEM = HSE06 Band Gap Calculation
+PREC    = Accurate
+
+# --- 与PBE SCF一致的参数 ---
+ENCUT   = 400
+KSPACING = 0.15
+KGAMMA   = .TRUE.
+
+# --- 电子步参数 ---
+ISMEAR  = 0
+SIGMA   = 0.05
+EDIFF   = 1E-6
+NELM    = 100
+
+# --- HSE06 参数 ---
+LHFCALC = .TRUE.
+HFSCREEN = 0.2
+AEXX     = 0.25
+ALGO     = Damped
+TIME     = 0.4
+PRECFOCK = Fast
+
+# --- 从PBE波函数热启动 ---
+ISTART  = 1
+ICHARG  = 1
+
+# --- 输出 ---
+LWAVE   = .FALSE.
+LCHARG  = .FALSE.
+
+# --- 并行 ---
+NCORE   = 4

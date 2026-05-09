@@ -1,0 +1,29 @@
+SYSTEM = PBE Static SCF for InGaP2 Band Structure Pre-calculation
+# --- 电子结构 ---
+ISTART  = 0          # 从头开始（首次运行）
+ICHARG  = 2          # 从叠加原子电荷密度初始化
+PREC    = Accurate
+ENCUT   = 400        # 收敛测试推荐值
+EDIFF   = 1E-6       # 电子步收敛标准
+NELM    = 100        # 最大电子步数
+
+# --- 交换关联 ---
+GGA     = PE         # PBE 泛函
+
+# --- 展宽（半导体/绝缘体用 Gaussian） ---
+ISMEAR  = 0
+SIGMA   = 0.05
+
+# --- 输出：必须保留 WAVECAR 和 CHGCAR 供 HSE 续算 ---
+LWAVE   = .TRUE.     # 必须！HSE 阶段从此读取初始波函数
+LCHARG  = .TRUE.     # 必须！
+
+# --- 算法 ---
+ALGO    = Normal
+
+# --- K 点（与 HSE 阶段必须完全一致）---
+KSPACING = 0.15      # 收敛测试推荐值
+KGAMMA   = .TRUE.
+
+# --- 并行（2 GPU 单任务）---
+KPAR    = 2          # 与 GPU 数对齐

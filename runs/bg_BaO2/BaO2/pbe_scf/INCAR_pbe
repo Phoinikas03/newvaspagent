@@ -1,0 +1,29 @@
+SYSTEM = PBE Static SCF for BaO2 Band Structure Pre-calculation
+# --- 电子结构 ---
+ISTART  = 0
+ICHARG  = 2
+PREC    = Accurate
+ENCUT   = 550        # 收敛测试确定
+EDIFF   = 1E-6
+NELM    = 100
+
+# --- 交换关联 ---
+GGA     = PE
+
+# --- 展宽 ---
+ISMEAR  = 0
+SIGMA   = 0.05
+
+# --- 输出：必须保留 WAVECAR 和 CHGCAR ---
+LWAVE   = .TRUE.
+LCHARG  = .TRUE.
+
+# --- 算法 ---
+ALGO    = Normal
+
+# --- K 点（收敛测试确定）---
+KSPACING = 0.15
+KGAMMA   = .TRUE.
+
+# --- 并行 ---
+NCORE   = 4

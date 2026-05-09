@@ -9,6 +9,17 @@ import time
 from pathlib import Path
 
 STATE_FILE_NAME = ".vasp_run_state.json"
+VASP_PROCESS_NAMES = {"vasp_std", "vasp_gam", "vasp_ncl", "vasp_gpu"}
+MPI_PROCESS_NAMES = {
+    "mpirun",
+    "mpiexec",
+    "orterun",
+    "orted",
+    "prted",
+    "hydra_pmi_proxy",
+    "pmi_proxy",
+}
+SAFE_CWD_SCAN_PROCESS_NAMES = VASP_PROCESS_NAMES | MPI_PROCESS_NAMES
 
 
 def utc_now_iso() -> str:
@@ -36,6 +47,16 @@ def resolve_state_path(work_dir: str = "", state_file: str = "") -> Path:
     if not work_dir:
         raise ValueError("either --work-dir or --state-file is required")
     return Path(work_dir).resolve() / STATE_FILE_NAME
+
+
+def resolve_work_dir(work_dir: str = "", state_file: str = "") -> Path | None:
+    if work_dir:
+        return Path(work_dir).resolve()
+    if state_file:
+        state_path = Path(state_file).resolve()
+        if state_path.name == STATE_FILE_NAME:
+            return state_path.parent
+    return None
 
 
 def pid_is_alive(pid: int | None) -> bool:
@@ -79,12 +100,92 @@ def read_proc_cwd(pid: int) -> str | None:
         return None
 
 
+def read_proc_comm(pid: int) -> str:
+    try:
+        return Path(f"/proc/{pid}/comm").read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
 def read_proc_cmdline(pid: int) -> str:
     try:
         raw = Path(f"/proc/{pid}/cmdline").read_bytes()
     except OSError:
         return ""
     return raw.replace(b"\x00", b" ").decode("utf-8", errors="replace").strip()
+
+
+def proc_numeric_pids() -> list[int]:
+    proc_root = Path("/proc")
+    out: list[int] = []
+    for entry in proc_root.iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            out.append(int(entry.name))
+        except ValueError:
+            continue
+    return out
+
+
+def process_name_matches(pid: int) -> bool:
+    comm = read_proc_comm(pid)
+    if comm in SAFE_CWD_SCAN_PROCESS_NAMES:
+        return True
+    cmdline = read_proc_cmdline(pid)
+    if not cmdline:
+        return False
+    first = cmdline.split()[0]
+    return Path(first).name in SAFE_CWD_SCAN_PROCESS_NAMES
+
+
+def list_vasp_mpi_pids_by_exact_cwd(work_dir: Path) -> list[dict]:
+    target = os.path.realpath(str(work_dir))
+    current_pid = os.getpid()
+    candidates: list[dict] = []
+    for pid in proc_numeric_pids():
+        if pid == current_pid:
+            continue
+        cwd = read_proc_cwd(pid)
+        if not cwd or os.path.realpath(cwd) != target:
+            continue
+        if not process_name_matches(pid):
+            continue
+        try:
+            pgid = os.getpgid(pid)
+        except OSError:
+            pgid = None
+        candidates.append(
+            {
+                "pid": pid,
+                "pgid": pgid,
+                "comm": read_proc_comm(pid),
+                "cwd": cwd,
+                "cmdline": read_proc_cmdline(pid),
+            }
+        )
+    candidates.sort(key=lambda item: (str(item["comm"]), int(item["pid"])))
+    return candidates
+
+
+def terminate_pid(pid: int, sig: signal.Signals) -> None:
+    try:
+        os.kill(pid, sig)
+    except ProcessLookupError:
+        return
+
+
+def wait_for_pids_exit(pids: list[int], timeout_sec: float) -> bool:
+    deadline = time.monotonic() + max(0.0, timeout_sec)
+    while True:
+        alive = [pid for pid in pids if pid_is_alive(pid)]
+        if not alive:
+            return True
+        if timeout_sec <= 0:
+            return False
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.5)
 
 
 def verify_local_ownership(state: dict) -> tuple[int, int]:
@@ -153,6 +254,62 @@ def terminate_local_run(state_path: Path, state: dict, reason: str, wait_sec: fl
     return 0
 
 
+def terminate_cwd_scan_run(
+    work_dir: Path,
+    reason: str,
+    wait_sec: float,
+    dry_run: bool,
+) -> int:
+    if not work_dir.exists() or not work_dir.is_dir():
+        raise RuntimeError(f"work directory does not exist: {work_dir}")
+    candidates = list_vasp_mpi_pids_by_exact_cwd(work_dir)
+    if not candidates:
+        raise RuntimeError(
+            "no vasp/mpirun processes with exact cwd found for "
+            f"{work_dir}; refusing to use name or command-line pattern matching"
+        )
+    print(f"Exact-cwd VASP/MPI process candidates for {work_dir}:")
+    for item in candidates:
+        cmdline = str(item["cmdline"])
+        print(
+            "  "
+            f"pid={item['pid']} pgid={item['pgid']} comm={item['comm']} "
+            f"cwd={item['cwd']} cmd={cmdline}"
+        )
+    if dry_run:
+        print("Dry run only; no processes were terminated.")
+        return 0
+    pids = [int(item["pid"]) for item in candidates]
+    print(f"Terminating {len(pids)} exact-cwd VASP/MPI process(es): reason={reason!r}")
+    for pid in pids:
+        terminate_pid(pid, signal.SIGTERM)
+    exited = wait_for_pids_exit(pids, wait_sec)
+    escalated = False
+    if not exited:
+        escalated = True
+        for pid in pids:
+            terminate_pid(pid, signal.SIGKILL)
+        exited = wait_for_pids_exit(pids, 5.0)
+    if not exited:
+        alive = [pid for pid in pids if pid_is_alive(pid)]
+        raise RuntimeError(f"some exact-cwd processes still appear alive: {alive}")
+    method = "SIGKILL" if escalated else "SIGTERM"
+    state_path = work_dir / STATE_FILE_NAME
+    state = {
+        "schema_version": 1,
+        "mode": "local-cwd-scan",
+        "workdir": str(work_dir),
+        "status": "terminated",
+        "ended_at": utc_now_iso(),
+        "termination_reason": reason,
+        "terminated_via": method,
+        "terminated_pids": pids,
+    }
+    write_state(state_path, state)
+    print(f"Termination complete: method={method} state_file={state_path}")
+    return 0
+
+
 def slurm_job_is_active(job_id: str) -> bool:
     if not job_id:
         return False
@@ -214,6 +371,19 @@ def main() -> int:
     parser.add_argument("--state-file", type=str, default="", help="Explicit state file path")
     parser.add_argument("--reason", type=str, default="terminated via terminate.py")
     parser.add_argument(
+        "--allow-cwd-scan",
+        action="store_true",
+        help=(
+            "Fallback for legacy hand-launched runs without .vasp_run_state.json: "
+            "only target vasp/mpirun processes whose /proc/<pid>/cwd exactly equals --work-dir"
+        ),
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show the exact processes that would be terminated, but do not send signals",
+    )
+    parser.add_argument(
         "--term-wait-sec",
         type=float,
         default=10.0,
@@ -222,8 +392,23 @@ def main() -> int:
     args = parser.parse_args()
 
     state_path = resolve_state_path(args.work_dir, args.state_file)
+    if args.dry_run and args.allow_cwd_scan:
+        work_dir = resolve_work_dir(args.work_dir, args.state_file)
+        if work_dir is None:
+            raise ValueError("--dry-run with --allow-cwd-scan requires --work-dir")
+        return terminate_cwd_scan_run(work_dir, args.reason, args.term_wait_sec, True)
+    if not state_path.exists() and args.allow_cwd_scan:
+        work_dir = resolve_work_dir(args.work_dir, args.state_file)
+        if work_dir is None:
+            raise ValueError("--allow-cwd-scan requires --work-dir when state file is absent")
+        return terminate_cwd_scan_run(work_dir, args.reason, args.term_wait_sec, False)
     state = load_state(state_path)
     mode = str(state.get("mode", "")).lower()
+    if args.dry_run:
+        print(f"State-backed run candidate: state_file={state_path}")
+        print(json.dumps(state, indent=2, ensure_ascii=False, sort_keys=True))
+        print("Dry run only; no processes were terminated.")
+        return 0
     if mode == "local":
         return terminate_local_run(state_path, state, args.reason, args.term_wait_sec)
     if mode == "slurm":

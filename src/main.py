@@ -250,6 +250,10 @@ LOCAL COMPUTE — BASH `run_in_background` (mandatory):
 
 PROCESS OWNERSHIP & TERMINATION SAFETY (CRITICAL):
 - You MUST treat process termination as a high-risk action. **Never** use broad kill commands such as `pkill`, `killall`, `pkill -f vasp_std`, `killall vasp_std`, or pattern-based `kill $(pgrep ...)` for VASP or MPI workloads.
+- When the user asks to stop/pause/cancel a VASP run, DO NOT hand-write any shell kill pipeline. Use the run_vasp termination entrypoint instead:
+  - State-backed run: `cd "{repo_root}" && python .claude/skills/run_vasp/scripts/terminate.py --work-dir "<exact_task_dir>" --reason "<reason>"`
+  - Legacy hand-launched run without `.vasp_run_state.json`: first inspect with `cd "{repo_root}" && python .claude/skills/run_vasp/scripts/terminate.py --work-dir "<exact_task_dir>" --allow-cwd-scan --dry-run`, then, only if every listed PID has `/proc/<pid>/cwd` exactly equal to the target task directory, run the same command without `--dry-run`.
+- `pkill -f` is especially forbidden: it can match the Bash/tool wrapper command line containing the pattern itself and terminate the message reader or agent process.
 - You MAY terminate a process **only if all of the following are true**:
   1. You launched that exact workload earlier in the same session/workflow; and
   2. You have concrete ownership evidence tying the running PID/job to the exact workspace/run directory or recorded task/job id you started; and

@@ -22,7 +22,9 @@ Recommended initial structures:
 - bridge upright
 - hcp upright
 
-Use C-down CO as the default adsorption anchor. For benchmark-aligned CO/fcc(111), "orientation" means the molecular-axis geometry (`upright`, `tilted_x`, `tilted_y`) and must not be interpreted as C-down vs O-down. O-down/reverse can be generated only when the user explicitly asks for end-group screening beyond the standard benchmark.
+Use C-down CO as the default adsorption anchor. In scripts, specify this with `--anchor-symbol C` or rely on the CO default in `build_adsorption.py`. For benchmark-aligned CO/fcc(111), "orientation" means the molecular-axis geometry (`upright`, `tilted_x`, `tilted_y`) and must not be interpreted as C-down vs O-down. O-down/reverse can be generated only when the user explicitly asks for end-group screening beyond the standard benchmark.
+
+For geometry optimizations, fix the same bottom slab layers in clean and adsorbed slabs, commonly the bottom 2 layers for a 4-layer p(2x2) slab.
 
 ## Common rutile oxide (110) sites and variants
 
