@@ -50,6 +50,10 @@ version: "1.0.2"
 ### 3. 进程所有权与终止安全 (Process Ownership & Safe Termination)
 
 - **默认禁止全局杀进程**：严禁使用 `pkill`、`killall`、`pkill -f vasp_std`、`killall vasp_std`、`kill $(pgrep ...)` 之类按名字/模式批量终止 VASP 或 MPI 进程的命令。
+- **强制使用终止入口**：用户要求停止/暂停/取消某个 VASP 任务时，不得临场手写 shell kill 管道。优先使用：
+  - 有状态文件：`cd "<repo_root>" && python .claude/skills/run_vasp/scripts/terminate.py --work-dir "<task_dir>" --reason "<reason>"`
+  - 旧的手写启动任务、没有 `.vasp_run_state.json`：先运行 `cd "<repo_root>" && python .claude/skills/run_vasp/scripts/terminate.py --work-dir "<task_dir>" --allow-cwd-scan --dry-run` 展示候选 PID；只有当输出中的每个 PID 都明确显示 `/proc/<pid>/cwd` 精确等于目标目录时，才允许去掉 `--dry-run` 执行终止。
+- **特别禁止 `pkill -f`**：它会匹配执行该命令的 shell/工具包装进程自身命令行，可能把消息读取器或 agent 进程一并杀掉，出现 `exit code -15` / `Fatal error in message reader`。
 - **只能处理自己启动的任务**：若需要停止任务，你必须先证明该 PID 或作业 ID 是你在当前工作流中亲自启动的那一个，证据应来自：
   - 你刚刚启动时记录的 `task_id`、作业 ID、日志路径或目录；
   - `ps` / `squeue` / `qstat` / 任务输出能明确对应到当前工作区或当前这批目录；

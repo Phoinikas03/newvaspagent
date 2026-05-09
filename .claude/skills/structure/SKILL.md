@@ -121,18 +121,21 @@ cd "<Repository root>" && python .claude/skills/structure/scripts/build_surface.
 ```bash
 cd "<Repository root>" && python .claude/skills/structure/scripts/build_adsorption.py \
   --element Pt --surface fcc111 --size 2 2 4 --vacuum 15 \
-  --adsorbate CO --site fcc --height 1.85 --orientation upright \
+  --adsorbate CO --anchor-symbol C --site fcc --height 1.85 --orientation upright \
+  --fix-bottom-layers 2 \
   --output POSCAR_Pt111_CO_fcc_upright
 ```
 
 支持位点依赖 ASE 表面 builder，常见包括 `ontop`、`bridge`、`fcc`、`hcp`。
 
-CO/fcc(111) 的 `--orientation` 指 **CO 分子轴相对于表面法向的几何取向**，不是 C-down/O-down 端基选择。脚本通过 ASE 先生成 CO，再以锚定原子为旋转中心得到：
+CO/fcc(111) 的 `--orientation` 指 **CO 分子轴相对于表面法向的几何取向**，不是 C-down/O-down 端基选择。脚本通过 ASE 先生成 CO，再以锚定原子为旋转中心得到。对 CO，脚本默认锚定 C 原子；也可用 `--anchor-symbol C` 显式指定：
 
 - `upright`：CO 垂直表面，默认 C 端为锚定原子；
 - `tilted_x`：CO 分子轴倾斜 45 degree，沿表面 x 方向分量；
 - `tilted_y`：CO 分子轴倾斜 45 degree，沿表面 y 方向分量；
 - `reverse`：端基反转，用于显式要求 O-down/C-down 对比时，通常不属于默认三取向。
+
+对 slab 吸附优化，建议同时传 `--fix-bottom-layers 2`，保持 clean slab 和 adsorbed slab 使用相同的底层固定约束。
 
 若用户要求“与 benchmark 对齐”或“测试 3 个 orientation”，必须生成 `upright`、`tilted_x`、`tilted_y`；不要把该请求解释成 C-down/O-down。
 
@@ -186,6 +189,7 @@ cd "<Repository root>" && python .claude/skills/structure/scripts/enumerate_adso
 - adsorbate anchor: C end down
 - initial height: ontop 1.85 A；bridge/fcc/hcp 1.85 A 起步
 - orientations: upright、tilted_x、tilted_y
+- fixed layers: 默认固定底部 2 层，并在 clean slab 与 adsorbed slab 中保持一致
 
 物理目标与吸附能公式不在本 skill 中计算；生成结构后交给 `adsorption_energy`。
 
@@ -216,6 +220,14 @@ cd "<Repository root>" && python .claude/skills/structure/scripts/enumerate_adso
 ```bash
 cd "<Repository root>" && python .claude/skills/structure/scripts/validate_structure.py \
   --input POSCAR
+```
+
+对 CO/金属 slab 吸附结构，额外检查 adsorbate-slab 最近距离：
+
+```bash
+cd "<Repository root>" && python .claude/skills/structure/scripts/validate_structure.py \
+  --input POSCAR --slab-elements Pt --adsorbate-elements C O \
+  --min-adsorbate-slab-distance 1.4
 ```
 
 吸附体系建议使用：

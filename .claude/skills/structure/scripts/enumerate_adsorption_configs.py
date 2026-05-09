@@ -30,6 +30,7 @@ def main():
     parser.add_argument("--height", type=float, default=1.85)
     parser.add_argument("--vacuum", type=float, default=15.0)
     parser.add_argument("--layers", type=int, default=4)
+    parser.add_argument("--fix-bottom-layers", type=int, default=2)
     args = parser.parse_args()
 
     base = Path(args.output_dir).resolve()
@@ -68,6 +69,8 @@ def main():
         str(args.layers),
         "--vacuum",
         str(args.vacuum),
+        "--fix-bottom-layers",
+        str(args.fix_bottom_layers),
         "--output",
         str(surface_dir / "POSCAR"),
     ])
@@ -90,12 +93,16 @@ def main():
             str(args.vacuum),
             "--adsorbate",
             "CO",
+            "--anchor-symbol",
+            "C",
             "--site",
             site,
             "--height",
             str(args.height),
             "--orientation",
             orientation,
+            "--fix-bottom-layers",
+            str(args.fix_bottom_layers),
             "--output",
             str(out_dir / "POSCAR"),
         ])

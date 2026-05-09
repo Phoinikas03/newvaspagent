@@ -109,6 +109,14 @@ cd "<repo_root>" && python .claude/skills/vasp_error/scripts/analyze_error.py --
 cd "<repo_root>" && python .claude/skills/run_vasp/scripts/terminate.py --work-dir "<task_dir>" --reason "<reason>"
 ```
 
+若这是旧的手写启动任务且没有 `.vasp_run_state.json`，必须先只做候选检查：
+
+```bash
+cd "<repo_root>" && python .claude/skills/run_vasp/scripts/terminate.py --work-dir "<task_dir>" --allow-cwd-scan --dry-run
+```
+
+只有当 dry-run 输出中的每个候选 PID 都显示 cwd 精确等于 `<task_dir>` 时，才允许在用户同意后去掉 `--dry-run` 执行。不要改用 `pkill -f` 或任何命令行模式匹配。
+
 条件：
 
 - 当前 run 的归属证据明确
@@ -126,7 +134,7 @@ cd "<repo_root>" && python .claude/skills/run_vasp/scripts/terminate.py --work-d
 
 ## 禁止事项
 
-- 不得用 `pkill`、`killall`、`pkill -f vasp_std` 之类模糊命令
+- 不得用 `pkill`、`killall`、`pkill -f vasp_std`、`pkill -f "vasp_gpu.*<dir>"` 之类模糊命令；`pkill -f` 可能误杀正在执行命令的 shell/消息读取进程
 - 不得在旧 run 可能仍活着时，向同一目录再补开一个新的 `mpirun`
 - 不得只看到 “fatal error” 就直接认定必须重算
 - 不得在未获用户同意时自动 terminate + rerun
