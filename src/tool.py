@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Dict, Any
 
 # ==========================================
-# 设置 VASP 输入文件 (POTCAR 智能回退增强版)
+# 设置 VASP 输入文件 (POTCAR 推荐赝势 + 智能回退)
 # ==========================================
 def _setup_vasp_inputs_sync(poscar_path: Path, incar_path: Path, work_dir: Path, kpoints_density: int) -> str:
     """(同步函数) 实际执行文件读写、Pymatgen 对象实例化及文件生成的阻塞任务"""
@@ -21,27 +21,40 @@ def _setup_vasp_inputs_sync(poscar_path: Path, incar_path: Path, work_dir: Path,
     # 2. K 点：若 INCAR 已含 KSPACING，则由 VASP 从 INCAR 生成网格，不写 KPOINTS 文件
     use_kspacing = incar.get("KSPACING") is not None
     
-    # 3. 自动生成 POTCAR (智能 Fallback 机制)
+    # 3. 自动生成 POTCAR (使用 pymatgen / Materials Project 推荐赝势)
     # 获取 POSCAR 中按顺序排列的元素种类
     species = [str(sp) for sp in structure.types_of_specie]
+
+    # pymatgen MPRelaxSet 推荐的 PBE 赝势变体：对过渡金属/碱金属/碱土/重元素等
+    # 推荐含半芯态的 _pv/_sv/_d (如 Ti_pv, Fe_pv, Mn_pv, Li_sv, Ba_sv, Sn_d)。
+    # 与参考数据 (专家/workflow) 保持一致，且能量参考零点可比。
+    try:
+        from pymatgen.io.vasp.sets import _load_yaml_config
+        recommended_map = _load_yaml_config("MPRelaxSet")["POTCAR"]
+    except Exception:
+        recommended_map = {}
+
     potcar_symbols = []
-    
     for sym in species:
         best_sym = None
-        # 按计算代价从低到高进行智能尝试 (标准 -> _pv -> _sv -> _d -> _h)
-        for suffix in ["", "_pv", "_sv", "_d", "_h"]:
+        # 优先采用推荐变体；若本地 POTCAR 库缺失，再按代价从低到高回退
+        trials = []
+        rec = recommended_map.get(sym)
+        if rec:
+            trials.append(rec)
+        trials += [f"{sym}{suffix}" for suffix in ["", "_pv", "_sv", "_d", "_h"]]
+        for test_sym in dict.fromkeys(trials):  # 去重并保持顺序
             try:
-                test_sym = f"{sym}{suffix}"
                 # 尝试读取该符号对应的 POTCAR
                 PotcarSingle.from_symbol_and_functional(test_sym, "PBE")
                 best_sym = test_sym
-                break # 找到最轻量且存在的一个，直接跳出
+                break
             except Exception:
                 continue
-                
+
         if not best_sym:
-            raise ValueError(f"Cannot find any PBE POTCAR for element '{sym}' (tried '', '_pv', '_sv', etc.). Please check PMG_VASP_PSP_DIR.")
-            
+            raise ValueError(f"Cannot find any PBE POTCAR for element '{sym}' (tried recommended '{rec}' then '', '_pv', '_sv', etc.). Please check PMG_VASP_PSP_DIR.")
+
         potcar_symbols.append(best_sym)
         
     potcar = Potcar(symbols=potcar_symbols, functional="PBE")

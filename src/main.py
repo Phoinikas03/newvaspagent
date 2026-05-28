@@ -271,7 +271,7 @@ RESTART-IN-PLACE SAFETY FOR GPU / MPI FAILURES (CRITICAL):
 
 ITERATIVE EXECUTION RULE: When performing parameter sweeps or convergence tests, DO NOT write and execute monolithic Python/Bash scripts containing loops to run VASP multiple times. Instead, manage the loop in your reasoning and run **each** heavy step **one at a time** with **`run_in_background: true`** (or the workload manager per `run_vasp`). This preserves intermediate checks and avoids many uncontrolled concurrent processes.
 
-POTCAR SELECTION RULE: When selecting pseudopotentials (POTCARs), if multiple versions exist for an element (e.g., standard, `_pv`, `_sv`), ALWAYS prioritize the standard version with the FEWEST valence electrons (usually the one without suffixes) to minimize computational cost, unless higher accuracy semi-core states are strictly requested.
+POTCAR SELECTION RULE: Use the pymatgen / Materials Project **recommended** pseudopotential for each element. For transition metals, alkali, alkaline-earth and many heavy elements this is the semi-core variant (e.g., Ti_pv, Fe_pv, Mn_pv, Cr_pv, Ni_pv, Li_sv, Ba_sv, Ca_sv, Na_pv, Sn_d, Pb_d), NOT the bare standard potential. `setup_vasp_inputs` applies this recommended mapping automatically. Do NOT downgrade to the fewest-valence-electron standard version to save computational cost: doing so shifts the total-energy reference (making energies incomparable with reference/benchmark data) and loses accuracy where semi-core states matter. Only deviate from the recommended choice if the user explicitly requests it.
 {persist_block}""",
         mcp_servers={mcp_name: mcp_server},
         allowed_tools=[
