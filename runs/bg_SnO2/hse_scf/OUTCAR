@@ -1,0 +1,2925 @@
+ vasp.6.4.2 20Jul23 (build Mar  2 2025 11:04:54) complex                         
+ executed on              LinuxNV date 2026.06.25  23:47:44
+ running    8 mpi-ranks, with    2 threads/rank, on    1 nodes
+ distrk:  each k-point on    1 cores,    8 groups
+ distr:  one band on NCORE=   1 cores,    1 groups
+ OpenACC runtime initialized ...    8 GPUs detected
+
+
+--------------------------------------------------------------------------------------------------------
+
+
+ INCAR:
+   AEXX = 0.25
+   ALGO = All
+   EDIFF = 1e-06
+   ENCUT = 520.0
+   HFSCREEN = 0.2
+   ICHARG = 1
+   ISMEAR = 0
+   ISTART = 1
+   KGAMMA = True
+   KPAR = 8
+   KSPACING = 0.3
+   LCHARG = False
+   LHFCALC = True
+   LWAVE = False
+   NELM = 200
+   PREC = Accurate
+   SIGMA = 0.05
+   SYSTEM = SnO2 HSE06 SCF
+   TIME = 0.4
+
+ POTCAR:    PAW_PBE Sn_d 06Sep2000                
+ POTCAR:    PAW_PBE O 08Apr2002                   
+ POTCAR:    PAW_PBE Sn_d 06Sep2000                
+   SHA256 =  385b269c1887fa92a2bd1b595c4ea1490c7eb92f9f3d87257729a4a813cde741 Sn_d/POTCAR           
+   COPYR  = (c) Copyright 06Sep2000 Georg Kresse                                                    
+   COPYR  = This file is part of the software VASP. Any use, copying, and all other rights are regul
+   COPYR  = If you do not have a valid VASP license, you may not use, copy or distribute this file. 
+   VRHFIN =Sn: s2p2                                                                                 
+   LEXCH  = PE                                                                                      
+   EATOM  =  1893.1092 eV,  139.1396 Ry                                                             
+                                                                                                    
+   TITEL  = PAW_PBE Sn_d 06Sep2000                                                                  
+   LULTRA =        F    use ultrasoft PP ?                                                          
+   IUNSCR =        1    unscreen: 0-lin 1-nonlin 2-no                                               
+   RPACOR =    2.300    partial core radius                                                         
+   POMASS =  118.710; ZVAL   =   14.000    mass and valenz                                          
+   RCORE  =    2.500    outmost cutoff radius                                                       
+   RWIGS  =    2.960; RWIGS  =    1.566    wigner-seitz radius (au A)                               
+   ENMAX  =  241.083; ENMIN  =  180.812 eV                                                          
+   ICORE  =        3    local potential                                                             
+   LCOR   =        T    correct aug charges                                                         
+   LPAW   =        T    paw PP                                                                      
+   EAUG   =  439.825                                                                                
+   DEXC   =    0.000                                                                                
+   RMAX   =    2.560    core radius for proj-oper                                                   
+   RAUG   =    1.300    factor for augmentation sphere                                              
+   RDEP   =    2.659    radius for radial grids                                                     
+   RDEPT  =    2.046    core radius for aug-charge                                                  
+                                                                                                    
+   Atomic configuration                                                                             
+   12 entries                                                                                       
+     n  l   j            E        occ.                                                              
+     1  0  0.50    -29007.2859   2.0000                                                             
+     2  0  0.50     -4378.8056   2.0000                                                             
+     2  1  1.50     -3930.4293   6.0000                                                             
+     3  0  0.50      -845.0264   2.0000                                                             
+     3  1  1.50      -698.5725   6.0000                                                             
+     3  2  2.50      -473.2839  10.0000                                                             
+     4  0  0.50      -133.9036   2.0000                                                             
+     4  1  1.50       -89.6752   6.0000                                                             
+     4  2  2.50       -25.8375  10.0000                                                             
+     5  0  0.50       -10.5484   2.0000                                                             
+     5  1  0.50        -3.6940   2.0000                                                             
+     4  3  2.50        -2.7416   0.0000                                                             
+   Description                                                                                      
+     l       E           TYP  RCUT    TYP  RCUT                                                     
+     2    -25.8374624     23  2.500                                                                 
+     2     -5.4423304     23  2.500                                                                 
+     0    -10.5483727     23  2.500                                                                 
+     0     13.6058260     23  2.500                                                                 
+     1     -3.6939829     23  2.500                                                                 
+     1      1.9821976     23  2.500                                                                 
+     3     -1.3605826      7  2.500                                                                 
+  local pseudopotential read in
+  partial core-charges read in
+  partial kinetic energy density read in
+  atomic valenz-charges read in
+  non local Contribution for L=            2  read in
+    real space projection operators read in
+  non local Contribution for L=            2  read in
+    real space projection operators read in
+  non local Contribution for L=            0  read in
+    real space projection operators read in
+  non local Contribution for L=            0  read in
+    real space projection operators read in
+  non local Contribution for L=            1  read in
+    real space projection operators read in
+  non local Contribution for L=            1  read in
+    real space projection operators read in
+    PAW grid and wavefunctions read in
+ 
+   number of l-projection  operators is LMAX  =            6
+   number of lm-projection operators is LMMAX =           18
+ 
+ POTCAR:    PAW_PBE O 08Apr2002                   
+   SHA256 =  818f92134a0a090dccd8ba1447fa70422a3b330e708bb4f08108d8ae51209ddf O/POTCAR              
+   COPYR  = (c) Copyright 08Apr2002 Georg Kresse                                                    
+   COPYR  = This file is part of the software VASP. Any use, copying, and all other rights are regul
+   COPYR  = If you do not have a valid VASP license, you may not use, copy or distribute this file. 
+   VRHFIN =O: s2p4                                                                                  
+   LEXCH  = PE                                                                                      
+   EATOM  =   432.3788 eV,   31.7789 Ry                                                             
+                                                                                                    
+   TITEL  = PAW_PBE O 08Apr2002                                                                     
+   LULTRA =        F    use ultrasoft PP ?                                                          
+   IUNSCR =        1    unscreen: 0-lin 1-nonlin 2-no                                               
+   RPACOR =    1.200    partial core radius                                                         
+   POMASS =   16.000; ZVAL   =    6.000    mass and valenz                                          
+   RCORE  =    1.520    outmost cutoff radius                                                       
+   RWIGS  =    1.550; RWIGS  =    0.820    wigner-seitz radius (au A)                               
+   ENMAX  =  400.000; ENMIN  =  300.000 eV                                                          
+   ICORE  =        2    local potential                                                             
+   LCOR   =        T    correct aug charges                                                         
+   LPAW   =        T    paw PP                                                                      
+   EAUG   =  605.392                                                                                
+   DEXC   =    0.000                                                                                
+   RMAX   =    1.553    core radius for proj-oper                                                   
+   RAUG   =    1.300    factor for augmentation sphere                                              
+   RDEP   =    1.550    radius for radial grids                                                     
+   RDEPT  =    1.329    core radius for aug-charge                                                  
+                                                                                                    
+   Atomic configuration                                                                             
+    4 entries                                                                                       
+     n  l   j            E        occ.                                                              
+     1  0  0.50      -514.6923   2.0000                                                             
+     2  0  0.50       -23.9615   2.0000                                                             
+     2  1  0.50        -9.0305   4.0000                                                             
+     3  2  1.50        -9.5241   0.0000                                                             
+   Description                                                                                      
+     l       E           TYP  RCUT    TYP  RCUT                                                     
+     0    -23.9615318     23  1.200                                                                 
+     0     -9.5240782     23  1.200                                                                 
+     1     -9.0304911     23  1.520                                                                 
+     1      8.1634956     23  1.520                                                                 
+     2     -9.5240782      7  1.500                                                                 
+  local pseudopotential read in
+  partial core-charges read in
+  partial kinetic energy density read in
+  kinetic energy density of atom read in
+  atomic valenz-charges read in
+  non local Contribution for L=            0  read in
+    real space projection operators read in
+  non local Contribution for L=            0  read in
+    real space projection operators read in
+  non local Contribution for L=            1  read in
+    real space projection operators read in
+  non local Contribution for L=            1  read in
+    real space projection operators read in
+    PAW grid and wavefunctions read in
+ 
+   number of l-projection  operators is LMAX  =            4
+   number of lm-projection operators is LMMAX =            8
+ 
+  PAW_PBE Sn_d 06Sep2000                :
+ energy of atom  1       EATOM=-1893.1092
+ kinetic energy error for atom=    0.0026 (will be added to EATOM!!)
+  PAW_PBE O 08Apr2002                   :
+ energy of atom  2       EATOM= -432.3788
+ kinetic energy error for atom=    0.0208 (will be added to EATOM!!)
+ 
+ 
+ POSCAR: Sn2 O4
+  positions in direct lattice
+  No initial velocities read in
+ exchange correlation table for  LEXCH =        8
+   RHO(1)=    0.500       N(1)  =     2000
+   RHO(2)=  100.500       N(2)  =     4000
+ 
+
+
+--------------------------------------------------------------------------------------------------------
+
+
+ ion  position               nearest neighbor table
+   1  0.500  0.500  0.500-   3 2.06   4 2.06   5 2.07   6 2.07   5 2.07   6 2.07   2 3.73   2 3.73
+                             2 3.73   2 3.73   2 3.73   2 3.73   2 3.73   2 3.73
+   2  0.000  0.000  0.000-   5 2.06   6 2.06   3 2.07   4 2.07   3 2.07   4 2.07   1 3.73   1 3.73
+                             1 3.73   1 3.73   1 3.73   1 3.73   1 3.73   1 3.73
+   3  0.500  0.194  0.806-   1 2.06   2 2.07   2 2.07
+   4  0.500  0.806  0.194-   1 2.06   2 2.07   2 2.07
+   5  0.000  0.306  0.306-   2 2.06   1 2.07   1 2.07
+   6  0.000  0.694  0.694-   2 2.06   1 2.07   1 2.07
+ 
+  LATTYP: Found a simple orthorhombic cell.
+ ALAT       =     3.2074997700
+ B/A-ratio  =     1.4852178929
+ C/A-ratio  =     1.4858302048
+  
+  Lattice vectors:
+  
+ A1 = (   3.2074997700,   0.0000000000,   0.0000000000)
+ A2 = (   0.0000000000,   4.7638360500,  -0.0000000000)
+ A3 = (   0.0000000000,  -0.0000000000,   4.7658000400)
+
+
+Analysis of symmetry for initial positions (statically):
+=====================================================================
+ Subroutine PRICEL returns:
+ Original cell was already a primitive cell.
+ 
+
+ Routine SETGRP: Setting up the symmetry group for a 
+ simple orthorhombic supercell.
+
+
+ Subroutine GETGRP returns: Found  8 space group operations
+ (whereof  4 operations were pure point group operations)
+ out of a pool of  8 trial point group operations.
+
+
+The static configuration has the point symmetry C_2h.
+ The point group associated with its full space group is D_2h.
+
+
+Analysis of symmetry for dynamics (positions and initial velocities):
+=====================================================================
+ Subroutine PRICEL returns:
+ Original cell was already a primitive cell.
+ 
+
+ Routine SETGRP: Setting up the symmetry group for a 
+ simple orthorhombic supercell.
+
+
+ Subroutine GETGRP returns: Found  8 space group operations
+ (whereof  4 operations were pure point group operations)
+ out of a pool of  8 trial point group operations.
+
+
+The dynamic configuration has the point symmetry C_2h.
+ The point group associated with its full space group is D_2h.
+
+
+ Subroutine INISYM returns: Found  8 space group operations
+ (whereof  4 operations are pure point group operations),
+ and found     1 'primitive' translations
+
+
+----------------------------------------------------------------------------------------
+
+                                     Primitive cell                                     
+
+  volume of cell :      72.8214
+
+  direct lattice vectors                    reciprocal lattice vectors
+     3.207499770  0.000000000  0.000000000     0.311769313 -0.000000000 -0.000000000
+     0.000000000  4.763836050 -0.000000000    -0.000000000  0.209914865  0.000000000
+     0.000000000 -0.000000000  4.765800040    -0.000000000  0.000000000  0.209828359
+
+  length of vectors
+     3.207499770  4.763836050  4.765800040     0.311769313  0.209914865  0.209828359
+
+  position of ions in fractional coordinates (direct lattice)
+     0.500000000  0.500000000  0.500000000
+     0.000000000  0.000000000  0.000000000
+     0.500000000  0.194216150  0.806160740
+     0.500000000  0.805783850  0.193839260
+     0.000000000  0.305783850  0.306160740
+     0.000000000  0.694216150  0.693839260
+
+  ion indices of the primitive-cell ions
+   primitive index   ion index
+                 1           1
+                 2           2
+                 3           3
+                 4           4
+                 5           5
+                 6           6
+
+----------------------------------------------------------------------------------------
+
+ 
+ -----------------------------------------------------------------------------
+|                                                                             |
+|           W    W    AA    RRRRR   N    N  II  N    N   GGGG   !!!           |
+|           W    W   A  A   R    R  NN   N  II  NN   N  G    G  !!!           |
+|           W    W  A    A  R    R  N N  N  II  N N  N  G       !!!           |
+|           W WW W  AAAAAA  RRRRR   N  N N  II  N  N N  G  GGG   !            |
+|           WW  WW  A    A  R   R   N   NN  II  N   NN  G    G                |
+|           W    W  A    A  R    R  N    N  II  N    N   GGGG   !!!           |
+|                                                                             |
+|     The requested file  could not be found or opened for reading            |
+|     k-point information. Automatic k-point generation is used as a          |
+|     fallback, which may lead to unwanted results.                           |
+|                                                                             |
+ -----------------------------------------------------------------------------
+
+ 
+
+Automatic generation of k-mesh.
+ Grid dimensions derived from KSPACING:
+ generate k-points for:    7    5    5
+
+ Generating k-lattice:
+
+  Cartesian coordinates                     Fractional coordinates (reciprocal lattice)
+     0.044538473 -0.000000000 -0.000000000     0.142857143  0.000000000  0.000000000
+    -0.000000000  0.041982973  0.000000000     0.000000000  0.200000000  0.000000000
+    -0.000000000  0.000000000  0.041965672     0.000000000  0.000000000  0.200000000
+
+  Length of vectors
+     0.044538473  0.041982973  0.041965672
+
+  Shift w.r.t. Gamma in fractional coordinates (k-lattice)
+     0.000000000  0.000000000  0.000000000
+
+ 
+ Subroutine IBZKPT returns following result:
+ ===========================================
+ 
+ Found     36 irreducible k-points:
+ 
+ Following reciprocal coordinates:
+            Coordinates               Weight
+  0.000000  0.000000  0.000000      1.000000
+  0.142857  0.000000  0.000000      2.000000
+  0.285714  0.000000  0.000000      2.000000
+  0.428571  0.000000  0.000000      2.000000
+  0.000000  0.200000  0.000000      2.000000
+  0.142857  0.200000  0.000000      4.000000
+  0.285714  0.200000  0.000000      4.000000
+  0.428571  0.200000  0.000000      4.000000
+  0.000000  0.400000  0.000000      2.000000
+  0.142857  0.400000  0.000000      4.000000
+  0.285714  0.400000  0.000000      4.000000
+  0.428571  0.400000  0.000000      4.000000
+  0.000000  0.000000  0.200000      2.000000
+  0.142857  0.000000  0.200000      4.000000
+  0.285714  0.000000  0.200000      4.000000
+  0.428571  0.000000  0.200000      4.000000
+  0.000000  0.200000  0.200000      4.000000
+  0.142857  0.200000  0.200000      8.000000
+  0.285714  0.200000  0.200000      8.000000
+  0.428571  0.200000  0.200000      8.000000
+  0.000000  0.400000  0.200000      4.000000
+  0.142857  0.400000  0.200000      8.000000
+  0.285714  0.400000  0.200000      8.000000
+  0.428571  0.400000  0.200000      8.000000
+  0.000000  0.000000  0.400000      2.000000
+  0.142857  0.000000  0.400000      4.000000
+  0.285714  0.000000  0.400000      4.000000
+  0.428571  0.000000  0.400000      4.000000
+  0.000000  0.200000  0.400000      4.000000
+  0.142857  0.200000  0.400000      8.000000
+  0.285714  0.200000  0.400000      8.000000
+  0.428571  0.200000  0.400000      8.000000
+  0.000000  0.400000  0.400000      4.000000
+  0.142857  0.400000  0.400000      8.000000
+  0.285714  0.400000  0.400000      8.000000
+  0.428571  0.400000  0.400000      8.000000
+ 
+ Following cartesian coordinates:
+            Coordinates               Weight
+  0.000000  0.000000  0.000000      1.000000
+  0.044538  0.000000  0.000000      2.000000
+  0.089077  0.000000  0.000000      2.000000
+  0.133615  0.000000  0.000000      2.000000
+  0.000000  0.041983  0.000000      2.000000
+  0.044538  0.041983  0.000000      4.000000
+  0.089077  0.041983  0.000000      4.000000
+  0.133615  0.041983  0.000000      4.000000
+  0.000000  0.083966  0.000000      2.000000
+  0.044538  0.083966  0.000000      4.000000
+  0.089077  0.083966  0.000000      4.000000
+  0.133615  0.083966  0.000000      4.000000
+  0.000000  0.000000  0.041966      2.000000
+  0.044538  0.000000  0.041966      4.000000
+  0.089077  0.000000  0.041966      4.000000
+  0.133615  0.000000  0.041966      4.000000
+  0.000000  0.041983  0.041966      4.000000
+  0.044538  0.041983  0.041966      8.000000
+  0.089077  0.041983  0.041966      8.000000
+  0.133615  0.041983  0.041966      8.000000
+  0.000000  0.083966  0.041966      4.000000
+  0.044538  0.083966  0.041966      8.000000
+  0.089077  0.083966  0.041966      8.000000
+  0.133615  0.083966  0.041966      8.000000
+  0.000000  0.000000  0.083931      2.000000
+  0.044538  0.000000  0.083931      4.000000
+  0.089077  0.000000  0.083931      4.000000
+  0.133615  0.000000  0.083931      4.000000
+  0.000000  0.041983  0.083931      4.000000
+  0.044538  0.041983  0.083931      8.000000
+  0.089077  0.041983  0.083931      8.000000
+  0.133615  0.041983  0.083931      8.000000
+  0.000000  0.083966  0.083931      4.000000
+  0.044538  0.083966  0.083931      8.000000
+  0.089077  0.083966  0.083931      8.000000
+  0.133615  0.083966  0.083931      8.000000
+ 
+ 
+ Subroutine IBZKPT_HF returns following result:
+ ==============================================
+ 
+ Found    175 k-points in 1st BZ
+ the following    175 k-points will be used (e.g. in the exchange kernel)
+ Following reciprocal coordinates:   # in IRBZ
+  0.000000  0.000000  0.000000    0.00571429   1 t-inv F
+  0.142857  0.000000  0.000000    0.00571429   2 t-inv F
+  0.285714  0.000000  0.000000    0.00571429   3 t-inv F
+  0.428571  0.000000  0.000000    0.00571429   4 t-inv F
+  0.000000  0.200000  0.000000    0.00571429   5 t-inv F
+  0.142857  0.200000  0.000000    0.00571429   6 t-inv F
+  0.285714  0.200000  0.000000    0.00571429   7 t-inv F
+  0.428571  0.200000  0.000000    0.00571429   8 t-inv F
+  0.000000  0.400000  0.000000    0.00571429   9 t-inv F
+  0.142857  0.400000  0.000000    0.00571429  10 t-inv F
+  0.285714  0.400000  0.000000    0.00571429  11 t-inv F
+  0.428571  0.400000  0.000000    0.00571429  12 t-inv F
+  0.000000  0.000000  0.200000    0.00571429  13 t-inv F
+  0.142857  0.000000  0.200000    0.00571429  14 t-inv F
+  0.285714  0.000000  0.200000    0.00571429  15 t-inv F
+  0.428571  0.000000  0.200000    0.00571429  16 t-inv F
+  0.000000  0.200000  0.200000    0.00571429  17 t-inv F
+  0.142857  0.200000  0.200000    0.00571429  18 t-inv F
+  0.285714  0.200000  0.200000    0.00571429  19 t-inv F
+  0.428571  0.200000  0.200000    0.00571429  20 t-inv F
+  0.000000  0.400000  0.200000    0.00571429  21 t-inv F
+  0.142857  0.400000  0.200000    0.00571429  22 t-inv F
+  0.285714  0.400000  0.200000    0.00571429  23 t-inv F
+  0.428571  0.400000  0.200000    0.00571429  24 t-inv F
+  0.000000  0.000000  0.400000    0.00571429  25 t-inv F
+  0.142857  0.000000  0.400000    0.00571429  26 t-inv F
+  0.285714  0.000000  0.400000    0.00571429  27 t-inv F
+  0.428571  0.000000  0.400000    0.00571429  28 t-inv F
+  0.000000  0.200000  0.400000    0.00571429  29 t-inv F
+  0.142857  0.200000  0.400000    0.00571429  30 t-inv F
+  0.285714  0.200000  0.400000    0.00571429  31 t-inv F
+  0.428571  0.200000  0.400000    0.00571429  32 t-inv F
+  0.000000  0.400000  0.400000    0.00571429  33 t-inv F
+  0.142857  0.400000  0.400000    0.00571429  34 t-inv F
+  0.285714  0.400000  0.400000    0.00571429  35 t-inv F
+  0.428571  0.400000  0.400000    0.00571429  36 t-inv F
+ -0.142857 -0.000000 -0.000000    0.00571429   2 t-inv F
+ -0.285714 -0.000000 -0.000000    0.00571429   3 t-inv F
+ -0.428571 -0.000000 -0.000000    0.00571429   4 t-inv F
+ -0.000000 -0.200000 -0.000000    0.00571429   5 t-inv F
+ -0.142857 -0.200000 -0.000000    0.00571429   6 t-inv F
+  0.142857 -0.200000 -0.000000    0.00571429   6 t-inv F
+ -0.142857  0.200000  0.000000    0.00571429   6 t-inv F
+ -0.285714 -0.200000 -0.000000    0.00571429   7 t-inv F
+  0.285714 -0.200000 -0.000000    0.00571429   7 t-inv F
+ -0.285714  0.200000  0.000000    0.00571429   7 t-inv F
+ -0.428571 -0.200000 -0.000000    0.00571429   8 t-inv F
+  0.428571 -0.200000 -0.000000    0.00571429   8 t-inv F
+ -0.428571  0.200000  0.000000    0.00571429   8 t-inv F
+ -0.000000 -0.400000 -0.000000    0.00571429   9 t-inv F
+ -0.142857 -0.400000 -0.000000    0.00571429  10 t-inv F
+  0.142857 -0.400000 -0.000000    0.00571429  10 t-inv F
+ -0.142857  0.400000  0.000000    0.00571429  10 t-inv F
+ -0.285714 -0.400000 -0.000000    0.00571429  11 t-inv F
+  0.285714 -0.400000 -0.000000    0.00571429  11 t-inv F
+ -0.285714  0.400000  0.000000    0.00571429  11 t-inv F
+ -0.428571 -0.400000 -0.000000    0.00571429  12 t-inv F
+  0.428571 -0.400000 -0.000000    0.00571429  12 t-inv F
+ -0.428571  0.400000  0.000000    0.00571429  12 t-inv F
+ -0.000000 -0.000000 -0.200000    0.00571429  13 t-inv F
+ -0.142857 -0.000000 -0.200000    0.00571429  14 t-inv F
+  0.142857 -0.000000 -0.200000    0.00571429  14 t-inv F
+ -0.142857  0.000000  0.200000    0.00571429  14 t-inv F
+ -0.285714 -0.000000 -0.200000    0.00571429  15 t-inv F
+  0.285714 -0.000000 -0.200000    0.00571429  15 t-inv F
+ -0.285714  0.000000  0.200000    0.00571429  15 t-inv F
+ -0.428571 -0.000000 -0.200000    0.00571429  16 t-inv F
+  0.428571 -0.000000 -0.200000    0.00571429  16 t-inv F
+ -0.428571  0.000000  0.200000    0.00571429  16 t-inv F
+ -0.000000 -0.200000 -0.200000    0.00571429  17 t-inv F
+ -0.000000 -0.200000  0.200000    0.00571429  17 t-inv F
+  0.000000  0.200000 -0.200000    0.00571429  17 t-inv F
+ -0.142857 -0.200000 -0.200000    0.00571429  18 t-inv F
+  0.142857 -0.200000 -0.200000    0.00571429  18 t-inv F
+ -0.142857  0.200000  0.200000    0.00571429  18 t-inv F
+ -0.142857 -0.200000  0.200000    0.00571429  18 t-inv F
+  0.142857  0.200000 -0.200000    0.00571429  18 t-inv F
+ -0.142857  0.200000 -0.200000    0.00571429  18 t-inv F
+  0.142857 -0.200000  0.200000    0.00571429  18 t-inv F
+ -0.285714 -0.200000 -0.200000    0.00571429  19 t-inv F
+  0.285714 -0.200000 -0.200000    0.00571429  19 t-inv F
+ -0.285714  0.200000  0.200000    0.00571429  19 t-inv F
+ -0.285714 -0.200000  0.200000    0.00571429  19 t-inv F
+  0.285714  0.200000 -0.200000    0.00571429  19 t-inv F
+ -0.285714  0.200000 -0.200000    0.00571429  19 t-inv F
+  0.285714 -0.200000  0.200000    0.00571429  19 t-inv F
+ -0.428571 -0.200000 -0.200000    0.00571429  20 t-inv F
+  0.428571 -0.200000 -0.200000    0.00571429  20 t-inv F
+ -0.428571  0.200000  0.200000    0.00571429  20 t-inv F
+ -0.428571 -0.200000  0.200000    0.00571429  20 t-inv F
+  0.428571  0.200000 -0.200000    0.00571429  20 t-inv F
+ -0.428571  0.200000 -0.200000    0.00571429  20 t-inv F
+  0.428571 -0.200000  0.200000    0.00571429  20 t-inv F
+ -0.000000 -0.400000 -0.200000    0.00571429  21 t-inv F
+ -0.000000 -0.400000  0.200000    0.00571429  21 t-inv F
+  0.000000  0.400000 -0.200000    0.00571429  21 t-inv F
+ -0.142857 -0.400000 -0.200000    0.00571429  22 t-inv F
+  0.142857 -0.400000 -0.200000    0.00571429  22 t-inv F
+ -0.142857  0.400000  0.200000    0.00571429  22 t-inv F
+ -0.142857 -0.400000  0.200000    0.00571429  22 t-inv F
+  0.142857  0.400000 -0.200000    0.00571429  22 t-inv F
+ -0.142857  0.400000 -0.200000    0.00571429  22 t-inv F
+  0.142857 -0.400000  0.200000    0.00571429  22 t-inv F
+ -0.285714 -0.400000 -0.200000    0.00571429  23 t-inv F
+  0.285714 -0.400000 -0.200000    0.00571429  23 t-inv F
+ -0.285714  0.400000  0.200000    0.00571429  23 t-inv F
+ -0.285714 -0.400000  0.200000    0.00571429  23 t-inv F
+  0.285714  0.400000 -0.200000    0.00571429  23 t-inv F
+ -0.285714  0.400000 -0.200000    0.00571429  23 t-inv F
+  0.285714 -0.400000  0.200000    0.00571429  23 t-inv F
+ -0.428571 -0.400000 -0.200000    0.00571429  24 t-inv F
+  0.428571 -0.400000 -0.200000    0.00571429  24 t-inv F
+ -0.428571  0.400000  0.200000    0.00571429  24 t-inv F
+ -0.428571 -0.400000  0.200000    0.00571429  24 t-inv F
+  0.428571  0.400000 -0.200000    0.00571429  24 t-inv F
+ -0.428571  0.400000 -0.200000    0.00571429  24 t-inv F
+  0.428571 -0.400000  0.200000    0.00571429  24 t-inv F
+ -0.000000 -0.000000 -0.400000    0.00571429  25 t-inv F
+ -0.142857 -0.000000 -0.400000    0.00571429  26 t-inv F
+  0.142857 -0.000000 -0.400000    0.00571429  26 t-inv F
+ -0.142857  0.000000  0.400000    0.00571429  26 t-inv F
+ -0.285714 -0.000000 -0.400000    0.00571429  27 t-inv F
+  0.285714 -0.000000 -0.400000    0.00571429  27 t-inv F
+ -0.285714  0.000000  0.400000    0.00571429  27 t-inv F
+ -0.428571 -0.000000 -0.400000    0.00571429  28 t-inv F
+  0.428571 -0.000000 -0.400000    0.00571429  28 t-inv F
+ -0.428571  0.000000  0.400000    0.00571429  28 t-inv F
+ -0.000000 -0.200000 -0.400000    0.00571429  29 t-inv F
+ -0.000000 -0.200000  0.400000    0.00571429  29 t-inv F
+  0.000000  0.200000 -0.400000    0.00571429  29 t-inv F
+ -0.142857 -0.200000 -0.400000    0.00571429  30 t-inv F
+  0.142857 -0.200000 -0.400000    0.00571429  30 t-inv F
+ -0.142857  0.200000  0.400000    0.00571429  30 t-inv F
+ -0.142857 -0.200000  0.400000    0.00571429  30 t-inv F
+  0.142857  0.200000 -0.400000    0.00571429  30 t-inv F
+ -0.142857  0.200000 -0.400000    0.00571429  30 t-inv F
+  0.142857 -0.200000  0.400000    0.00571429  30 t-inv F
+ -0.285714 -0.200000 -0.400000    0.00571429  31 t-inv F
+  0.285714 -0.200000 -0.400000    0.00571429  31 t-inv F
+ -0.285714  0.200000  0.400000    0.00571429  31 t-inv F
+ -0.285714 -0.200000  0.400000    0.00571429  31 t-inv F
+  0.285714  0.200000 -0.400000    0.00571429  31 t-inv F
+ -0.285714  0.200000 -0.400000    0.00571429  31 t-inv F
+  0.285714 -0.200000  0.400000    0.00571429  31 t-inv F
+ -0.428571 -0.200000 -0.400000    0.00571429  32 t-inv F
+  0.428571 -0.200000 -0.400000    0.00571429  32 t-inv F
+ -0.428571  0.200000  0.400000    0.00571429  32 t-inv F
+ -0.428571 -0.200000  0.400000    0.00571429  32 t-inv F
+  0.428571  0.200000 -0.400000    0.00571429  32 t-inv F
+ -0.428571  0.200000 -0.400000    0.00571429  32 t-inv F
+  0.428571 -0.200000  0.400000    0.00571429  32 t-inv F
+ -0.000000 -0.400000 -0.400000    0.00571429  33 t-inv F
+ -0.000000 -0.400000  0.400000    0.00571429  33 t-inv F
+  0.000000  0.400000 -0.400000    0.00571429  33 t-inv F
+ -0.142857 -0.400000 -0.400000    0.00571429  34 t-inv F
+  0.142857 -0.400000 -0.400000    0.00571429  34 t-inv F
+ -0.142857  0.400000  0.400000    0.00571429  34 t-inv F
+ -0.142857 -0.400000  0.400000    0.00571429  34 t-inv F
+  0.142857  0.400000 -0.400000    0.00571429  34 t-inv F
+ -0.142857  0.400000 -0.400000    0.00571429  34 t-inv F
+  0.142857 -0.400000  0.400000    0.00571429  34 t-inv F
+ -0.285714 -0.400000 -0.400000    0.00571429  35 t-inv F
+  0.285714 -0.400000 -0.400000    0.00571429  35 t-inv F
+ -0.285714  0.400000  0.400000    0.00571429  35 t-inv F
+ -0.285714 -0.400000  0.400000    0.00571429  35 t-inv F
+  0.285714  0.400000 -0.400000    0.00571429  35 t-inv F
+ -0.285714  0.400000 -0.400000    0.00571429  35 t-inv F
+  0.285714 -0.400000  0.400000    0.00571429  35 t-inv F
+ -0.428571 -0.400000 -0.400000    0.00571429  36 t-inv F
+  0.428571 -0.400000 -0.400000    0.00571429  36 t-inv F
+ -0.428571  0.400000  0.400000    0.00571429  36 t-inv F
+ -0.428571 -0.400000  0.400000    0.00571429  36 t-inv F
+  0.428571  0.400000 -0.400000    0.00571429  36 t-inv F
+ -0.428571  0.400000 -0.400000    0.00571429  36 t-inv F
+  0.428571 -0.400000  0.400000    0.00571429  36 t-inv F
+
+
+--------------------------------------------------------------------------------------------------------
+
+
+
+
+ Dimension of arrays:
+   k-points           NKPTS =     36   k-points in BZ     NKDIM =    175   number of bands    NBANDS=     31
+   number of dos      NEDOS =    301   number of ions     NIONS =      6
+   non local maximal  LDIM  =      6   non local SUM 2l+1 LMDIM =     18
+   total plane-waves  NPLWV =  31104
+   max r-space proj   IRMAX =      1   max aug-charges    IRDMAX=  19272
+   dimension x,y,z NGX =    24 NGY =   36 NGZ =   36
+   dimension x,y,z NGXF=    48 NGYF=   72 NGZF=   72
+   support grid    NGXF=    48 NGYF=   72 NGZF=   72
+   ions per type =               2   4
+   NGX,Y,Z   is equivalent  to a cutoff of  12.44, 12.56, 12.56 a.u.
+   NGXF,Y,Z  is equivalent  to a cutoff of  24.88, 25.13, 25.12 a.u.
+
+ SYSTEM =  SnO2 HSE06 SCF                          
+ POSCAR =  Sn2 O4                                  
+
+ Startparameter for this run:
+   NWRITE =      2    write-flag & timer
+   PREC   = accura    normal or accurate (medium, high low for compatibility)
+   ISTART =      1    job   : 0-new  1-cont  2-samecut
+   ICHARG =      1    charge: 1-file 2-atom 10-const
+   ISPIN  =      1    spin polarized calculation?
+   LNONCOLLINEAR =      F non collinear calculations
+   LSORBIT =      F    spin-orbit coupling
+   INIWAV =      1    electr: 0-lowe 1-rand  2-diag
+   LASPH  =      F    aspherical Exc in radial PAW
+ Electronic Relaxation 1
+   ENCUT  =  520.0 eV  38.22 Ry    6.18 a.u.   5.96  8.86  8.86*2*pi/ulx,y,z
+   ENINI  =  520.0     initial cutoff
+   ENAUG  =  605.4 eV  augmentation charge cutoff
+   NELM   =    200;   NELMIN=  2; NELMDL=  0     # of ELM steps 
+   EDIFF  = 0.1E-05   stopping-criterion for ELM
+   LREAL  =      F    real-space projection
+   NLSPLINE    = F    spline interpolate recip. space projectors
+   LCOMPAT=      F    compatible to vasp.4.4
+   GGA_COMPAT  = T    GGA compatible to vasp.4.4-vasp.4.6
+   LMAXPAW     = -100 max onsite density
+   LMAXMIX     =    2 max onsite mixed and CHGCAR
+   VOSKOWN=      0    Vosko Wilk Nusair interpolation
+   ROPT   =    0.00000   0.00000
+ Ionic relaxation
+   EDIFFG = 0.1E-04   stopping-criterion for IOM
+   NSW    =      0    number of steps for IOM
+   NBLOCK =      1;   KBLOCK =      1    inner block; outer block 
+   IBRION =     -1    ionic relax: 0-MD 1-quasi-New 2-CG
+   NFREE  =      0    steps in history (QN), initial steepest desc. (CG)
+   ISIF   =      0    stress and relaxation
+   IWAVPR =     10    prediction:  0-non 1-charg 2-wave 3-comb
+   ISYM   =      3    0-nonsym 1-usesym 2-fastsym
+   LCORR  =      T    Harris-Foulkes like correction to forces
+
+   POTIM  = 0.5000    time-step for ionic-motion
+   TEIN   =    0.0    initial temperature
+   TEBEG  =    0.0;   TEEND  =   0.0 temperature during run
+   SMASS  =  -3.00    Nose mass-parameter (am)
+   estimated Nose-frequenzy (Omega)   =  0.10E-29 period in steps = 0.13E+47 mass=  -0.235E-27a.u.
+   SCALEE = 1.0000    scale energy and forces
+   NPACO  =    256;   APACO  = 10.0  distance and # of slots for P.C.
+   PSTRESS=    0.0 pullay stress
+
+  Mass of Ions in am
+   POMASS = 118.71 16.00
+  Ionic Valenz
+   ZVAL   =  14.00  6.00
+  Atomic Wigner-Seitz radii
+   RWIGS  =  -1.00 -1.00
+  virtual crystal weights 
+   VCA    =   1.00  1.00
+   NELECT =      52.0000    total number of electrons
+   NUPDOWN=      -1.0000    fix difference up-down
+
+ DOS related values:
+   EMIN   =  10.00;   EMAX   =-10.00  energy-range for DOS
+   EFERMI =   0.00;   METHOD = LEGACY      
+   ISMEAR =     0;   SIGMA  =   0.05  broadening in eV -4-tet -1-fermi 0-gaus
+
+ Electronic relaxation 2 (details)
+   IALGO  =     58    algorithm
+   LDIAG  =      T    sub-space diagonalisation (order eigenvalues)
+   LSUBROT=      F    optimize rotation matrix (better conditioning)
+   TURBO    =      0    0=normal 1=particle mesh
+   IRESTART =      0    0=no restart 2=restart with 2 vectors
+   NREBOOT  =      0    no. of reboots
+   NMIN     =      0    reboot dimension
+   EREF     =   0.00    reference energy to select bands
+   IMIX   =      4    mixing-type and parameters
+     AMIX     =   0.40;   BMIX     =  1.00
+     AMIX_MAG =   1.60;   BMIX_MAG =  1.00
+     AMIN     =   0.10
+     WC   =   100.;   INIMIX=   1;  MIXPRE=   1;  MAXMIX= -45
+
+ Intra band minimization:
+   WEIMIN = 0.0000     energy-eigenvalue tresh-hold
+   EBREAK =  0.81E-08  absolut break condition
+   DEPER  =   0.30     relativ break condition  
+
+   TIME   =   0.40     timestep for ELM
+
+  volume/ion in A,a.u.               =      12.14        81.90
+  Fermi-wavevector in a.u.,A,eV,Ry     =   1.463265  2.765169 29.132022  2.141143
+  Thomas-Fermi vector in A             =   2.579380
+ 
+ Write flags
+   LWAVE        =      F    write WAVECAR
+   LDOWNSAMPLE  =      F    k-point downsampling of WAVECAR
+   LCHARG       =      F    write CHGCAR
+   LVTOT        =      F    write LOCPOT, total local potential
+   LVHAR        =      F    write LOCPOT, Hartree potential only
+   LELF         =      F    write electronic localiz. function (ELF)
+   LORBIT       =      0    0 simple, 1 ext, 2 COOP (PROOUT), +10 PAW based schemes
+
+
+ Dipole corrections
+   LMONO  =      F    monopole corrections only (constant potential shift)
+   LDIPOL =      F    correct potential (dipole corrections)
+   IDIPOL =      0    1-x, 2-y, 3-z, 4-all directions 
+   EPSILON=  1.0000000 bulk dielectric constant
+
+ Exchange correlation treatment:
+   GGA     =    --    GGA type
+   LEXCH   =     8    internal setting for exchange type
+   LIBXC   =     F    Libxc                    
+   VOSKOWN =     0    Vosko Wilk Nusair interpolation
+   EXXOEP  =     0    0=HF, 1=EXX-LHF (local Hartree Fock) 2=EXX OEP
+   LHFCALC =     T    Hartree Fock is set to
+   LSYMGRAD=     F    symmetrize gradient (conserves proper symmetry)
+   PRECFOCK=normal    Normal, Fast or Accurate (Low or Medium for compatibility)
+   LRHFCALC=     F    long range Hartree Fock
+   LRSCOR  =     F    long range correlation only (use DFT for short range part)
+   LTHOMAS =     F    Thomas Fermi screening in HF
+   LMODELHF=     F    short range full HF, long range fraction AEXX
+   FOCKCORR=     1    mode to apply convergence corrections
+   LFOCKACE=     T    use Adeptively-Compressed-Exchange operator
+   ENCUT4O =  -1.0   cutoff for four orbital integrals eV
+   LMAXFOCK=     4    L truncation for augmentation on plane wave grid
+   LMAXFOCKAE=  -1    L truncation for all-electron charge restoration on plane wave grid
+   NMAXFOCKAE=   1    number of basis functions for all-electron charge restoration
+   LFOCKAEDFT=     F  apply the AE augmentation even for DFT
+   NKREDX  =     1    reduce k-point grid by
+   NKREDY  =     1    reduce k-point grid by
+   NKREDZ  =     1    reduce k-point grid by
+   SHIFTRED=     F    shift reduced grid of Gamma
+   HFKIDENT=     F    idential grid for each k-point
+   ODDONLY =     F    use only odd q-grid points
+   EVENONLY=     F    use only even q-grid points
+   HFALPHA =   -1.0000 decay constant for conv. correction
+   MCALPHA =    0.0000 extent of test-charge in conv. correction in multipole expansion
+   AEXX    =    0.2500 exact exchange contribution
+   HFSCREEN=    0.2000 screening length (either q_TF or 0.3 A-1)
+   HFSCREENC=   0.2000 screening length for correlation (either q_TF or 0.3 A-1)
+   HFRCUT  =    0.0000 spherical cutoff for potential kernel
+   ALDAX   =    0.7500 LDA exchange part
+   AGGAX   =    0.7500 GGA exchange part
+   ALDAC   =    1.0000 LDA correlation
+   AGGAC   =    1.0000 GGA correlation
+   ENCUTFOCK=  -1.0 apply spherical cutoff to Coloumb kernel
+   NBANDSGWLOW=     1    first orbital included in HF term
+   NBLOCK_FOCK=     4    blocking factor in FOCK_ACC
+
+ Linear response parameters
+   LEPSILON=     F    determine dielectric tensor
+   LRPA    =     F    only Hartree local field effects (RPA)
+   LNABLA  =     F    use nabla operator in PAW spheres
+   LVEL    =     F    velocity operator in full k-point grid
+   CSHIFT  =0.1000    complex shift for real part using Kramers Kronig
+   OMEGAMAX=  -1.0    maximum frequency
+   DEG_THRESHOLD= 0.2000000E-02 threshold for treating states as degnerate
+   RTIME   =   -0.100 relaxation time in fs
+  (WPLASMAI=    0.000 imaginary part of plasma frequency in eV, 0.658/RTIME)
+   DFIELD  = 0.0000000 0.0000000 0.0000000 field for delta impulse in time
+ 
+  Optional k-point grid parameters
+   LKPOINTS_OPT  =     F    use optional k-point grid
+   KPOINTS_OPT_MODE=     1    mode for optional k-point grid
+ 
+ Orbital magnetization related:
+   ORBITALMAG=     F  switch on orbital magnetization
+   LCHIMAG   =     F  perturbation theory with respect to B field
+   DQ        =  0.001000  dq finite difference perturbation B field
+   LLRAUG    =     F  two centre corrections for induced B field
+   LBONE     =     F  B-component reconstruction in AE one-centre
+   LVGVCALC  =     T  calculate vGv susceptibility
+   LVGVAPPL  =     F  apply vGv susceptibility instead of pGv for G=0
+
+ Random number generation:
+   RANDOM_GENERATOR = DEFAULT
+   PCG_SEED         = not used
+
+
+--------------------------------------------------------------------------------------------------------
+
+
+ Static calculation
+ charge density and potential will be updated during run
+ non-spin polarized calculation
+ Conjugate gradient for all bands (Freysoldt, et al. PRB 79, 241103 (2009))
+ preconditioned conjugated gradient                                        
+ perform sub-space diagonalisation
+    before iterative eigenvector-optimisation
+ modified Broyden-mixing scheme, WC =      100.0
+ initial mixing is a Kerker type mixing with AMIX =  0.4000 and BMIX =      1.0000
+ Hartree-type preconditioning will be used
+ using additional bands             5
+ reciprocal scheme for non local part
+ use partial core corrections
+ no Harris-corrections to forces 
+ use gradient corrections 
+ use of overlap-Matrix (Vanderbilt PP)
+ Gauss-broadening in eV      SIGMA  =   0.05
+
+
+--------------------------------------------------------------------------------------------------------
+
+
+  energy-cutoff  :      520.00
+  volume of cell :       72.82
+      direct lattice vectors                 reciprocal lattice vectors
+     3.207499770  0.000000000  0.000000000     0.311769313 -0.000000000 -0.000000000
+     0.000000000  4.763836050 -0.000000000    -0.000000000  0.209914865  0.000000000
+     0.000000000 -0.000000000  4.765800040    -0.000000000  0.000000000  0.209828359
+
+  length of vectors
+     3.207499770  4.763836050  4.765800040     0.311769313  0.209914865  0.209828359
+
+
+ 
+ old parameters found on file WAVECAR:
+  energy-cutoff  :      520.00
+  volume of cell :       72.82
+      direct lattice vectors                 reciprocal lattice vectors
+     3.207499770  0.000000000  0.000000000     0.311769313 -0.000000000 -0.000000000
+     0.000000000  4.763836050 -0.000000000    -0.000000000  0.209914865  0.000000000
+     0.000000000 -0.000000000  4.765800040    -0.000000000  0.000000000  0.209828359
+
+  length of vectors
+
+ 
+ k-points in units of 2pi/SCALE and weight: read from INCAR                         
+   0.00000000  0.00000000  0.00000000       0.006
+   0.04453847  0.00000000  0.00000000       0.011
+   0.08907695  0.00000000  0.00000000       0.011
+   0.13361542  0.00000000  0.00000000       0.011
+   0.00000000  0.04198297  0.00000000       0.011
+   0.04453847  0.04198297  0.00000000       0.023
+   0.08907695  0.04198297  0.00000000       0.023
+   0.13361542  0.04198297  0.00000000       0.023
+   0.00000000  0.08396595  0.00000000       0.011
+   0.04453847  0.08396595  0.00000000       0.023
+   0.08907695  0.08396595  0.00000000       0.023
+   0.13361542  0.08396595  0.00000000       0.023
+   0.00000000  0.00000000  0.04196567       0.011
+   0.04453847  0.00000000  0.04196567       0.023
+   0.08907695  0.00000000  0.04196567       0.023
+   0.13361542  0.00000000  0.04196567       0.023
+   0.00000000  0.04198297  0.04196567       0.023
+   0.04453847  0.04198297  0.04196567       0.046
+   0.08907695  0.04198297  0.04196567       0.046
+   0.13361542  0.04198297  0.04196567       0.046
+   0.00000000  0.08396595  0.04196567       0.023
+   0.04453847  0.08396595  0.04196567       0.046
+   0.08907695  0.08396595  0.04196567       0.046
+   0.13361542  0.08396595  0.04196567       0.046
+   0.00000000  0.00000000  0.08393134       0.011
+   0.04453847  0.00000000  0.08393134       0.023
+   0.08907695  0.00000000  0.08393134       0.023
+   0.13361542  0.00000000  0.08393134       0.023
+   0.00000000  0.04198297  0.08393134       0.023
+   0.04453847  0.04198297  0.08393134       0.046
+   0.08907695  0.04198297  0.08393134       0.046
+   0.13361542  0.04198297  0.08393134       0.046
+   0.00000000  0.08396595  0.08393134       0.023
+   0.04453847  0.08396595  0.08393134       0.046
+   0.08907695  0.08396595  0.08393134       0.046
+   0.13361542  0.08396595  0.08393134       0.046
+ 
+ k-points in reciprocal lattice and weights: read from INCAR                         
+   0.00000000  0.00000000  0.00000000       0.006
+   0.14285714  0.00000000  0.00000000       0.011
+   0.28571429  0.00000000  0.00000000       0.011
+   0.42857143  0.00000000  0.00000000       0.011
+   0.00000000  0.20000000  0.00000000       0.011
+   0.14285714  0.20000000  0.00000000       0.023
+   0.28571429  0.20000000  0.00000000       0.023
+   0.42857143  0.20000000  0.00000000       0.023
+   0.00000000  0.40000000  0.00000000       0.011
+   0.14285714  0.40000000  0.00000000       0.023
+   0.28571429  0.40000000  0.00000000       0.023
+   0.42857143  0.40000000  0.00000000       0.023
+   0.00000000  0.00000000  0.20000000       0.011
+   0.14285714  0.00000000  0.20000000       0.023
+   0.28571429  0.00000000  0.20000000       0.023
+   0.42857143  0.00000000  0.20000000       0.023
+   0.00000000  0.20000000  0.20000000       0.023
+   0.14285714  0.20000000  0.20000000       0.046
+   0.28571429  0.20000000  0.20000000       0.046
+   0.42857143  0.20000000  0.20000000       0.046
+   0.00000000  0.40000000  0.20000000       0.023
+   0.14285714  0.40000000  0.20000000       0.046
+   0.28571429  0.40000000  0.20000000       0.046
+   0.42857143  0.40000000  0.20000000       0.046
+   0.00000000  0.00000000  0.40000000       0.011
+   0.14285714  0.00000000  0.40000000       0.023
+   0.28571429  0.00000000  0.40000000       0.023
+   0.42857143  0.00000000  0.40000000       0.023
+   0.00000000  0.20000000  0.40000000       0.023
+   0.14285714  0.20000000  0.40000000       0.046
+   0.28571429  0.20000000  0.40000000       0.046
+   0.42857143  0.20000000  0.40000000       0.046
+   0.00000000  0.40000000  0.40000000       0.023
+   0.14285714  0.40000000  0.40000000       0.046
+   0.28571429  0.40000000  0.40000000       0.046
+   0.42857143  0.40000000  0.40000000       0.046
+ 
+ position of ions in fractional coordinates (direct lattice) 
+   0.50000000  0.50000000  0.50000000
+   0.00000000  0.00000000  0.00000000
+   0.50000000  0.19421615  0.80616074
+   0.50000000  0.80578385  0.19383926
+   0.00000000  0.30578385  0.30616074
+   0.00000000  0.69421615  0.69383926
+ 
+ position of ions in cartesian coordinates  (Angst):
+   1.60374989  2.38191803  2.38290002
+   0.00000000  0.00000000  0.00000000
+   1.60374989  0.92521390  3.84200089
+   1.60374989  3.83862215  0.92379915
+   0.00000000  1.45670413  1.45910087
+   0.00000000  3.30713192  3.30669917
+ 
+
+
+--------------------------------------------------------------------------------------------------------
+
+
+ k-point   1 :   0.0000 0.0000 0.0000  plane waves:    1947
+ k-point   2 :   0.1429 0.0000 0.0000  plane waves:    1968
+ k-point   3 :   0.2857 0.0000 0.0000  plane waves:    1964
+ k-point   4 :   0.4286 0.0000 0.0000  plane waves:    1968
+ k-point   5 :   0.0000 0.2000 0.0000  plane waves:    1948
+ k-point   6 :   0.1429 0.2000 0.0000  plane waves:    1956
+ k-point   7 :   0.2857 0.2000 0.0000  plane waves:    1964
+ k-point   8 :   0.4286 0.2000 0.0000  plane waves:    1965
+ k-point   9 :   0.0000 0.4000 0.0000  plane waves:    1944
+ k-point  10 :   0.1429 0.4000 0.0000  plane waves:    1957
+ k-point  11 :   0.2857 0.4000 0.0000  plane waves:    1967
+ k-point  12 :   0.4286 0.4000 0.0000  plane waves:    1954
+ k-point  13 :   0.0000 0.0000 0.2000  plane waves:    1948
+ k-point  14 :   0.1429 0.0000 0.2000  plane waves:    1956
+ k-point  15 :   0.2857 0.0000 0.2000  plane waves:    1966
+ k-point  16 :   0.4286 0.0000 0.2000  plane waves:    1965
+ k-point  17 :   0.0000 0.2000 0.2000  plane waves:    1948
+ k-point  18 :   0.1429 0.2000 0.2000  plane waves:    1949
+ k-point  19 :   0.2857 0.2000 0.2000  plane waves:    1957
+ k-point  20 :   0.4286 0.2000 0.2000  plane waves:    1963
+ k-point  21 :   0.0000 0.4000 0.2000  plane waves:    1953
+ k-point  22 :   0.1429 0.4000 0.2000  plane waves:    1958
+ k-point  23 :   0.2857 0.4000 0.2000  plane waves:    1957
+ k-point  24 :   0.4286 0.4000 0.2000  plane waves:    1967
+ k-point  25 :   0.0000 0.0000 0.4000  plane waves:    1944
+ k-point  26 :   0.1429 0.0000 0.4000  plane waves:    1955
+ k-point  27 :   0.2857 0.0000 0.4000  plane waves:    1963
+ k-point  28 :   0.4286 0.0000 0.4000  plane waves:    1959
+ k-point  29 :   0.0000 0.2000 0.4000  plane waves:    1953
+ k-point  30 :   0.1429 0.2000 0.4000  plane waves:    1958
+ k-point  31 :   0.2857 0.2000 0.4000  plane waves:    1958
+ k-point  32 :   0.4286 0.2000 0.4000  plane waves:    1966
+ k-point  33 :   0.0000 0.4000 0.4000  plane waves:    1954
+ k-point  34 :   0.1429 0.4000 0.4000  plane waves:    1960
+ k-point  35 :   0.2857 0.4000 0.4000  plane waves:    1967
+ k-point  36 :   0.4286 0.4000 0.4000  plane waves:    1989
+
+ maximum and minimum number of plane-waves per node :      1989     1944
+
+ maximum number of plane-waves:      1989
+ maximum index in each direction: 
+   IXMAX=    5   IYMAX=    8   IZMAX=    8
+   IXMIN=   -6   IYMIN=   -9   IZMIN=   -9
+
+
+ serial   3D FFT for wavefunctions
+ parallel 3D FFT for charge:
+    minimum data exchange during FFTs selected (reduces bandwidth)
+
+
+ FFT grid for exact exchange (Hartree Fock) 
+  NGX = 18; NGY = 28; NGZ = 28
+
+ 
+ Radii for the augmentation spheres in the non-local exchange
+ for species   1 augmentation radius   1.362 (default was   1.089)
+       energy cutoff for augmentation   2080.0
+ for species   2 augmentation radius   0.902 (default was   0.722)
+       energy cutoff for augmentation   2080.0
+ Maximum index for augmentation-charges in exchange          2035
+  SETUP_FOCK is finished
+
+ total amount of memory used by VASP MPI-rank0   186695. kBytes
+=======================================================================
+
+   base      :      30000. kBytes
+   nonl-proj :      20812. kBytes
+   fftplans  :       8708. kBytes
+   grid      :      15469. kBytes
+   one-center:         93. kBytes
+   HF        :        129. kBytes
+   nonlr-proj:       1297. kBytes
+   wavefun   :     110187. kBytes
+ 
+     INWAV:  cpu time      0.0722: real time      0.0722
+ Broyden mixing: mesh for mixing (old mesh)
+   NGX = 11   NGY = 17   NGZ = 17
+  (NGX  = 48   NGY  = 72   NGZ  = 72)
+  gives a total of   3179 points
+
+ initial charge density was supplied:
+ number of electron      52.0000005 magnetization 
+ charge density for first step will be calculated from the start-wavefunctions
+
+
+--------------------------------------------------------------------------------------------------------
+
+
+ Maximum index for augmentation-charges         18561 (set IRDMAX)
+
+
+--------------------------------------------------------------------------------------------------------
+
+
+ initial charge from wavefunction
+ First call to EWALD:  gamma=   0.424
+ Maximum number of real-space cells 3x 2x 2
+ Maximum number of reciprocal cells 2x 3x 3
+
+    FEWALD:  cpu time      0.0045: real time      0.0034
+
+
+--------------------------------------- Ionic step        1  -------------------------------------------
+
+
+
+
+--------------------------------------- Iteration      1(   1)  ---------------------------------------
+
+
+    POTLOK:  cpu time      0.2292: real time      0.2361
+    SETDIJ:  cpu time      0.1458: real time      0.1029
+    TRIAL :  cpu time     61.1560: real time     61.1676
+    CORREC:  cpu time     61.8653: real time     61.8393
+    CHARGE:  cpu time      0.1145: real time      0.1121
+    --------------------------------------------
+      LOOP:  cpu time    123.5718: real time    123.5181
+
+ eigenvalue-minimisations  :     0
+ total energy-change (2. order) :-0.4724800E+02  (-0.1293869E+00)
+ number of electron      52.0000006 magnetization 
+ augmentation part       17.9710817 magnetization 
+
+ Free energy of the ion-electron system (eV)
+  ---------------------------------------------------
+  alpha Z        PSCENC =       180.38765571
+  Ewald energy   TEWEN  =     -4160.16107252
+  -Hartree energ DENC   =     -1422.22263275
+  -exchange      EXHF   =       145.01947560
+  -V(xc)+E(xc)   XCENC  =       176.68844616
+  PAW double counting   =      6660.19842857    -6722.00954757
+  entropy T*S    EENTRO =        -0.00000000
+  eigenvalues    EBANDS =      -407.27521994
+  atomic energy  EATOM  =      5502.12646268
+  ---------------------------------------------------
+  free energy    TOTEN  =       -47.24800406 eV
+
+  energy without entropy =      -47.24800406  energy(sigma->0) =      -47.24800406
+  exchange ACFDT corr.  =        -0.00000000  see jH, gK, PRB 81, 115126
+
+
+--------------------------------------------------------------------------------------------------------
+
+
+
+
+--------------------------------------- Iteration      1(   2)  ---------------------------------------
+
+
+    POTLOK:  cpu time      0.1878: real time      0.1874
+    SETDIJ:  cpu time      0.1597: real time      0.1169
+    TRIAL :  cpu time     61.5170: real time     61.5278
+    CORREC:  cpu time     62.1633: real time     62.1331
+    CHARGE:  cpu time      0.1146: real time      0.1123
+    --------------------------------------------
+      LOOP:  cpu time    124.1428: real time    124.0778
+
+ eigenvalue-minimisations  :     0
+ total energy-change (2. order) :-0.1295265E+00  (-0.7373517E-01)
+ number of electron      52.0000006 magnetization 
+ augmentation part       17.9660590 magnetization 
+
+ Free energy of the ion-electron system (eV)
+  ---------------------------------------------------
+  alpha Z        PSCENC =       180.38765571
+  Ewald energy   TEWEN  =     -4160.16107252
+  -Hartree energ DENC   =     -1428.27737857
+  -exchange      EXHF   =       145.35417295
+  -V(xc)+E(xc)   XCENC  =       176.90617517
+  PAW double counting   =      6835.53156489    -6897.87656990
+  entropy T*S    EENTRO =        -0.00000000
+  eigenvalues    EBANDS =      -401.36854095
+  atomic energy  EATOM  =      5502.12646268
+  ---------------------------------------------------
+  free energy    TOTEN  =       -47.37753054 eV
+
+  energy without entropy =      -47.37753054  energy(sigma->0) =      -47.37753054
+  exchange ACFDT corr.  =        -0.00000000  see jH, gK, PRB 81, 115126
+
+
+--------------------------------------------------------------------------------------------------------
+
+
+
+
+--------------------------------------- Iteration      1(   3)  ---------------------------------------
+
+
+    POTLOK:  cpu time      0.2044: real time      0.2039
+    SETDIJ:  cpu time      0.1531: real time      0.1102
+    TRIAL :  cpu time     61.6340: real time     61.6420
+    CORREC:  cpu time     62.1252: real time     62.0942
+    CHARGE:  cpu time      0.1147: real time      0.1122
+    --------------------------------------------
+      LOOP:  cpu time    124.2316: real time    124.1628
+
+ eigenvalue-minimisations  :     0
+ total energy-change (2. order) :-0.7397466E-01  (-0.2087012E-01)
+ number of electron      52.0000006 magnetization 
+ augmentation part       17.9917650 magnetization 
+
+ Free energy of the ion-electron system (eV)
+  ---------------------------------------------------
+  alpha Z        PSCENC =       180.38765571
+  Ewald energy   TEWEN  =     -4160.16107252
+  -Hartree energ DENC   =     -1423.60117466
+  -exchange      EXHF   =       145.46806021
+  -V(xc)+E(xc)   XCENC  =       176.80629553
+  PAW double counting   =      7028.27236812    -7088.74351508
+  entropy T*S    EENTRO =        -0.00000000
+  eigenvalues    EBANDS =      -408.00658519
+  atomic energy  EATOM  =      5502.12646268
+  ---------------------------------------------------
+  free energy    TOTEN  =       -47.45150520 eV
+
+  energy without entropy =      -47.45150520  energy(sigma->0) =      -47.45150520
+  exchange ACFDT corr.  =        -0.00000000  see jH, gK, PRB 81, 115126
+
+
+--------------------------------------------------------------------------------------------------------
+
+
+
+
+--------------------------------------- Iteration      1(   4)  ---------------------------------------
+
+
+    POTLOK:  cpu time      0.1838: real time      0.1834
+    SETDIJ:  cpu time      0.1694: real time      0.1263
+    TRIAL :  cpu time     61.6087: real time     61.6151
+    CORREC:  cpu time     62.1608: real time     62.1306
+    CHARGE:  cpu time      0.1142: real time      0.1118
+    --------------------------------------------
+      LOOP:  cpu time    124.2372: real time    124.1674
+
+ eigenvalue-minimisations  :     0
+ total energy-change (2. order) :-0.2115229E-01  (-0.6053617E-02)
+ number of electron      52.0000006 magnetization 
+ augmentation part       18.0062657 magnetization 
+
+ Free energy of the ion-electron system (eV)
+  ---------------------------------------------------
+  alpha Z        PSCENC =       180.38765571
+  Ewald energy   TEWEN  =     -4160.16107252
+  -Hartree energ DENC   =     -1425.16253182
+  -exchange      EXHF   =       145.58277426
+  -V(xc)+E(xc)   XCENC  =       176.88556568
+  PAW double counting   =      7142.01541242    -7202.36290765
+  entropy T*S    EENTRO =        -0.00000000
+  eigenvalues    EBANDS =      -406.78401626
+  atomic energy  EATOM  =      5502.12646268
+  ---------------------------------------------------
+  free energy    TOTEN  =       -47.47265749 eV
+
+  energy without entropy =      -47.47265749  energy(sigma->0) =      -47.47265749
+  exchange ACFDT corr.  =        -0.00000000  see jH, gK, PRB 81, 115126
+
+
+--------------------------------------------------------------------------------------------------------
+
+
+
+
+--------------------------------------- Iteration      1(   5)  ---------------------------------------
+
+
+    POTLOK:  cpu time      0.1930: real time      0.1924
+    SETDIJ:  cpu time      0.1651: real time      0.1217
+    TRIAL :  cpu time     61.4852: real time     61.4973
+    CORREC:  cpu time     62.2544: real time     62.2260
+    CHARGE:  cpu time      0.1143: real time      0.1120
+    --------------------------------------------
+      LOOP:  cpu time    124.2122: real time    124.1496
+
+ eigenvalue-minimisations  :     0
+ total energy-change (2. order) :-0.6073931E-02  (-0.1192323E-02)
+ number of electron      52.0000006 magnetization 
+ augmentation part       18.0043427 magnetization 
+
+ Free energy of the ion-electron system (eV)
+  ---------------------------------------------------
+  alpha Z        PSCENC =       180.38765571
+  Ewald energy   TEWEN  =     -4160.16107252
+  -Hartree energ DENC   =     -1425.60769611
+  -exchange      EXHF   =       145.61377401
+  -V(xc)+E(xc)   XCENC  =       176.90866044
+  PAW double counting   =      7176.29432686    -7236.72008434
+  entropy T*S    EENTRO =        -0.00000000
+  eigenvalues    EBANDS =      -406.32075816
+  atomic energy  EATOM  =      5502.12646268
+  ---------------------------------------------------
+  free energy    TOTEN  =       -47.47873142 eV
+
+  energy without entropy =      -47.47873142  energy(sigma->0) =      -47.47873142
+  exchange ACFDT corr.  =        -0.00000000  see jH, gK, PRB 81, 115126
+
+
+--------------------------------------------------------------------------------------------------------
+
+
+
+
+--------------------------------------- Iteration      1(   6)  ---------------------------------------
+
+
+    POTLOK:  cpu time      0.2080: real time      0.2076
+    SETDIJ:  cpu time      0.1457: real time      0.1028
+    TRIAL :  cpu time     61.5905: real time     61.5992
+    CORREC:  cpu time     62.2013: real time     62.1779
+    CHARGE:  cpu time      0.1141: real time      0.1118
+    --------------------------------------------
+      LOOP:  cpu time    124.2597: real time    124.1994
+
+ eigenvalue-minimisations  :     0
+ total energy-change (2. order) :-0.1194276E-02  (-0.3614137E-03)
+ number of electron      52.0000006 magnetization 
+ augmentation part       18.0090655 magnetization 
+
+ Free energy of the ion-electron system (eV)
+  ---------------------------------------------------
+  alpha Z        PSCENC =       180.38765571
+  Ewald energy   TEWEN  =     -4160.16107252
+  -Hartree energ DENC   =     -1425.17336688
+  -exchange      EXHF   =       145.61121809
+  -V(xc)+E(xc)   XCENC  =       176.89781896
+  PAW double counting   =      7174.12192282    -7234.44056407
+  entropy T*S    EENTRO =        -0.00000000
+  eigenvalues    EBANDS =      -406.85000048
+  atomic energy  EATOM  =      5502.12646268
+  ---------------------------------------------------
+  free energy    TOTEN  =       -47.47992570 eV
+
+  energy without entropy =      -47.47992570  energy(sigma->0) =      -47.47992570
+  exchange ACFDT corr.  =        -0.00000000  see jH, gK, PRB 81, 115126
+
+
+--------------------------------------------------------------------------------------------------------
+
+
+
+
+--------------------------------------- Iteration      1(   7)  ---------------------------------------
+
+
+    POTLOK:  cpu time      0.2060: real time      0.2056
+    SETDIJ:  cpu time      0.1388: real time      0.0958
+    TRIAL :  cpu time     61.5572: real time     61.5602
+    CORREC:  cpu time     62.0910: real time     62.0647
+    CHARGE:  cpu time      0.1145: real time      0.1120
+    --------------------------------------------
+      LOOP:  cpu time    124.1080: real time    124.0388
+
+ eigenvalue-minimisations  :     0
+ total energy-change (2. order) :-0.3605578E-03  (-0.9881961E-04)
+ number of electron      52.0000006 magnetization 
+ augmentation part       18.0090572 magnetization 
+
+ Free energy of the ion-electron system (eV)
+  ---------------------------------------------------
+  alpha Z        PSCENC =       180.38765571
+  Ewald energy   TEWEN  =     -4160.16107252
+  -Hartree energ DENC   =     -1425.42280112
+  -exchange      EXHF   =       145.61686765
+  -V(xc)+E(xc)   XCENC  =       176.90470177
+  PAW double counting   =      7163.97035228    -7224.35323948
+  entropy T*S    EENTRO =        -0.00000000
+  eigenvalues    EBANDS =      -406.54921322
+  atomic energy  EATOM  =      5502.12646268
+  ---------------------------------------------------
+  free energy    TOTEN  =       -47.48028625 eV
+
+  energy without entropy =      -47.48028625  energy(sigma->0) =      -47.48028625
+  exchange ACFDT corr.  =        -0.00000000  see jH, gK, PRB 81, 115126
+
+
+--------------------------------------------------------------------------------------------------------
+
+
+
+
+--------------------------------------- Iteration      1(   8)  ---------------------------------------
+
+
+    POTLOK:  cpu time      0.1808: real time      0.1805
+    SETDIJ:  cpu time      0.1701: real time      0.1270
+    TRIAL :  cpu time     61.5785: real time     61.5861
+    CORREC:  cpu time     62.1154: real time     62.0815
+    CHARGE:  cpu time      0.1154: real time      0.1129
+    --------------------------------------------
+      LOOP:  cpu time    124.1608: real time    124.0886
+
+ eigenvalue-minimisations  :     0
+ total energy-change (2. order) :-0.9911819E-04  (-0.3585591E-04)
+ number of electron      52.0000006 magnetization 
+ augmentation part       18.0094582 magnetization 
+
+ Free energy of the ion-electron system (eV)
+  ---------------------------------------------------
+  alpha Z        PSCENC =       180.38765571
+  Ewald energy   TEWEN  =     -4160.16107252
+  -Hartree energ DENC   =     -1425.36544101
+  -exchange      EXHF   =       145.61842553
+  -V(xc)+E(xc)   XCENC  =       176.90378877
+  PAW double counting   =      7156.01551248    -7216.38133446
+  entropy T*S    EENTRO =        -0.00000000
+  eigenvalues    EBANDS =      -406.62438254
+  atomic energy  EATOM  =      5502.12646268
+  ---------------------------------------------------
+  free energy    TOTEN  =       -47.48038537 eV
+
+  energy without entropy =      -47.48038537  energy(sigma->0) =      -47.48038537
+  exchange ACFDT corr.  =        -0.00000000  see jH, gK, PRB 81, 115126
+
+
+--------------------------------------------------------------------------------------------------------
+
+
+
+
+--------------------------------------- Iteration      1(   9)  ---------------------------------------
+
+
+    POTLOK:  cpu time      0.1816: real time      0.1814
+    SETDIJ:  cpu time      0.1587: real time      0.1158
+    TRIAL :  cpu time     61.4927: real time     61.5053
+    CORREC:  cpu time     62.1628: real time     62.1348
+    CHARGE:  cpu time      0.1142: real time      0.1119
+    --------------------------------------------
+      LOOP:  cpu time    124.1102: real time    124.0495
+
+ eigenvalue-minimisations  :     0
+ total energy-change (2. order) :-0.3598801E-04  (-0.1216663E-04)
+ number of electron      52.0000006 magnetization 
+ augmentation part       18.0100295 magnetization 
+
+ Free energy of the ion-electron system (eV)
+  ---------------------------------------------------
+  alpha Z        PSCENC =       180.38765571
+  Ewald energy   TEWEN  =     -4160.16107252
+  -Hartree energ DENC   =     -1425.35448973
+  -exchange      EXHF   =       145.61845052
+  -V(xc)+E(xc)   XCENC  =       176.90295456
+  PAW double counting   =      7151.28118459    -7211.65053741
+  entropy T*S    EENTRO =        -0.00000000
+  eigenvalues    EBANDS =      -406.63102977
+  atomic energy  EATOM  =      5502.12646268
+  ---------------------------------------------------
+  free energy    TOTEN  =       -47.48042136 eV
+
+  energy without entropy =      -47.48042136  energy(sigma->0) =      -47.48042136
+  exchange ACFDT corr.  =        -0.00000000  see jH, gK, PRB 81, 115126
+
+
+--------------------------------------------------------------------------------------------------------
+
+
+
+
+--------------------------------------- Iteration      1(  10)  ---------------------------------------
+
+
+    POTLOK:  cpu time      0.1916: real time      0.1912
+    SETDIJ:  cpu time      0.1650: real time      0.1219
+    TRIAL :  cpu time     61.4943: real time     61.5021
+    CORREC:  cpu time     62.1317: real time     62.1034
+    CHARGE:  cpu time      0.1146: real time      0.1122
+    --------------------------------------------
+      LOOP:  cpu time    124.0975: real time    124.0310
+
+ eigenvalue-minimisations  :     0
+ total energy-change (2. order) :-0.1223216E-04  (-0.3377772E-05)
+ number of electron      52.0000006 magnetization 
+ augmentation part       18.0100181 magnetization 
+
+ Free energy of the ion-electron system (eV)
+  ---------------------------------------------------
+  alpha Z        PSCENC =       180.38765571
+  Ewald energy   TEWEN  =     -4160.16107252
+  -Hartree energ DENC   =     -1425.38379513
+  -exchange      EXHF   =       145.61989023
+  -V(xc)+E(xc)   XCENC  =       176.90415428
+  PAW double counting   =      7149.34919232    -7209.72076496
+  entropy T*S    EENTRO =        -0.00000000
+  eigenvalues    EBANDS =      -406.60215620
+  atomic energy  EATOM  =      5502.12646268
+  ---------------------------------------------------
+  free energy    TOTEN  =       -47.48043359 eV
+
+  energy without entropy =      -47.48043359  energy(sigma->0) =      -47.48043359
+  exchange ACFDT corr.  =        -0.00000000  see jH, gK, PRB 81, 115126
+
+
+--------------------------------------------------------------------------------------------------------
+
+
+
+
+--------------------------------------- Iteration      1(  11)  ---------------------------------------
+
+
+    POTLOK:  cpu time      0.2088: real time      0.2084
+    SETDIJ:  cpu time      0.1460: real time      0.1025
+    TRIAL :  cpu time     61.5787: real time     61.5896
+    CORREC:  cpu time     62.0590: real time     62.0313
+    CHARGE:  cpu time      0.1152: real time      0.1128
+    --------------------------------------------
+      LOOP:  cpu time    124.1080: real time    124.0450
+
+ eigenvalue-minimisations  :     0
+ total energy-change (2. order) :-0.3335174E-05  (-0.1365561E-05)
+ number of electron      52.0000006 magnetization 
+ augmentation part       18.0101743 magnetization 
+
+ Free energy of the ion-electron system (eV)
+  ---------------------------------------------------
+  alpha Z        PSCENC =       180.38765571
+  Ewald energy   TEWEN  =     -4160.16107252
+  -Hartree energ DENC   =     -1425.36500708
+  -exchange      EXHF   =       145.61958737
+  -V(xc)+E(xc)   XCENC  =       176.90363575
+  PAW double counting   =      7149.10269751    -7209.46983384
+  entropy T*S    EENTRO =        -0.00000000
+  eigenvalues    EBANDS =      -406.62456251
+  atomic energy  EATOM  =      5502.12646268
+  ---------------------------------------------------
+  free energy    TOTEN  =       -47.48043693 eV
+
+  energy without entropy =      -47.48043693  energy(sigma->0) =      -47.48043693
+  exchange ACFDT corr.  =        -0.00000000  see jH, gK, PRB 81, 115126
+
+
+--------------------------------------------------------------------------------------------------------
+
+
+
+
+--------------------------------------- Iteration      1(  12)  ---------------------------------------
+
+
+    POTLOK:  cpu time      0.1857: real time      0.1853
+    SETDIJ:  cpu time      0.1545: real time      0.1108
+    TRIAL :  cpu time     61.6315: real time     61.6429
+    CORREC:  cpu time     62.1284: real time     62.0935
+    CHARGE:  cpu time      0.1145: real time      0.1121
+    --------------------------------------------
+      LOOP:  cpu time    124.2148: real time    124.1450
+
+ eigenvalue-minimisations  :     0
+ total energy-change (2. order) :-0.1364367E-05  (-0.3846000E-06)
+ number of electron      52.0000006 magnetization 
+ augmentation part       18.0102101 magnetization 
+
+ Free energy of the ion-electron system (eV)
+  ---------------------------------------------------
+  alpha Z        PSCENC =       180.38765571
+  Ewald energy   TEWEN  =     -4160.16107252
+  -Hartree energ DENC   =     -1425.36353869
+  -exchange      EXHF   =       145.61929147
+  -V(xc)+E(xc)   XCENC  =       176.90346339
+  PAW double counting   =      7149.47275673    -7209.84116063
+  entropy T*S    EENTRO =        -0.00000000
+  eigenvalues    EBANDS =      -406.62429642
+  atomic energy  EATOM  =      5502.12646268
+  ---------------------------------------------------
+  free energy    TOTEN  =       -47.48043829 eV
+
+  energy without entropy =      -47.48043829  energy(sigma->0) =      -47.48043829
+  exchange ACFDT corr.  =        -0.00000000  see jH, gK, PRB 81, 115126
+
+
+--------------------------------------------------------------------------------------------------------
+
+
+
+
+--------------------------------------- Iteration      1(  13)  ---------------------------------------
+
+
+    POTLOK:  cpu time      0.1847: real time      0.1841
+    SETDIJ:  cpu time      0.1574: real time      0.1141
+    TRIAL :  cpu time     61.5018: real time     61.5108
+    CORREC:  cpu time     62.1997: real time     62.1733
+    EDDIAG:  cpu time     61.4017: real time     61.4163
+    CHARGE:  cpu time      0.1148: real time      0.1123
+    --------------------------------------------
+      LOOP:  cpu time    185.5602: real time    185.5112
+
+ eigenvalue-minimisations  :     0
+ total energy-change (2. order) :-0.3762830E-06  (-0.1136031E-06)
+ number of electron      52.0000006 magnetization 
+ augmentation part       18.0102131 magnetization 
+
+ Free energy of the ion-electron system (eV)
+  ---------------------------------------------------
+  alpha Z        PSCENC =       180.38765571
+  Ewald energy   TEWEN  =     -4160.16107252
+  -Hartree energ DENC   =     -1425.36386956
+  -exchange      EXHF   =       145.61931949
+  -V(xc)+E(xc)   XCENC  =       176.90349411
+  PAW double counting   =      7149.76663334    -7210.13484100
+  entropy T*S    EENTRO =        -0.00000000
+  eigenvalues    EBANDS =      -406.62420992
+  atomic energy  EATOM  =      5502.12646268
+  ---------------------------------------------------
+  free energy    TOTEN  =       -47.48043867 eV
+
+  energy without entropy =      -47.48043867  energy(sigma->0) =      -47.48043867
+  exchange ACFDT corr.  =        -0.00000000  see jH, gK, PRB 81, 115126
+
+
+--------------------------------------------------------------------------------------------------------
+
+
+  average scaling for gradient   0.9449
+
+
+ average (electrostatic) potential at core
+  the test charge radii are     1.0894  0.7215
+  (the norm of the test charge is              1.0000)
+       1 -93.6235       2 -93.6235       3 -61.8282       4 -61.8282       5 -61.8282
+       6 -61.8282
+ 
+ 
+ 
+ E-fermi :   4.8720     XC(G=0):  -9.1385     alpha+bet :-14.0396
+
+ Fermi energy:         4.8719870340
+
+ k-point     1 :       0.0000    0.0000    0.0000
+  band No.  band energies     occupation 
+      1     -17.8744      2.00000
+      2     -17.0012      2.00000
+      3     -16.7381      2.00000
+      4     -16.7381      2.00000
+      5     -16.7177      2.00000
+      6     -16.6673      2.00000
+      7     -16.5894      2.00000
+      8     -16.5032      2.00000
+      9     -16.4502      2.00000
+     10     -16.4501      2.00000
+     11     -15.6654      2.00000
+     12     -13.8540      2.00000
+     13     -13.8538      2.00000
+     14     -11.9364      2.00000
+     15      -3.6929      2.00000
+     16       0.5171      2.00000
+     17       0.5227      2.00000
+     18       0.6867      2.00000
+     19       1.3320      2.00000
+     20       2.7647      2.00000
+     21       2.8300      2.00000
+     22       3.5346      2.00000
+     23       3.5348      2.00000
+     24       3.8839      2.00000
+     25       3.8852      2.00000
+     26       4.5913      2.00000
+     27       7.3771      0.00000
+     28      12.6430      0.00000
+     29      12.7054      0.00000
+     30      12.7088      0.00000
+     31      16.8654      0.00000
+
+ k-point     2 :       0.1429    0.0000    0.0000
+  band No.  band energies     occupation 
+      1     -17.7774      2.00000
+      2     -16.9460      2.00000
+      3     -16.9459      2.00000
+      4     -16.8855      2.00000
+      5     -16.6837      2.00000
+      6     -16.6819      2.00000
+      7     -16.5813      2.00000
+      8     -16.5038      2.00000
+      9     -16.4741      2.00000
+     10     -16.4740      2.00000
+     11     -15.5591      2.00000
+     12     -13.5233      2.00000
+     13     -13.5231      2.00000
+     14     -12.1012      2.00000
+     15      -3.6871      2.00000
+     16       0.5217      2.00000
+     17       0.7164      2.00000
+     18       0.7215      2.00000
+     19       1.4733      2.00000
+     20       1.5297      2.00000
+     21       2.6868      2.00000
+     22       2.7843      2.00000
+     23       2.7843      2.00000
+     24       3.9142      2.00000
+     25       3.9155      2.00000
+     26       4.4137      2.00000
+     27       8.5626      0.00000
+     28      13.0909      0.00000
+     29      13.5800      0.00000
+     30      13.5834      0.00000
+     31      15.8098      0.00000
+
+ k-point     3 :       0.2857    0.0000    0.0000
+  band No.  band energies     occupation 
+      1     -17.5303      2.00000
+      2     -17.3196      2.00000
+      3     -17.3195      2.00000
+      4     -16.8267      2.00000
+      5     -16.5907      2.00000
+      6     -16.5876      2.00000
+      7     -16.5609      2.00000
+      8     -16.5175      2.00000
+      9     -16.5175      2.00000
+     10     -16.5074      2.00000
+     11     -15.1599      2.00000
+     12     -12.8645      2.00000
+     13     -12.8643      2.00000
+     14     -12.6123      2.00000
+     15      -3.5778      2.00000
+     16      -0.3875      2.00000
+     17       0.3657      2.00000
+     18       1.1110      2.00000
+     19       1.1113      2.00000
+     20       1.6442      2.00000
+     21       1.6485      2.00000
+     22       1.8811      2.00000
+     23       2.0509      2.00000
+     24       3.7168      2.00000
+     25       3.7188      2.00000
+     26       3.9214      2.00000
+     27      10.5426      0.00000
+     28      13.5963      0.00000
+     29      15.2631      0.00000
+     30      15.4034      0.00000
+     31      15.4060      0.00000
+
+ k-point     4 :       0.4286    0.0000    0.0000
+  band No.  band energies     occupation 
+      1     -17.5617      2.00000
+      2     -17.5617      2.00000
+      3     -17.2358      2.00000
+      4     -16.9862      2.00000
+      5     -16.5503      2.00000
+      6     -16.5502      2.00000
+      7     -16.5369      2.00000
+      8     -16.5179      2.00000
+      9     -16.4939      2.00000
+     10     -16.4694      2.00000
+     11     -14.3889      2.00000
+     12     -13.4392      2.00000
+     13     -12.3728      2.00000
+     14     -12.3727      2.00000
+     15      -3.0998      2.00000
+     16      -2.0285      2.00000
+     17       0.5117      2.00000
+     18       0.5123      2.00000
+     19       0.6114      2.00000
+     20       1.2520      2.00000
+     21       1.9753      2.00000
+     22       1.9787      2.00000
+     23       2.5011      2.00000
+     24       3.2307      2.00000
+     25       3.3561      2.00000
+     26       3.3579      2.00000
+     27      12.1368      0.00000
+     28      13.1855      0.00000
+     29      15.7506      0.00000
+     30      16.9743      0.00000
+     31      16.9969      0.00000
+
+ k-point     5 :       0.0000    0.2000    0.0000
+  band No.  band energies     occupation 
+      1     -17.8088      2.00000
+      2     -17.0887      2.00000
+      3     -16.7358      2.00000
+      4     -16.7357      2.00000
+      5     -16.7192      2.00000
+      6     -16.7083      2.00000
+      7     -16.5801      2.00000
+      8     -16.5102      2.00000
+      9     -16.4531      2.00000
+     10     -16.4529      2.00000
+     11     -15.5452      2.00000
+     12     -14.0997      2.00000
+     13     -13.6039      2.00000
+     14     -12.0473      2.00000
+     15      -3.4132      2.00000
+     16      -0.1393      2.00000
+     17       0.7123      2.00000
+     18       0.8473      2.00000
+     19       1.6015      2.00000
+     20       2.4921      2.00000
+     21       3.0224      2.00000
+     22       3.2201      2.00000
+     23       3.5484      2.00000
+     24       3.5788      2.00000
+     25       3.9079      2.00000
+     26       4.4004      2.00000
+     27       8.2752      0.00000
+     28      12.2662      0.00000
+     29      12.8867      0.00000
+     30      13.0887      0.00000
+     31      17.3071      0.00000
+
+ k-point     6 :       0.1429    0.2000    0.0000
+  band No.  band energies     occupation 
+      1     -17.7223      2.00000
+      2     -17.0907      2.00000
+      3     -16.9397      2.00000
+      4     -16.8733      2.00000
+      5     -16.6764      2.00000
+      6     -16.6582      2.00000
+      7     -16.5730      2.00000
+      8     -16.5104      2.00000
+      9     -16.4749      2.00000
+     10     -16.4724      2.00000
+     11     -15.4302      2.00000
+     12     -13.8152      2.00000
+     13     -13.3207      2.00000
+     14     -12.1369      2.00000
+     15      -3.3957      2.00000
+     16      -0.0085      2.00000
+     17       0.1723      2.00000
+     18       1.1958      2.00000
+     19       1.3311      2.00000
+     20       1.7080      2.00000
+     21       2.6482      2.00000
+     22       2.9029      2.00000
+     23       3.0509      2.00000
+     24       3.7172      2.00000
+     25       3.8967      2.00000
+     26       4.3180      2.00000
+     27       9.1539      0.00000
+     28      12.7986      0.00000
+     29      13.7173      0.00000
+     30      13.8387      0.00000
+     31      16.1388      0.00000
+
+ k-point     7 :       0.2857    0.2000    0.0000
+  band No.  band energies     occupation 
+      1     -17.5827      2.00000
+      2     -17.4140      2.00000
+      3     -17.2001      2.00000
+      4     -16.7738      2.00000
+      5     -16.5920      2.00000
+      6     -16.5913      2.00000
+      7     -16.5561      2.00000
+      8     -16.5206      2.00000
+      9     -16.5134      2.00000
+     10     -16.5053      2.00000
+     11     -15.0748      2.00000
+     12     -13.4049      2.00000
+     13     -12.7330      2.00000
+     14     -12.3154      2.00000
+     15      -3.3050      2.00000
+     16      -0.6468      2.00000
+     17      -0.2291      2.00000
+     18       0.3553      2.00000
+     19       1.2831      2.00000
+     20       1.3521      2.00000
+     21       2.0139      2.00000
+     22       2.4273      2.00000
+     23       2.6660      2.00000
+     24       3.6609      2.00000
+     25       3.7997      2.00000
+     26       3.9821      2.00000
+     27      10.8293      0.00000
+     28      13.4512      0.00000
+     29      15.3096      0.00000
+     30      15.3565      0.00000
+     31      15.4984      0.00000
+
+ k-point     8 :       0.4286    0.2000    0.0000
+  band No.  band energies     occupation 
+      1     -17.6678      2.00000
+      2     -17.6491      2.00000
+      3     -17.0701      2.00000
+      4     -16.8731      2.00000
+      5     -16.5594      2.00000
+      6     -16.5550      2.00000
+      7     -16.5304      2.00000
+      8     -16.5161      2.00000
+      9     -16.4863      2.00000
+     10     -16.4662      2.00000
+     11     -14.4256      2.00000
+     12     -13.6864      2.00000
+     13     -12.2852      2.00000
+     14     -12.2377      2.00000
+     15      -2.9399      2.00000
+     16      -2.0595      2.00000
+     17      -0.2227      2.00000
+     18       0.1425      2.00000
+     19       0.6060      2.00000
+     20       0.6138      2.00000
+     21       2.6311      2.00000
+     22       2.6822      2.00000
+     23       2.7906      2.00000
+     24       3.3186      2.00000
+     25       3.3640      2.00000
+     26       3.5694      2.00000
+     27      12.2667      0.00000
+     28      13.1888      0.00000
+     29      15.3352      0.00000
+     30      15.8742      0.00000
+     31      17.1020      0.00000
+
+ k-point     9 :       0.0000    0.4000    0.0000
+  band No.  band energies     occupation 
+      1     -17.6201      2.00000
+      2     -17.3447      2.00000
+      3     -16.7320      2.00000
+      4     -16.7318      2.00000
+      5     -16.7286      2.00000
+      6     -16.7238      2.00000
+      7     -16.5568      2.00000
+      8     -16.5299      2.00000
+      9     -16.4577      2.00000
+     10     -16.4575      2.00000
+     11     -15.1838      2.00000
+     12     -14.6423      2.00000
+     13     -13.0304      2.00000
+     14     -12.4331      2.00000
+     15      -2.5993      2.00000
+     16      -1.4006      2.00000
+     17       1.2623      2.00000
+     18       1.2917      2.00000
+     19       1.9052      2.00000
+     20       2.1382      2.00000
+     21       2.2714      2.00000
+     22       2.9353      2.00000
+     23       3.5807      2.00000
+     24       3.6033      2.00000
+     25       3.9647      2.00000
+     26       4.0811      2.00000
+     27       9.9330      0.00000
+     28      11.4083      0.00000
+     29      13.3512      0.00000
+     30      13.4943      0.00000
+     31      17.6912      0.00000
+
+ k-point    10 :       0.1429    0.4000    0.0000
+  band No.  band energies     occupation 
+      1     -17.5648      2.00000
+      2     -17.3337      2.00000
+      3     -16.9219      2.00000
+      4     -16.8957      2.00000
+      5     -16.6628      2.00000
+      6     -16.6500      2.00000
+      7     -16.5522      2.00000
+      8     -16.5283      2.00000
+      9     -16.4755      2.00000
+     10     -16.4734      2.00000
+     11     -15.0287      2.00000
+     12     -14.4278      2.00000
+     13     -12.8526      2.00000
+     14     -12.3856      2.00000
+     15      -2.5612      2.00000
+     16      -1.3330      2.00000
+     17       0.1940      2.00000
+     18       0.6064      2.00000
+     19       1.8032      2.00000
+     20       2.2999      2.00000
+     21       2.5273      2.00000
+     22       3.1734      2.00000
+     23       3.1801      2.00000
+     24       3.4018      2.00000
+     25       3.8714      2.00000
+     26       4.0163      2.00000
+     27      10.5155      0.00000
+     28      11.9143      0.00000
+     29      14.1295      0.00000
+     30      14.2421      0.00000
+     31      16.6358      0.00000
+
+ k-point    11 :       0.2857    0.4000    0.0000
+  band No.  band energies     occupation 
+      1     -17.6071      2.00000
+      2     -17.5460      2.00000
+      3     -16.9919      2.00000
+      4     -16.8147      2.00000
+      5     -16.5925      2.00000
+      6     -16.5922      2.00000
+      7     -16.5431      2.00000
+      8     -16.5289      2.00000
+      9     -16.5053      2.00000
+     10     -16.5015      2.00000
+     11     -14.7309      2.00000
+     12     -14.1219      2.00000
+     13     -12.4516      2.00000
+     14     -12.2489      2.00000
+     15      -2.5354      2.00000
+     16      -1.4546      2.00000
+     17      -0.6431      2.00000
+     18      -0.5180      2.00000
+     19       1.1805      2.00000
+     20       1.2557      2.00000
+     21       2.8130      2.00000
+     22       2.9480      2.00000
+     23       3.2844      2.00000
+     24       3.5953      2.00000
+     25       3.7111      2.00000
+     26       3.9535      2.00000
+     27      11.6853      0.00000
+     28      12.7827      0.00000
+     29      15.3150      0.00000
+     30      15.3687      0.00000
+     31      15.8387      0.00000
+
+ k-point    12 :       0.4286    0.4000    0.0000
+  band No.  band energies     occupation 
+      1     -17.7641      2.00000
+      2     -17.7544      2.00000
+      3     -16.8405      2.00000
+      4     -16.7605      2.00000
+      5     -16.5645      2.00000
+      6     -16.5588      2.00000
+      7     -16.5215      2.00000
+      8     -16.5156      2.00000
+      9     -16.4741      2.00000
+     10     -16.4655      2.00000
+     11     -14.3931      2.00000
+     12     -14.1147      2.00000
+     13     -12.1343      2.00000
+     14     -12.0986      2.00000
+     15      -2.5128      2.00000
+     16      -2.1493      2.00000
+     17      -0.9041      2.00000
+     18      -0.7955      2.00000
+     19       0.5174      2.00000
+     20       0.5193      2.00000
+     21       2.8175      2.00000
+     22       2.9075      2.00000
+     23       3.3444      2.00000
+     24       3.5215      2.00000
+     25       3.7884      2.00000
+     26       4.0253      2.00000
+     27      12.6627      0.00000
+     28      13.0971      0.00000
+     29      14.7289      0.00000
+     30      14.8306      0.00000
+     31      17.3528      0.00000
+
+ k-point    13 :       0.0000    0.0000    0.2000
+  band No.  band energies     occupation 
+      1     -17.8087      2.00000
+      2     -17.0887      2.00000
+      3     -16.7358      2.00000
+      4     -16.7357      2.00000
+      5     -16.7192      2.00000
+      6     -16.7083      2.00000
+      7     -16.5801      2.00000
+      8     -16.5102      2.00000
+      9     -16.4530      2.00000
+     10     -16.4530      2.00000
+     11     -15.5453      2.00000
+     12     -14.1000      2.00000
+     13     -13.6036      2.00000
+     14     -12.0472      2.00000
+     15      -3.4130      2.00000
+     16      -0.1348      2.00000
+     17       0.7093      2.00000
+     18       0.8472      2.00000
+     19       1.5991      2.00000
+     20       2.4918      2.00000
+     21       3.0223      2.00000
+     22       3.2198      2.00000
+     23       3.5487      2.00000
+     24       3.5789      2.00000
+     25       3.9091      2.00000
+     26       4.3985      2.00000
+     27       8.2758      0.00000
+     28      12.2679      0.00000
+     29      12.8878      0.00000
+     30      13.0913      0.00000
+     31      17.3029      0.00000
+
+ k-point    14 :       0.1429    0.0000    0.2000
+  band No.  band energies     occupation 
+      1     -17.7223      2.00000
+      2     -17.0906      2.00000
+      3     -16.9398      2.00000
+      4     -16.8733      2.00000
+      5     -16.6764      2.00000
+      6     -16.6582      2.00000
+      7     -16.5730      2.00000
+      8     -16.5104      2.00000
+      9     -16.4749      2.00000
+     10     -16.4725      2.00000
+     11     -15.4303      2.00000
+     12     -13.8155      2.00000
+     13     -13.3204      2.00000
+     14     -12.1368      2.00000
+     15      -3.3955      2.00000
+     16      -0.0048      2.00000
+     17       0.1705      2.00000
+     18       1.1955      2.00000
+     19       1.3319      2.00000
+     20       1.7044      2.00000
+     21       2.6485      2.00000
+     22       2.9025      2.00000
+     23       3.0514      2.00000
+     24       3.7168      2.00000
+     25       3.8981      2.00000
+     26       4.3167      2.00000
+     27       9.1542      0.00000
+     28      12.7998      0.00000
+     29      13.7179      0.00000
+     30      13.8417      0.00000
+     31      16.1364      0.00000
+
+ k-point    15 :       0.2857    0.0000    0.2000
+  band No.  band energies     occupation 
+      1     -17.5826      2.00000
+      2     -17.4139      2.00000
+      3     -17.2001      2.00000
+      4     -16.7738      2.00000
+      5     -16.5920      2.00000
+      6     -16.5913      2.00000
+      7     -16.5561      2.00000
+      8     -16.5206      2.00000
+      9     -16.5134      2.00000
+     10     -16.5054      2.00000
+     11     -15.0750      2.00000
+     12     -13.4054      2.00000
+     13     -12.7327      2.00000
+     14     -12.3152      2.00000
+     15      -3.3051      2.00000
+     16      -0.6479      2.00000
+     17      -0.2298      2.00000
+     18       0.3582      2.00000
+     19       1.2830      2.00000
+     20       1.3523      2.00000
+     21       2.0153      2.00000
+     22       2.4225      2.00000
+     23       2.6680      2.00000
+     24       3.6630      2.00000
+     25       3.7969      2.00000
+     26       3.9833      2.00000
+     27      10.8292      0.00000
+     28      13.4515      0.00000
+     29      15.3063      0.00000
+     30      15.3584      0.00000
+     31      15.4994      0.00000
+
+ k-point    16 :       0.4286    0.0000    0.2000
+  band No.  band energies     occupation 
+      1     -17.6677      2.00000
+      2     -17.6490      2.00000
+      3     -17.0701      2.00000
+      4     -16.8731      2.00000
+      5     -16.5593      2.00000
+      6     -16.5550      2.00000
+      7     -16.5304      2.00000
+      8     -16.5162      2.00000
+      9     -16.4863      2.00000
+     10     -16.4662      2.00000
+     11     -14.4258      2.00000
+     12     -13.6867      2.00000
+     13     -12.2849      2.00000
+     14     -12.2375      2.00000
+     15      -2.9403      2.00000
+     16      -2.0602      2.00000
+     17      -0.2216      2.00000
+     18       0.1446      2.00000
+     19       0.6043      2.00000
+     20       0.6123      2.00000
+     21       2.6349      2.00000
+     22       2.6847      2.00000
+     23       2.7882      2.00000
+     24       3.3190      2.00000
+     25       3.3636      2.00000
+     26       3.5676      2.00000
+     27      12.2662      0.00000
+     28      13.1883      0.00000
+     29      15.3333      0.00000
+     30      15.8732      0.00000
+     31      17.1053      0.00000
+
+ k-point    17 :       0.0000    0.2000    0.2000
+  band No.  band energies     occupation 
+      1     -17.7647      2.00000
+      2     -17.1870      2.00000
+      3     -16.7388      2.00000
+      4     -16.7317      2.00000
+      5     -16.7284      2.00000
+      6     -16.7051      2.00000
+      7     -16.5722      2.00000
+      8     -16.5155      2.00000
+      9     -16.4577      2.00000
+     10     -16.4499      2.00000
+     11     -15.4075      2.00000
+     12     -13.8958      2.00000
+     13     -13.8177      2.00000
+     14     -12.1949      2.00000
+     15      -3.1117      2.00000
+     16      -0.2031      2.00000
+     17       0.5321      2.00000
+     18       0.9877      2.00000
+     19       1.7854      2.00000
+     20       2.3208      2.00000
+     21       2.8035      2.00000
+     22       3.0842      2.00000
+     23       3.5057      2.00000
+     24       3.6068      2.00000
+     25       3.8187      2.00000
+     26       4.2456      2.00000
+     27       8.9391      0.00000
+     28      12.0374      0.00000
+     29      13.2271      0.00000
+     30      13.2404      0.00000
+     31      17.2852      0.00000
+
+ k-point    18 :       0.1429    0.2000    0.2000
+  band No.  band energies     occupation 
+      1     -17.6811      2.00000
+      2     -17.1775      2.00000
+      3     -16.9486      2.00000
+      4     -16.8822      2.00000
+      5     -16.6775      2.00000
+      6     -16.6467      2.00000
+      7     -16.5659      2.00000
+      8     -16.5151      2.00000
+      9     -16.4753      2.00000
+     10     -16.4735      2.00000
+     11     -15.2782      2.00000
+     12     -13.6460      2.00000
+     13     -13.5617      2.00000
+     14     -12.2257      2.00000
+     15      -3.1045      2.00000
+     16      -0.5770      2.00000
+     17       0.7465      2.00000
+     18       1.0262      2.00000
+     19       1.1674      2.00000
+     20       1.7183      2.00000
+     21       2.5434      2.00000
+     22       2.8524      2.00000
+     23       3.3119      2.00000
+     24       3.5743      2.00000
+     25       3.8438      2.00000
+     26       4.2746      2.00000
+     27       9.6296      0.00000
+     28      12.5357      0.00000
+     29      13.9586      0.00000
+     30      14.0147      0.00000
+     31      16.1995      0.00000
+
+ k-point    19 :       0.2857    0.2000    0.2000
+  band No.  band energies     occupation 
+      1     -17.6065      2.00000
+      2     -17.3241      2.00000
+      3     -17.2942      2.00000
+      4     -16.7719      2.00000
+      5     -16.5985      2.00000
+      6     -16.5806      2.00000
+      7     -16.5523      2.00000
+      8     -16.5229      2.00000
+      9     -16.5113      2.00000
+     10     -16.5066      2.00000
+     11     -14.9509      2.00000
+     12     -13.4418      2.00000
+     13     -12.8974      2.00000
+     14     -12.2356      2.00000
+     15      -3.1084      2.00000
+     16      -1.2385      2.00000
+     17      -0.3445      2.00000
+     18       0.9576      2.00000
+     19       0.9760      2.00000
+     20       1.3177      2.00000
+     21       1.7665      2.00000
+     22       2.6007      2.00000
+     23       3.0618      2.00000
+     24       3.7067      2.00000
+     25       3.8327      2.00000
+     26       3.9976      2.00000
+     27      11.0085      0.00000
+     28      13.1309      0.00000
+     29      15.1522      0.00000
+     30      15.5580      0.00000
+     31      15.6068      0.00000
+
+ k-point    20 :       0.4286    0.2000    0.2000
+  band No.  band energies     occupation 
+      1     -17.7587      2.00000
+      2     -17.5669      2.00000
+      3     -17.1426      2.00000
+      4     -16.7689      2.00000
+      5     -16.5605      2.00000
+      6     -16.5589      2.00000
+      7     -16.5278      2.00000
+      8     -16.5148      2.00000
+      9     -16.4826      2.00000
+     10     -16.4656      2.00000
+     11     -14.4321      2.00000
+     12     -13.7002      2.00000
+     13     -12.4012      2.00000
+     14     -12.1052      2.00000
+     15      -3.0324      2.00000
+     16      -2.0723      2.00000
+     17      -0.7099      2.00000
+     18       0.1421      2.00000
+     19       0.1501      2.00000
+     20       1.6359      2.00000
+     21       1.9736      2.00000
+     22       2.9382      2.00000
+     23       3.1831      2.00000
+     24       3.4398      2.00000
+     25       3.4856      2.00000
+     26       3.6954      2.00000
+     27      12.1152      0.00000
+     28      13.0572      0.00000
+     29      14.6427      0.00000
+     30      16.7082      0.00000
+     31      16.7383      0.00000
+
+ k-point    21 :       0.0000    0.4000    0.2000
+  band No.  band energies     occupation 
+      1     -17.6292      2.00000
+      2     -17.4133      2.00000
+      3     -16.7368      2.00000
+      4     -16.7323      2.00000
+      5     -16.7211      2.00000
+      6     -16.7097      2.00000
+      7     -16.5527      2.00000
+      8     -16.5310      2.00000
+      9     -16.4574      2.00000
+     10     -16.4526      2.00000
+     11     -15.0068      2.00000
+     12     -14.4271      2.00000
+     13     -13.2783      2.00000
+     14     -12.6454      2.00000
+     15      -2.2755      2.00000
+     16      -1.1385      2.00000
+     17       1.0170      2.00000
+     18       1.3712      2.00000
+     19       1.8804      2.00000
+     20       1.8834      2.00000
+     21       2.3176      2.00000
+     22       2.9030      2.00000
+     23       3.5199      2.00000
+     24       3.5771      2.00000
+     25       3.8234      2.00000
+     26       3.9567      2.00000
+     27      10.2608      0.00000
+     28      11.4288      0.00000
+     29      13.5588      0.00000
+     30      13.6385      0.00000
+     31      17.4422      0.00000
+
+ k-point    22 :       0.1429    0.4000    0.2000
+  band No.  band energies     occupation 
+      1     -17.5589      2.00000
+      2     -17.3716      2.00000
+      3     -16.9382      2.00000
+      4     -16.9109      2.00000
+      5     -16.6673      2.00000
+      6     -16.6520      2.00000
+      7     -16.5484      2.00000
+      8     -16.5289      2.00000
+      9     -16.4760      2.00000
+     10     -16.4740      2.00000
+     11     -14.8400      2.00000
+     12     -14.2184      2.00000
+     13     -13.1016      2.00000
+     14     -12.5684      2.00000
+     15      -2.3186      2.00000
+     16      -1.3291      2.00000
+     17       0.4778      2.00000
+     18       0.6497      2.00000
+     19       1.6949      2.00000
+     20       2.0703      2.00000
+     21       2.3263      2.00000
+     22       3.0592      2.00000
+     23       3.1529      2.00000
+     24       3.4576      2.00000
+     25       3.8339      2.00000
+     26       4.0578      2.00000
+     27      10.7231      0.00000
+     28      11.8329      0.00000
+     29      14.2859      0.00000
+     30      14.3501      0.00000
+     31      16.5594      0.00000
+
+ k-point    23 :       0.2857    0.4000    0.2000
+  band No.  band energies     occupation 
+      1     -17.5844      2.00000
+      2     -17.4780      2.00000
+      3     -17.1037      2.00000
+      4     -16.8924      2.00000
+      5     -16.5906      2.00000
+      6     -16.5811      2.00000
+      7     -16.5409      2.00000
+      8     -16.5284      2.00000
+      9     -16.5093      2.00000
+     10     -16.5064      2.00000
+     11     -14.5470      2.00000
+     12     -13.9483      2.00000
+     13     -12.6668      2.00000
+     14     -12.3462      2.00000
+     15      -2.6083      2.00000
+     16      -1.9809      2.00000
+     17      -0.2241      2.00000
+     18       0.2604      2.00000
+     19       0.8686      2.00000
+     20       1.1219      2.00000
+     21       2.6868      2.00000
+     22       3.0558      2.00000
+     23       3.3494      2.00000
+     24       3.5831      2.00000
+     25       3.7215      2.00000
+     26       3.9438      2.00000
+     27      11.5624      0.00000
+     28      12.3670      0.00000
+     29      15.3380      0.00000
+     30      15.5535      0.00000
+     31      15.9685      0.00000
+
+ k-point    24 :       0.4286    0.4000    0.2000
+  band No.  band energies     occupation 
+      1     -17.7611      2.00000
+      2     -17.6633      2.00000
+      3     -16.9962      2.00000
+      4     -16.7991      2.00000
+      5     -16.5624      2.00000
+      6     -16.5597      2.00000
+      7     -16.5220      2.00000
+      8     -16.5160      2.00000
+      9     -16.4743      2.00000
+     10     -16.4689      2.00000
+     11     -14.2739      2.00000
+     12     -13.9362      2.00000
+     13     -12.2945      2.00000
+     14     -12.1221      2.00000
+     15      -2.9845      2.00000
+     16      -2.5847      2.00000
+     17      -0.4985      2.00000
+     18      -0.2028      2.00000
+     19       0.1904      2.00000
+     20       0.9308      2.00000
+     21       2.8894      2.00000
+     22       3.1787      2.00000
+     23       3.4224      2.00000
+     24       3.5362      2.00000
+     25       3.6056      2.00000
+     26       3.9151      2.00000
+     27      12.0324      0.00000
+     28      12.4081      0.00000
+     29      14.8254      0.00000
+     30      15.6511      0.00000
+     31      17.2638      0.00000
+
+ k-point    25 :       0.0000    0.0000    0.4000
+  band No.  band energies     occupation 
+      1     -17.6201      2.00000
+      2     -17.3447      2.00000
+      3     -16.7319      2.00000
+      4     -16.7318      2.00000
+      5     -16.7285      2.00000
+      6     -16.7238      2.00000
+      7     -16.5568      2.00000
+      8     -16.5299      2.00000
+      9     -16.4577      2.00000
+     10     -16.4576      2.00000
+     11     -15.1839      2.00000
+     12     -14.6426      2.00000
+     13     -13.0302      2.00000
+     14     -12.4330      2.00000
+     15      -2.5983      2.00000
+     16      -1.3980      2.00000
+     17       1.2627      2.00000
+     18       1.2914      2.00000
+     19       1.9048      2.00000
+     20       2.1392      2.00000
+     21       2.2666      2.00000
+     22       2.9324      2.00000
+     23       3.5811      2.00000
+     24       3.6038      2.00000
+     25       3.9650      2.00000
+     26       4.0793      2.00000
+     27       9.9347      0.00000
+     28      11.4105      0.00000
+     29      13.3577      0.00000
+     30      13.4998      0.00000
+     31      17.6883      0.00000
+
+ k-point    26 :       0.1429    0.0000    0.4000
+  band No.  band energies     occupation 
+      1     -17.5647      2.00000
+      2     -17.3336      2.00000
+      3     -16.9219      2.00000
+      4     -16.8957      2.00000
+      5     -16.6628      2.00000
+      6     -16.6500      2.00000
+      7     -16.5522      2.00000
+      8     -16.5283      2.00000
+      9     -16.4755      2.00000
+     10     -16.4734      2.00000
+     11     -15.0289      2.00000
+     12     -14.4281      2.00000
+     13     -12.8523      2.00000
+     14     -12.3854      2.00000
+     15      -2.5605      2.00000
+     16      -1.3311      2.00000
+     17       0.1929      2.00000
+     18       0.6057      2.00000
+     19       1.8047      2.00000
+     20       2.3003      2.00000
+     21       2.5245      2.00000
+     22       3.1746      2.00000
+     23       3.1786      2.00000
+     24       3.4011      2.00000
+     25       3.8722      2.00000
+     26       4.0138      2.00000
+     27      10.5168      0.00000
+     28      11.9161      0.00000
+     29      14.1357      0.00000
+     30      14.2472      0.00000
+     31      16.6308      0.00000
+
+ k-point    27 :       0.2857    0.0000    0.4000
+  band No.  band energies     occupation 
+      1     -17.6070      2.00000
+      2     -17.5459      2.00000
+      3     -16.9919      2.00000
+      4     -16.8147      2.00000
+      5     -16.5925      2.00000
+      6     -16.5922      2.00000
+      7     -16.5430      2.00000
+      8     -16.5288      2.00000
+      9     -16.5054      2.00000
+     10     -16.5016      2.00000
+     11     -14.7313      2.00000
+     12     -14.1224      2.00000
+     13     -12.4512      2.00000
+     14     -12.2485      2.00000
+     15      -2.5356      2.00000
+     16      -1.4555      2.00000
+     17      -0.6433      2.00000
+     18      -0.5167      2.00000
+     19       1.1810      2.00000
+     20       1.2562      2.00000
+     21       2.8148      2.00000
+     22       2.9503      2.00000
+     23       3.2817      2.00000
+     24       3.5954      2.00000
+     25       3.7098      2.00000
+     26       3.9527      2.00000
+     27      11.6855      0.00000
+     28      12.7834      0.00000
+     29      15.3140      0.00000
+     30      15.3647      0.00000
+     31      15.8431      0.00000
+
+ k-point    28 :       0.4286    0.0000    0.4000
+  band No.  band energies     occupation 
+      1     -17.7640      2.00000
+      2     -17.7543      2.00000
+      3     -16.8405      2.00000
+      4     -16.7604      2.00000
+      5     -16.5645      2.00000
+      6     -16.5588      2.00000
+      7     -16.5216      2.00000
+      8     -16.5157      2.00000
+      9     -16.4741      2.00000
+     10     -16.4655      2.00000
+     11     -14.3935      2.00000
+     12     -14.1152      2.00000
+     13     -12.1339      2.00000
+     14     -12.0982      2.00000
+     15      -2.5141      2.00000
+     16      -2.1512      2.00000
+     17      -0.9030      2.00000
+     18      -0.7937      2.00000
+     19       0.5174      2.00000
+     20       0.5190      2.00000
+     21       2.8220      2.00000
+     22       2.9114      2.00000
+     23       3.3429      2.00000
+     24       3.5181      2.00000
+     25       3.7874      2.00000
+     26       4.0262      2.00000
+     27      12.6615      0.00000
+     28      13.0958      0.00000
+     29      14.7254      0.00000
+     30      14.8278      0.00000
+     31      17.3569      0.00000
+
+ k-point    29 :       0.0000    0.2000    0.4000
+  band No.  band energies     occupation 
+      1     -17.6292      2.00000
+      2     -17.4133      2.00000
+      3     -16.7367      2.00000
+      4     -16.7323      2.00000
+      5     -16.7211      2.00000
+      6     -16.7097      2.00000
+      7     -16.5527      2.00000
+      8     -16.5310      2.00000
+      9     -16.4574      2.00000
+     10     -16.4526      2.00000
+     11     -15.0070      2.00000
+     12     -14.4274      2.00000
+     13     -13.2781      2.00000
+     14     -12.6453      2.00000
+     15      -2.2748      2.00000
+     16      -1.1366      2.00000
+     17       1.0165      2.00000
+     18       1.3710      2.00000
+     19       1.8801      2.00000
+     20       1.8836      2.00000
+     21       2.3150      2.00000
+     22       2.9009      2.00000
+     23       3.5202      2.00000
+     24       3.5773      2.00000
+     25       3.8238      2.00000
+     26       3.9561      2.00000
+     27      10.2618      0.00000
+     28      11.4299      0.00000
+     29      13.5632      0.00000
+     30      13.6424      0.00000
+     31      17.4397      0.00000
+
+ k-point    30 :       0.1429    0.2000    0.4000
+  band No.  band energies     occupation 
+      1     -17.5589      2.00000
+      2     -17.3716      2.00000
+      3     -16.9382      2.00000
+      4     -16.9109      2.00000
+      5     -16.6673      2.00000
+      6     -16.6520      2.00000
+      7     -16.5484      2.00000
+      8     -16.5289      2.00000
+      9     -16.4760      2.00000
+     10     -16.4740      2.00000
+     11     -14.8402      2.00000
+     12     -14.2187      2.00000
+     13     -13.1014      2.00000
+     14     -12.5683      2.00000
+     15      -2.3181      2.00000
+     16      -1.3280      2.00000
+     17       0.4772      2.00000
+     18       0.6492      2.00000
+     19       1.6961      2.00000
+     20       2.0709      2.00000
+     21       2.3244      2.00000
+     22       3.0592      2.00000
+     23       3.1520      2.00000
+     24       3.4565      2.00000
+     25       3.8345      2.00000
+     26       4.0571      2.00000
+     27      10.7239      0.00000
+     28      11.8340      0.00000
+     29      14.2902      0.00000
+     30      14.3537      0.00000
+     31      16.5563      0.00000
+
+ k-point    31 :       0.2857    0.2000    0.4000
+  band No.  band energies     occupation 
+      1     -17.5844      2.00000
+      2     -17.4779      2.00000
+      3     -17.1038      2.00000
+      4     -16.8924      2.00000
+      5     -16.5906      2.00000
+      6     -16.5811      2.00000
+      7     -16.5409      2.00000
+      8     -16.5284      2.00000
+      9     -16.5094      2.00000
+     10     -16.5065      2.00000
+     11     -14.5473      2.00000
+     12     -13.9487      2.00000
+     13     -12.6665      2.00000
+     14     -12.3459      2.00000
+     15      -2.6084      2.00000
+     16      -1.9812      2.00000
+     17      -0.2243      2.00000
+     18       0.2606      2.00000
+     19       0.8692      2.00000
+     20       1.1224      2.00000
+     21       2.6878      2.00000
+     22       3.0565      2.00000
+     23       3.3475      2.00000
+     24       3.5833      2.00000
+     25       3.7220      2.00000
+     26       3.9428      2.00000
+     27      11.5624      0.00000
+     28      12.3671      0.00000
+     29      15.3371      0.00000
+     30      15.5541      0.00000
+     31      15.9700      0.00000
+
+ k-point    32 :       0.4286    0.2000    0.4000
+  band No.  band energies     occupation 
+      1     -17.7610      2.00000
+      2     -17.6633      2.00000
+      3     -16.9962      2.00000
+      4     -16.7991      2.00000
+      5     -16.5624      2.00000
+      6     -16.5597      2.00000
+      7     -16.5221      2.00000
+      8     -16.5161      2.00000
+      9     -16.4743      2.00000
+     10     -16.4689      2.00000
+     11     -14.2742      2.00000
+     12     -13.9366      2.00000
+     13     -12.2941      2.00000
+     14     -12.1218      2.00000
+     15      -2.9850      2.00000
+     16      -2.5854      2.00000
+     17      -0.4981      2.00000
+     18      -0.2022      2.00000
+     19       0.1906      2.00000
+     20       0.9303      2.00000
+     21       2.8920      2.00000
+     22       3.1812      2.00000
+     23       3.4248      2.00000
+     24       3.5319      2.00000
+     25       3.6045      2.00000
+     26       3.9152      2.00000
+     27      12.0313      0.00000
+     28      12.4069      0.00000
+     29      14.8239      0.00000
+     30      15.6493      0.00000
+     31      17.2689      0.00000
+
+ k-point    33 :       0.0000    0.4000    0.4000
+  band No.  band energies     occupation 
+      1     -17.6173      2.00000
+      2     -17.5383      2.00000
+      3     -16.7401      2.00000
+      4     -16.7374      2.00000
+      5     -16.7043      2.00000
+      6     -16.6988      2.00000
+      7     -16.5436      2.00000
+      8     -16.5353      2.00000
+      9     -16.4524      2.00000
+     10     -16.4495      2.00000
+     11     -14.5274      2.00000
+     12     -13.9641      2.00000
+     13     -13.7812      2.00000
+     14     -13.1939      2.00000
+     15      -1.4771      2.00000
+     16      -0.8320      2.00000
+     17       0.6691      2.00000
+     18       1.2049      2.00000
+     19       1.5684      2.00000
+     20       1.7716      2.00000
+     21       2.5142      2.00000
+     22       2.7733      2.00000
+     23       3.4598      2.00000
+     24       3.4969      2.00000
+     25       3.6656      2.00000
+     26       3.7240      2.00000
+     27      10.9070      0.00000
+     28      11.3504      0.00000
+     29      13.8543      0.00000
+     30      13.8741      0.00000
+     31      17.5162      0.00000
+
+ k-point    34 :       0.1429    0.4000    0.4000
+  band No.  band energies     occupation 
+      1     -17.5276      2.00000
+      2     -17.4563      2.00000
+      3     -16.9525      2.00000
+      4     -16.9398      2.00000
+      5     -16.6674      2.00000
+      6     -16.6607      2.00000
+      7     -16.5399      2.00000
+      8     -16.5323      2.00000
+      9     -16.4757      2.00000
+     10     -16.4745      2.00000
+     11     -14.3436      2.00000
+     12     -13.7577      2.00000
+     13     -13.6243      2.00000
+     14     -13.0628      2.00000
+     15      -1.7828      2.00000
+     16      -1.4021      2.00000
+     17       0.7476      2.00000
+     18       0.8521      2.00000
+     19       1.6361      2.00000
+     20       1.8760      2.00000
+     21       1.9525      2.00000
+     22       2.5007      2.00000
+     23       3.3666      2.00000
+     24       3.6789      2.00000
+     25       3.6846      2.00000
+     26       3.9357      2.00000
+     27      11.1864      0.00000
+     28      11.6026      0.00000
+     29      14.4964      0.00000
+     30      14.4991      0.00000
+     31      16.9141      0.00000
+
+ k-point    35 :       0.2857    0.4000    0.4000
+  band No.  band energies     occupation 
+      1     -17.4871      2.00000
+      2     -17.3312      2.00000
+      3     -17.2923      2.00000
+      4     -17.0921      2.00000
+      5     -16.5811      2.00000
+      6     -16.5757      2.00000
+      7     -16.5340      2.00000
+      8     -16.5270      2.00000
+      9     -16.5164      2.00000
+     10     -16.5146      2.00000
+     11     -14.0943      2.00000
+     12     -13.7290      2.00000
+     13     -12.9505      2.00000
+     14     -12.6750      2.00000
+     15      -2.6328      2.00000
+     16      -2.4481      2.00000
+     17       0.5174      2.00000
+     18       0.5276      2.00000
+     19       0.7540      2.00000
+     20       1.5194      2.00000
+     21       2.1160      2.00000
+     22       2.9394      2.00000
+     23       3.4299      2.00000
+     24       3.6808      2.00000
+     25       3.7194      2.00000
+     26       3.9413      2.00000
+     27      11.4881      0.00000
+     28      11.7615      0.00000
+     29      15.4298      0.00000
+     30      15.5428      0.00000
+     31      16.5260      0.00000
+
+ k-point    36 :       0.4286    0.4000    0.4000
+  band No.  band energies     occupation 
+      1     -17.6667      2.00000
+      2     -17.5751      2.00000
+      3     -17.1388      2.00000
+      4     -16.9959      2.00000
+      5     -16.5560      2.00000
+      6     -16.5554      2.00000
+      7     -16.5220      2.00000
+      8     -16.5187      2.00000
+      9     -16.4770      2.00000
+     10     -16.4744      2.00000
+     11     -13.9494      2.00000
+     12     -13.7478      2.00000
+     13     -12.4470      2.00000
+     14     -12.3097      2.00000
+     15      -3.3246      2.00000
+     16      -3.1800      2.00000
+     17      -0.2943      2.00000
+     18      -0.2882      2.00000
+     19       0.9158      2.00000
+     20       2.0581      2.00000
+     21       2.2507      2.00000
+     22       3.2665      2.00000
+     23       3.5373      2.00000
+     24       3.6010      2.00000
+     25       3.6598      2.00000
+     26       3.7215      2.00000
+     27      11.4339      0.00000
+     28      11.5467      0.00000
+     29      15.2502      0.00000
+     30      15.6344      0.00000
+     31      17.3975      0.00000
+
+
+--------------------------------------------------------------------------------------------------------
+
+
+ soft charge-density along one line, spin component            1
+         0         1         2         3         4         5         6         7         8         9
+ total charge-density along one line
+ 
+ pseudopotential strength for first ion, spin component:            1
+-13.353   0.000   0.000   0.015  -0.000   1.045  -0.000  -0.000
+  0.000 -13.375  -0.029  -0.000   0.050  -0.000   1.056   0.012
+  0.000  -0.029 -13.400   0.000  -0.021  -0.000   0.012   1.064
+  0.015  -0.000   0.000 -13.353   0.000  -0.003   0.000  -0.000
+ -0.000   0.050  -0.021   0.000 -13.376   0.000  -0.020   0.009
+  1.045  -0.000  -0.000  -0.003   0.000   5.333   0.000   0.000
+ -0.000   1.056   0.012   0.000  -0.020   0.000   5.327  -0.002
+ -0.000   0.012   1.064  -0.000   0.009   0.000  -0.002   5.330
+ -0.003   0.000  -0.000   1.045  -0.000  -0.004  -0.000   0.000
+  0.000  -0.020   0.009  -0.000   1.054   0.000   0.003  -0.004
+ -0.000  -0.003  -0.003  -0.000   0.005   0.000   0.005   0.001
+  0.000   0.006   0.005  -0.000  -0.008  -0.000  -0.008  -0.002
+ -0.000   0.000  -0.000   0.000  -0.000  -0.000   0.000  -0.000
+  0.000   0.000   0.000  -0.000   0.000   0.000   0.000   0.000
+  0.000   0.000   0.000   0.000  -0.000   0.000   0.000   0.000
+ -0.000   0.000  -0.000   0.000  -0.000  -0.000   0.000  -0.000
+  0.000   0.000   0.000  -0.000   0.000   0.000   0.000   0.000
+  0.000   0.000   0.000   0.000  -0.000   0.000   0.000   0.000
+ total augmentation occupancy for first ion, spin component:            1
+  1.994  -0.000   0.000   0.000  -0.000   0.002  -0.000  -0.000   0.010   0.000  -0.000  -0.000   0.000  -0.000  -0.000  -0.000
+ -0.000   1.994   0.000   0.000  -0.000   0.000   0.004  -0.005   0.000   0.009  -0.001  -0.004  -0.000  -0.000  -0.000   0.000
+  0.000   0.000   1.993  -0.000  -0.001   0.000  -0.005  -0.009  -0.000  -0.006  -0.003  -0.003   0.000  -0.000  -0.000  -0.000
+  0.000   0.000  -0.000   1.994   0.000   0.010  -0.000  -0.000   0.002   0.000   0.000  -0.000  -0.000   0.000  -0.000   0.000
+ -0.000  -0.000  -0.001   0.000   1.995  -0.000   0.009  -0.006   0.000  -0.002   0.006   0.005   0.000   0.000   0.000  -0.000
+  0.002   0.000   0.000   0.010  -0.000   0.172   0.000   0.000   0.108  -0.000  -0.000  -0.000   0.000  -0.000   0.000   0.000
+ -0.000   0.004  -0.005  -0.000   0.009   0.000   0.202  -0.059   0.000   0.101  -0.021  -0.004  -0.000   0.000   0.000   0.000
+ -0.000  -0.005  -0.009  -0.000  -0.006   0.000  -0.059   0.077   0.000  -0.032  -0.023  -0.004  -0.000   0.000  -0.000   0.000
+  0.010   0.000  -0.000   0.002   0.000   0.108   0.000   0.000   0.171  -0.000   0.000   0.000  -0.000   0.000   0.000   0.000
+  0.000   0.009  -0.006   0.000  -0.002  -0.000   0.101  -0.032  -0.000   0.114   0.040   0.007   0.000   0.000   0.000  -0.000
+ -0.000  -0.001  -0.003   0.000   0.006  -0.000  -0.021  -0.023   0.000   0.040   1.610   0.199   0.000   0.000   0.000  -0.000
+ -0.000  -0.004  -0.003  -0.000   0.005  -0.000  -0.004  -0.004   0.000   0.007   0.199   0.029   0.000   0.000   0.000  -0.000
+  0.000  -0.000   0.000  -0.000   0.000   0.000  -0.000  -0.000  -0.000   0.000   0.000   0.000   4.846  -0.321   0.000  -1.804
+ -0.000  -0.000  -0.000   0.000   0.000  -0.000   0.000   0.000   0.000   0.000   0.000   0.000  -0.321   4.848  -0.000   0.140
+ -0.000  -0.000  -0.000  -0.000   0.000   0.000   0.000  -0.000   0.000   0.000   0.000   0.000   0.000  -0.000   5.731  -0.000
+ -0.000   0.000  -0.000   0.000  -0.000   0.000   0.000   0.000   0.000  -0.000  -0.000  -0.000  -1.804   0.140  -0.000   0.685
+  0.000   0.000   0.000  -0.000  -0.000   0.000  -0.000  -0.000   0.000  -0.000  -0.000  -0.000   0.140  -1.805   0.000  -0.060
+  0.000   0.000   0.000   0.000  -0.000  -0.000  -0.000   0.000  -0.000  -0.000  -0.000  -0.000  -0.000   0.000  -2.183   0.000
+
+
+------------------------ aborting loop because EDIFF is reached ----------------------------------------
+
+
+    FORLOC:  cpu time      0.0025: real time      0.0025
+    FORHF :  cpu time    141.3757: real time    141.4241
+    FORNL :  cpu time      0.1235: real time      0.1062
+    FORCOR:  cpu time      0.3239: real time      0.2793
+    OFIELD:  cpu time      0.0011: real time      0.0011
+
+ VOLUME and BASIS-vectors are now :
+ -----------------------------------------------------------------------------
+  energy-cutoff  :      520.00
+  volume of cell :       72.82
+      direct lattice vectors                 reciprocal lattice vectors
+     3.207499770  0.000000000  0.000000000     0.311769313 -0.000000000 -0.000000000
+     0.000000000  4.763836050 -0.000000000    -0.000000000  0.209914865  0.000000000
+     0.000000000 -0.000000000  4.765800040    -0.000000000  0.000000000  0.209828359
+
+  length of vectors
+     3.207499770  4.763836050  4.765800040     0.311769313  0.209914865  0.209828359
+
+
+ FORCES acting on ions:
+    Electron-Ion                     Ewald-Force                    Non-Local-Force
+ -----------------------------------------------------------------------------------------------
+   0.436E-08 -.405E-09 -.328E-09   -.112E-13 0.568E-13 -.284E-13   -.328E-20 0.000E+00 0.000E+00
+   -.104E-06 0.525E-09 0.292E-09   0.100E-13 0.284E-13 0.000E+00   0.359E-20 0.000E+00 0.000E+00
+   -.326E-05 -.357E+02 0.353E+02   -.469E-13 0.380E+02 -.376E+02   0.149E-17 -.205E+01 0.201E+01
+   0.336E-05 0.357E+02 -.353E+02   0.392E-13 -.380E+02 0.376E+02   -.143E-17 0.205E+01 -.201E+01
+   -.278E-05 0.357E+02 0.353E+02   0.200E-13 -.380E+02 -.376E+02   -.149E-17 0.205E+01 0.201E+01
+   0.285E-05 -.357E+02 -.353E+02   -.120E-13 0.380E+02 0.376E+02   0.143E-17 -.205E+01 -.201E+01
+ -----------------------------------------------------------------------------------------------
+   0.759E-07 0.130E-09 -.562E-09   -.865E-15 0.000E+00 0.000E+00   -.729E-20 0.000E+00 0.000E+00
+ 
+ 
+ POSITION                                       TOTAL-FORCE (eV/Angst)
+ -----------------------------------------------------------------------------------
+      1.60375      2.38192      2.38290        -0.000000     -0.000000      0.000000
+      0.00000      0.00000      0.00000        -0.000000     -0.000000      0.000000
+      1.60375      0.92521      3.84200         0.000000     -0.037468      0.036037
+      1.60375      3.83862      0.92380         0.000000      0.037468     -0.036037
+      0.00000      1.45670      1.45910         0.000000      0.037468      0.036037
+      0.00000      3.30713      3.30670        -0.000000     -0.037468     -0.036037
+ -----------------------------------------------------------------------------------
+    total drift:                                0.000000      0.000000     -0.000000
+
+
+--------------------------------------------------------------------------------------------------------
+
+
+
+  FREE ENERGIE OF THE ION-ELECTRON SYSTEM (eV)
+  ---------------------------------------------------
+  free  energy   TOTEN  =       -47.48043867 eV
+
+  energy  without entropy=      -47.48043867  energy(sigma->0) =      -47.48043867
+ 
+
+
+--------------------------------------------------------------------------------------------------------
+
+
+    POTLOK:  cpu time      0.3632: real time      0.3199
+
+
+--------------------------------------------------------------------------------------------------------
+
+
+     LOOP+:  cpu time   1817.2488: real time   1816.3602
+    4ORBIT:  cpu time      0.0000: real time      0.0000
+
+ total amount of memory used by VASP MPI-rank0   189407. kBytes
+=======================================================================
+
+   base      :      30000. kBytes
+   nonl-proj :      20812. kBytes
+   fftplans  :       8708. kBytes
+   grid      :      15469. kBytes
+   one-center:         93. kBytes
+   HF        :        129. kBytes
+   nonlr-proj:       1939. kBytes
+   wavefun   :     110187. kBytes
+   fock_wrk  :       2070. kBytes
+ 
+  
+  
+ General timing and accounting informations for this job:
+ ========================================================
+  
+                  Total CPU time used (sec):     1825.201
+                            User time (sec):     1822.398
+                          System time (sec):        2.803
+                         Elapsed time (sec):     1823.076
+  
+                   Maximum memory used (kb):     1475348.
+                   Average memory used (kb):          N/A
+  
+                          Minor page faults:      1514982
+                          Major page faults:            0
+                 Voluntary context switches:        55004

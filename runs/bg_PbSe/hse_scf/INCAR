@@ -1,35 +1,19 @@
-SYSTEM = PbSe HSE06 Band Gap Calculation (restart from PBE)
-# --- 电子结构 ---
-ISTART  = 1
-ICHARG  = 2
-PREC    = Accurate
-ENCUT   = 450
-EDIFF   = 1E-5
-NELM    = 100
-
-# --- 杂化泛函 HSE06 ---
-LHFCALC  = .TRUE.
+AEXX = 0.25
+ALGO = All
+EDIFF = 1e-06
+ENCUT = 520.0
 HFSCREEN = 0.2
-AEXX     = 0.25
-
-# --- 算法 ---
-ALGO    = Damped
-TIME    = 0.4
-
-# --- 加速选项 ---
-PRECFOCK = Fast
-
-# --- 展宽 ---
-ISMEAR  = 0
-SIGMA   = 0.05
-
-# --- 输出 ---
-LWAVE   = .FALSE.
-LCHARG  = .FALSE.
-
-# --- K 点 ---
-KSPACING = 0.20
-KGAMMA   = .TRUE.
-
-# --- 并行（8张GPU）---
-KPAR    = 8
+ICHARG = 1
+ISMEAR = 0
+ISTART = 1
+KGAMMA = True
+KPAR = 8
+KSPACING = 0.3
+LCHARG = False
+LHFCALC = True
+LWAVE = False
+NELM = 200
+PREC = Accurate
+SIGMA = 0.05
+SYSTEM = PbSe HSE06 SCF
+TIME = 0.4
