@@ -62,11 +62,18 @@ class WorkspaceSessionIndex:
                 created_at text not null,
                 updated_at text not null,
                 last_opened_at text,
+                deleted_at text,
                 metadata_json text not null default '{}'
             );
             """
         )
+        self._ensure_column("deleted_at", "text")
         self.conn.commit()
+
+    def _ensure_column(self, name: str, ddl_type: str) -> None:
+        rows = self.conn.execute("pragma table_info(workspace_sessions)").fetchall()
+        if name not in {str(row["name"]) for row in rows}:
+            self.conn.execute(f"alter table workspace_sessions add column {name} {ddl_type}")
 
     def sync_from_runs(self) -> None:
         if not self.runs_root.is_dir():
@@ -76,7 +83,7 @@ class WorkspaceSessionIndex:
                 continue
             if not ((child / "log.txt").exists() or (child / SCHEDULER_DIR_NAME).exists()):
                 continue
-            self.ensure_session_for_workspace(child, title=child.name, touch=False)
+            self.ensure_session_for_workspace(child, title=child.name, touch=False, revive_deleted=False)
 
     def ensure_session_for_workspace(
         self,
@@ -84,6 +91,7 @@ class WorkspaceSessionIndex:
         *,
         title: str | None = None,
         touch: bool = True,
+        revive_deleted: bool = True,
     ) -> dict[str, Any]:
         ws = Path(workspace).resolve()
         ws.mkdir(parents=True, exist_ok=True)
@@ -92,9 +100,19 @@ class WorkspaceSessionIndex:
             (str(ws),),
         ).fetchone()
         if row:
+            if row["deleted_at"] and revive_deleted:
+                self.conn.execute(
+                    """
+                    update workspace_sessions
+                       set deleted_at = null, status = 'idle', updated_at = ?
+                     where agent_session_id = ?
+                    """,
+                    (utc_now(), row["agent_session_id"]),
+                )
+                self.conn.commit()
             if touch:
                 self.touch(str(row["agent_session_id"]))
-            return self._row_to_dict(row)
+            return self.get(str(row["agent_session_id"]), include_deleted=True) or self._row_to_dict(row)
 
         base_id = _slug(ws.name)
         agent_session_id = self._unique_session_id(base_id, workspace=ws)
@@ -144,16 +162,17 @@ class WorkspaceSessionIndex:
         rows = self.conn.execute(
             """
             select * from workspace_sessions
+             where deleted_at is null
              order by starred desc, coalesce(last_opened_at, updated_at) desc, title collate nocase asc
             """
         ).fetchall()
         return [self._row_to_dict(row) for row in rows]
 
-    def get(self, agent_session_id: str) -> dict[str, Any] | None:
-        row = self.conn.execute(
-            "select * from workspace_sessions where agent_session_id = ?",
-            (agent_session_id,),
-        ).fetchone()
+    def get(self, agent_session_id: str, *, include_deleted: bool = False) -> dict[str, Any] | None:
+        sql = "select * from workspace_sessions where agent_session_id = ?"
+        if not include_deleted:
+            sql += " and deleted_at is null"
+        row = self.conn.execute(sql, (agent_session_id,)).fetchone()
         return self._row_to_dict(row) if row else None
 
     def touch(self, agent_session_id: str) -> None:
@@ -181,6 +200,22 @@ class WorkspaceSessionIndex:
         )
         self.conn.commit()
         return self.get(agent_session_id)
+
+    def delete(self, agent_session_id: str) -> dict[str, Any] | None:
+        row = self.get(agent_session_id)
+        if not row:
+            return None
+        now = utc_now()
+        self.conn.execute(
+            """
+            update workspace_sessions
+               set deleted_at = ?, status = 'deleted', updated_at = ?
+             where agent_session_id = ?
+            """,
+            (now, now, agent_session_id),
+        )
+        self.conn.commit()
+        return self.get(agent_session_id, include_deleted=True)
 
     def update_runtime_state(
         self,

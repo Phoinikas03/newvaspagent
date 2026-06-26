@@ -1135,6 +1135,10 @@ class WorkspaceRuntimeManager:
             await self.send_session_list()
             return
 
+        if event_type == "delete_session":
+            await self.delete_session(agent_session_id)
+            return
+
         if event_type == "stop_task":
             runtime = await self.open_runtime(agent_session_id)
             await runtime.stop_task(str(data.get("task_id") or ""))
@@ -1168,7 +1172,42 @@ class WorkspaceRuntimeManager:
                 self.index.set_starred(agent_session_id, bool(body.get("starred")))
             await self.send_session_list()
             return {"session": self.index.get(agent_session_id)}
+        if action == "delete_session":
+            agent_session_id = str(request.match_info["agent_session_id"])
+            deleted = await self.delete_session(agent_session_id)
+            return {"deleted": deleted, "active_session_id": self.active_session_id}
         return {"error": f"unknown action: {action}"}
+
+    async def delete_session(self, agent_session_id: str) -> bool:
+        runtime = self.runtimes.get(agent_session_id)
+        if runtime and runtime.scheduler and runtime.scheduler.busy:
+            await self.ui.send(
+                {
+                    "type": "agent_text",
+                    "agent_session_id": agent_session_id,
+                    "text": "[系统提示] 当前会话仍在运行，不能删除。请先停止当前回复或等待完成。",
+                }
+            )
+            return False
+
+        if runtime:
+            await runtime.close()
+            self.runtimes.pop(agent_session_id, None)
+        deleted = self.index.delete(agent_session_id)
+        if not deleted:
+            await self.send_session_list()
+            return False
+
+        sessions = self.index.list_sessions()
+        if not sessions:
+            new_record = self.index.create_session()
+            sessions = [new_record]
+        if self.active_session_id == agent_session_id:
+            self.active_session_id = str(sessions[0]["agent_session_id"])
+            await self.open_runtime(self.active_session_id)
+            await self.send_session_history(self.active_session_id)
+        await self.send_session_list()
+        return True
 
     async def send_session_list(self, ws: Any | None = None) -> None:
         payload = {
