@@ -503,6 +503,53 @@ _HTML = """<!DOCTYPE html>
     padding: 4px 7px;
     color: var(--error);
   }
+  #delete-dialog-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,.52);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 20;
+  }
+  #delete-dialog-backdrop.open { display: flex; }
+  #delete-dialog {
+    width: min(420px, calc(100vw - 32px));
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface);
+    box-shadow: 0 18px 60px rgba(0,0,0,.45);
+    padding: 16px;
+  }
+  #delete-dialog-title {
+    font-size: 15px;
+    font-weight: 600;
+    margin-bottom: 8px;
+  }
+  #delete-dialog-body {
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1.55;
+    margin-bottom: 14px;
+  }
+  #delete-dialog-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+  }
+  .delete-dialog-btn {
+    border: 1px solid var(--border);
+    background: #21262d;
+    color: var(--text);
+    border-radius: 6px;
+    padding: 8px 10px;
+    cursor: pointer;
+  }
+  .delete-dialog-btn.danger {
+    color: #fff;
+    background: var(--error);
+    border-color: var(--error);
+  }
   @media (max-width: 900px) {
     #session-sidebar { width: 220px; }
     #main-row.sessions-collapsed #session-sidebar { width: 44px; }
@@ -539,6 +586,17 @@ _HTML = """<!DOCTYPE html>
     <div id="runtime-task-list"><div class="todo-empty">暂无后台任务</div></div>
   </aside>
 </div>
+<div id="delete-dialog-backdrop">
+  <div id="delete-dialog" role="dialog" aria-modal="true" aria-labelledby="delete-dialog-title">
+    <div id="delete-dialog-title">删除会话</div>
+    <div id="delete-dialog-body"></div>
+    <div id="delete-dialog-actions">
+      <button class="delete-dialog-btn" id="delete-cancel-btn">取消</button>
+      <button class="delete-dialog-btn" id="delete-history-btn">仅移除</button>
+      <button class="delete-dialog-btn danger" id="delete-files-btn">删文件</button>
+    </div>
+  </div>
+</div>
 <script>
 marked.setOptions({ breaks: true, gfm: true });
 
@@ -553,6 +611,11 @@ const sessionListEl = document.getElementById('session-list');
 const newSessionBtn = document.getElementById('new-session-btn');
 const toggleSessionsBtn = document.getElementById('toggle-sessions-btn');
 const runtimeTaskListEl = document.getElementById('runtime-task-list');
+const deleteDialogBackdrop = document.getElementById('delete-dialog-backdrop');
+const deleteDialogBody = document.getElementById('delete-dialog-body');
+const deleteCancelBtn = document.getElementById('delete-cancel-btn');
+const deleteHistoryBtn = document.getElementById('delete-history-btn');
+const deleteFilesBtn = document.getElementById('delete-files-btn');
 
 let curBubble = null, textStackEl = null, toolsStackEl = null;
 let isThinking = false;
@@ -561,6 +624,7 @@ let toolCardByUseId = {};
 let activeSessionId = null;
 let sessions = [];
 let sessionStates = {};
+let pendingDeleteSession = null;
 
 const sessionsCollapsed = localStorage.getItem('vasp-agent.sessions-collapsed');
 if (sessionsCollapsed === 'false') {
@@ -740,11 +804,7 @@ function renderSessionList() {
     del.textContent = '×';
     del.onclick = (ev) => {
       ev.stopPropagation();
-      const name = s.title || sid;
-      const ok = confirm(`删除会话「${name}」？\n\n这只会从会话栏移除该会话，不会删除 runs 目录中的计算文件和日志。`);
-      if (ok) {
-        wsSend({ type: 'delete_session', agent_session_id: sid });
-      }
+      openDeleteDialog(s);
     };
 
     const meta = document.createElement('div');
@@ -1045,6 +1105,28 @@ function createSession() {
   wsSend({ type: 'create_session', title: title.trim() });
 }
 
+function openDeleteDialog(session) {
+  pendingDeleteSession = session;
+  const name = session.title || session.agent_session_id;
+  deleteDialogBody.innerHTML = `
+    <div>会话：<strong>${esc(name)}</strong></div>
+    <div style="margin-top:8px">选择 <strong>仅移除</strong> 会从会话历史隐藏它，但保留 runs 目录中的计算文件和日志。</div>
+    <div style="margin-top:6px">选择 <strong>删文件</strong> 会一并删除本地 workspace 目录。</div>`;
+  deleteDialogBackdrop.classList.add('open');
+}
+
+function closeDeleteDialog() {
+  pendingDeleteSession = null;
+  deleteDialogBackdrop.classList.remove('open');
+}
+
+function confirmDelete(deleteFiles) {
+  if (!pendingDeleteSession) return;
+  const sid = pendingDeleteSession.agent_session_id;
+  closeDeleteDialog();
+  wsSend({ type: 'delete_session', agent_session_id: sid, delete_files: !!deleteFiles });
+}
+
 function toggleSessionSidebar() {
   const collapsed = mainRowEl.classList.toggle('sessions-collapsed');
   localStorage.setItem('vasp-agent.sessions-collapsed', collapsed ? 'true' : 'false');
@@ -1055,6 +1137,12 @@ inputEl.addEventListener('input',   ()  => { inputEl.style.height = ''; inputEl.
 sendBtn.addEventListener('click', send);
 newSessionBtn.addEventListener('click', createSession);
 toggleSessionsBtn.addEventListener('click', toggleSessionSidebar);
+deleteCancelBtn.addEventListener('click', closeDeleteDialog);
+deleteHistoryBtn.addEventListener('click', () => confirmDelete(false));
+deleteFilesBtn.addEventListener('click', () => confirmDelete(true));
+deleteDialogBackdrop.addEventListener('click', (ev) => {
+  if (ev.target === deleteDialogBackdrop) closeDeleteDialog();
+});
 </script>
 </body>
 </html>

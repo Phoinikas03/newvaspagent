@@ -5,6 +5,7 @@ import asyncio
 import argparse
 import inspect
 import json
+import shutil
 from contextlib import suppress
 from datetime import datetime
 from pathlib import Path
@@ -1136,7 +1137,7 @@ class WorkspaceRuntimeManager:
             return
 
         if event_type == "delete_session":
-            await self.delete_session(agent_session_id)
+            await self.delete_session(agent_session_id, delete_files=bool(data.get("delete_files")))
             return
 
         if event_type == "stop_task":
@@ -1174,11 +1175,12 @@ class WorkspaceRuntimeManager:
             return {"session": self.index.get(agent_session_id)}
         if action == "delete_session":
             agent_session_id = str(request.match_info["agent_session_id"])
-            deleted = await self.delete_session(agent_session_id)
+            body = await request.json() if request.can_read_body else {}
+            deleted = await self.delete_session(agent_session_id, delete_files=bool(body.get("delete_files")))
             return {"deleted": deleted, "active_session_id": self.active_session_id}
         return {"error": f"unknown action: {action}"}
 
-    async def delete_session(self, agent_session_id: str) -> bool:
+    async def delete_session(self, agent_session_id: str, *, delete_files: bool = False) -> bool:
         runtime = self.runtimes.get(agent_session_id)
         if runtime and runtime.scheduler and runtime.scheduler.busy:
             await self.ui.send(
@@ -1190,6 +1192,12 @@ class WorkspaceRuntimeManager:
             )
             return False
 
+        record = self.index.get(agent_session_id)
+        if not record:
+            await self.send_session_list()
+            return False
+        workspace = Path(record["workspace"]).resolve()
+
         if runtime:
             await runtime.close()
             self.runtimes.pop(agent_session_id, None)
@@ -1197,6 +1205,29 @@ class WorkspaceRuntimeManager:
         if not deleted:
             await self.send_session_list()
             return False
+
+        if delete_files:
+            try:
+                workspace.relative_to(self.runs_root)
+            except ValueError:
+                await self.ui.send(
+                    {
+                        "type": "agent_text",
+                        "agent_session_id": self.active_session_id,
+                        "text": f"[错误] 拒绝删除 runs 目录外路径: {workspace}",
+                    }
+                )
+                return False
+            if workspace == self.runs_root:
+                await self.ui.send(
+                    {
+                        "type": "agent_text",
+                        "agent_session_id": self.active_session_id,
+                        "text": "[错误] 拒绝删除 runs 根目录。",
+                    }
+                )
+                return False
+            shutil.rmtree(workspace, ignore_errors=False)
 
         sessions = self.index.list_sessions()
         if not sessions:
