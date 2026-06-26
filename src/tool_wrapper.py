@@ -13,24 +13,30 @@ def setup_vasp_inputs_tool(workspace_dir: str, default_kpoints_density: int = 10
         description=(
             "Generates VASP inputs (POTCAR, POSCAR copy, INCAR) in the workspace. "
             "If the INCAR contains KSPACING, k-points come from INCAR only and no KPOINTS file is written. "
-            "Otherwise writes KPOINTS via automatic_density; kpoints_density defaults to 100."
+            "Otherwise writes KPOINTS via automatic_density; kpoints_density defaults to 100. "
+            'Optional potcar_overrides maps POSCAR element symbols to exact PBE POTCAR symbols as a JSON object '
+            '(for example {"Cr": "Cr_pv"}). Pass this when the user explicitly requests a POTCAR variant; '
+            "explicit overrides are validated and do not fall back. JSON object strings are accepted for compatibility."
         ), 
         input_schema={
             "poscar_path": str, 
             "incar_path": str, 
-            "kpoints_density": Optional[int]  # 允许大模型根据需要调整 K 点密度
+            "kpoints_density": Optional[int],  # 允许大模型根据需要调整 K 点密度
+            "potcar_overrides": Optional[Dict[str, str]],
         }
     )
     async def setup_vasp_inputs(args: Dict[str, Any]) -> Dict[str, Any]:
         # 提取参数，如果大模型没有传入 kpoints_density，则使用外部注入的默认值
         density = int(args.get("kpoints_density", default_kpoints_density))
+        potcar_overrides = args.get("potcar_overrides") or None
         
         # 仅负责参数提取和转发
         return await setup_vasp_inputs_impl(
             poscar_path=args["poscar_path"], 
             incar_path=args["incar_path"], 
             workspace_dir=workspace_dir,
-            kpoints_density=density
+            kpoints_density=density,
+            potcar_overrides=potcar_overrides,
         )
             
     return setup_vasp_inputs

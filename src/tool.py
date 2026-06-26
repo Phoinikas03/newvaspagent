@@ -1,13 +1,75 @@
+import ast
+import json
 import os
 import asyncio
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 # ==========================================
 # 设置 VASP 输入文件 (POTCAR 推荐赝势 + 智能回退)
 # ==========================================
-def _setup_vasp_inputs_sync(poscar_path: Path, incar_path: Path, work_dir: Path, kpoints_density: int) -> str:
+def _configure_repo_potcar_dir() -> None:
+    """Prefer the repository-local POTCAR library when no valid env path exists."""
+    repo_potcar_dir = Path(__file__).resolve().parents[1] / "POTCAR_dir"
+    current = os.environ.get("PMG_VASP_PSP_DIR")
+    if repo_potcar_dir.is_dir() and (not current or not Path(current).exists()):
+        os.environ["PMG_VASP_PSP_DIR"] = str(repo_potcar_dir)
+
+
+def _normalize_potcar_overrides(potcar_overrides: Optional[Any]) -> Dict[str, str]:
+    """Return a validated element-to-POTCAR override map.
+
+    Some model/tool transports occasionally send nested objects as JSON strings.
+    Accept that form here so explicit pseudopotential requests still go through
+    setup_vasp_inputs instead of encouraging manual POTCAR generation.
+    """
+    if potcar_overrides is None:
+        return {}
+
+    if isinstance(potcar_overrides, str):
+        text = potcar_overrides.strip()
+        if not text:
+            return {}
+        try:
+            potcar_overrides = json.loads(text)
+        except json.JSONDecodeError:
+            try:
+                potcar_overrides = ast.literal_eval(text)
+            except (SyntaxError, ValueError) as exc:
+                raise ValueError(
+                    'potcar_overrides must be a mapping such as {"Cr": "Cr_pv"} '
+                    "or a JSON object string."
+                ) from exc
+
+    if potcar_overrides is None:
+        return {}
+
+    if not isinstance(potcar_overrides, dict):
+        raise ValueError(
+            'potcar_overrides must map POSCAR element symbols to PBE POTCAR symbols, '
+            'for example {"Cr": "Cr_pv"}.'
+        )
+
+    normalized: Dict[str, str] = {}
+    for element, symbol in potcar_overrides.items():
+        element_key = str(element).strip()
+        potcar_symbol = str(symbol).strip()
+        if not element_key or not potcar_symbol:
+            raise ValueError("potcar_overrides cannot contain empty element names or POTCAR symbols.")
+        normalized[element_key] = potcar_symbol
+    return normalized
+
+
+def _setup_vasp_inputs_sync(
+    poscar_path: Path,
+    incar_path: Path,
+    work_dir: Path,
+    kpoints_density: int,
+    potcar_overrides: Optional[Any] = None,
+) -> str:
     """(同步函数) 实际执行文件读写、Pymatgen 对象实例化及文件生成的阻塞任务"""
+    _configure_repo_potcar_dir()
+
     from pymatgen.core import Structure
     from pymatgen.io.vasp import Incar, Kpoints, Potcar, PotcarSingle
     
@@ -34,9 +96,35 @@ def _setup_vasp_inputs_sync(poscar_path: Path, incar_path: Path, work_dir: Path,
     except Exception:
         recommended_map = {}
 
+    normalized_overrides = _normalize_potcar_overrides(potcar_overrides)
+    unknown_override_elements = sorted(set(normalized_overrides) - set(species))
+    if unknown_override_elements:
+        raise ValueError(
+            "POTCAR override provided for element(s) not present in POSCAR: "
+            + ", ".join(unknown_override_elements)
+        )
+
     potcar_symbols = []
     for sym in species:
         best_sym = None
+        override_sym = normalized_overrides.get(sym)
+        if override_sym:
+            try:
+                potcar_single = PotcarSingle.from_symbol_and_functional(override_sym, "PBE")
+            except Exception as exc:
+                raise ValueError(
+                    f"Explicit POTCAR override for element '{sym}' requested '{override_sym}', "
+                    "but that PBE POTCAR could not be loaded. No fallback was used."
+                ) from exc
+            if str(potcar_single.element) != sym:
+                raise ValueError(
+                    f"Explicit POTCAR override for element '{sym}' requested '{override_sym}', "
+                    f"but that POTCAR is for element '{potcar_single.element}'."
+                )
+            best_sym = override_sym
+            potcar_symbols.append(best_sym)
+            continue
+
         # 优先采用推荐变体；若本地 POTCAR 库缺失，再按代价从低到高回退
         trials = []
         rec = recommended_map.get(sym)
@@ -80,7 +168,13 @@ def _setup_vasp_inputs_sync(poscar_path: Path, incar_path: Path, work_dir: Path,
     )
 
 
-async def setup_vasp_inputs_impl(poscar_path: str, incar_path: str, workspace_dir: str, kpoints_density: int = 100) -> Dict[str, Any]:
+async def setup_vasp_inputs_impl(
+    poscar_path: str,
+    incar_path: str,
+    workspace_dir: str,
+    kpoints_density: int = 100,
+    potcar_overrides: Optional[Any] = None,
+) -> Dict[str, Any]:
     """(异步接口) 供 Tool 调用的核心逻辑：基于自定义 INCAR 和 POSCAR 自动生成全套 VASP 输入文件"""
     work_dir = Path(workspace_dir).resolve()
     poscar_file = Path(poscar_path).resolve()
@@ -97,7 +191,8 @@ async def setup_vasp_inputs_impl(poscar_path: str, incar_path: str, workspace_di
             poscar_file, 
             incar_file, 
             work_dir, 
-            kpoints_density
+            kpoints_density,
+            potcar_overrides,
         )
         return {"content": [{"type": "text", "text": success_msg}]}
         

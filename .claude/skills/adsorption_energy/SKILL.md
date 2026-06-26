@@ -34,7 +34,7 @@ adsorption_energy/
 - `Skill`（`supercell`）：构建超胞或 slab（若任务涉及）
 - `Skill`（`relax`）：若用户仅有未松弛的体相，可先松弛再切表面（依用户目标决定）
 - `Skill`（`convergence`）：在固定几何下做 **ENCUT/KSPACING** 收敛（`NSW=0`），供三步优化 **共用** 同一截断能与 K 点密度；**须先征得用户同意**再执行（见该 skill §0）
-- `setup_vasp_inputs`：生成 POTCAR；若 **INCAR** 含 **`KSPACING`** 则**不**生成 **KPOINTS**
+- `setup_vasp_inputs`：生成 POTCAR；若 **INCAR** 含 **`KSPACING`** 则**不**生成 **KPOINTS**；用户明确指定赝势变体时，通过 `potcar_overrides` 传入 JSON object（如 `{"Pt": "Pt"}`）
 - `Skill`（`run_vasp`）：**任何** `mpirun` / `vasp_std` / `vasp_gpu` 前必须载入并按 GPU/CPU 规则执行；正式提交须通过 `python .claude/skills/run_vasp/scripts/vasp_runner.py`
 - `Skill`（`vasp_error`）：统一诊断 VASP 报错、卡住与是否应先终止旧任务再重跑
 - `Write` / `Edit`、`Bash`、`Read` / `Grep`
@@ -96,7 +96,7 @@ adsorption_energy/
 | `surface` | 洁净 slab **POSCAR**、**POTCAR** |
 | `absorbed` | 吸附构型 **POSCAR**、**POTCAR**（与 surface 同一 slab 约定） |
 
-调用 `setup_vasp_inputs` 或为每步复制匹配的 **POTCAR**。**三步的 ENCUT、泛函、POTCAR 类型必须一致**（除非用户书面要求不同策略）。
+三步均调用 `setup_vasp_inputs` 生成对应 **POTCAR**。**三步的 ENCUT、泛函、POTCAR 类型必须一致**（除非用户书面要求不同策略）；若用户指定赝势变体，必须对三步传入一致的 `potcar_overrides` 映射，不得手工复制或拼接 **POTCAR**。
 
 ---
 

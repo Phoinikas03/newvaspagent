@@ -29,7 +29,7 @@ lattice_constant/
 - `Skill` (`convergence`)：**ENCUT / KSPACING** 收敛测试（1 meV/atom），产出 **`Convergence_Report.md`**
 - `Skill` (`literature`)：检索特定材料的可靠实验晶格常数及标准 EOS 拟合文献
 - `Skill`（`structure`）：根据特定材料生成、获取或校验初始 POSCAR
-- `setup_vasp_inputs`：生成 POTCAR；若 **INCAR** 含 **`KSPACING`** 则**不**生成 **KPOINTS**
+- `setup_vasp_inputs`：生成 POTCAR；若 **INCAR** 含 **`KSPACING`** 则**不**生成 **KPOINTS**；用户明确指定赝势变体时，通过 `potcar_overrides` 传入 JSON object（如 `{"Cr": "Cr_pv"}`）
 - Skill（`run_vasp`）：按该 skill 与系统 orchestration 规则，用 Bash /（必要时）**非阻塞** `TaskOutput` / 作业调度运行 VASP（MCP 工具 `run_vasp` 已移除，勿再调用）
 - Skill（`vasp_error`）：统一诊断 VASP 报错、卡住与是否应先终止旧任务再重跑
 - `Write` / `Edit`：生成和修改工作区文件
@@ -96,7 +96,7 @@ lattice_constant/
 
 对每个 `scale_x.xx` 子文件夹准备输入并提交计算（各目录可**并行**提交多个独立任务，**禁止**单个脚本在同一进程内 `for` 串行跑完所有 scale）：
 1. 复制模板与配置：将 `templates/INCAR_static` 拷贝至当前子目录，并填入 **`convergence`** 得到的 **`ENCUT`** 与 **`KSPACING`**。
-2. 调用 `setup_vasp_inputs` 准备与收敛测试一致的 POTCAR；**INCAR** 须含与收敛测试相同的 **`KSPACING`**，以便不生成 **KPOINTS**。
+2. 调用 `setup_vasp_inputs` 准备与收敛测试一致的 POTCAR；**INCAR** 须含与收敛测试相同的 **`KSPACING`**，以便不生成 **KPOINTS**。若用户指定赝势变体，所有 `scale_*` 子目录必须传入同一个 `potcar_overrides` 映射，不得手工复制或拼接 POTCAR。
 3. 按 Skill `run_vasp` 与 orchestration 规则，**通过 Bash 调用 `python .claude/skills/run_vasp/scripts/vasp_runner.py`**（`run_in_background: true`）及上文 **Web / IDE 等待规则** 在该子目录**单独**提交并完成一次 VASP 计算（一点一任务）；**禁止**长时间阻塞式 `TaskOutput` 冻结会话，也**不得**直接手写 `mpirun ... vasp_std/vasp_gpu`。
 4. 该目录计算结束后，`Bash`：`python .claude/skills/run_vasp/scripts/check_convergence.py .`
    - 确认 `electronic_converged: true`。

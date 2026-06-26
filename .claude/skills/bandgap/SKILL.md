@@ -1,7 +1,6 @@
 ---
 name: "vasp-bandgap-legacy-alias"
 description: "兼容旧 bandgap 入口。该 skill 现已升级为更通用的 electronic-structure：统一处理静态 SCF、band structure、DOS、PBE/HSE 带隙等电子结构任务。若用户提到 bandgap，可按原来的 PBE→HSE 带隙流程执行，但主入口应优先理解为 electronic-structure。"
-version: "3.0.0"
 ---
 
 # Legacy Alias: bandgap -> electronic-structure
@@ -34,11 +33,24 @@ version: "3.0.0"
 
 1. 正式运行必须通过 `run_vasp`
 2. 涉及 GPU / `KPAR` / `NCORE` / `NPAR` 时必须先走 `performance`
-3. HSE 启动前必须有单独确认回合
-4. 有 GPU 时必须问清 GPU 数量
-5. PBE 与 HSE 之间必须保证 `ENCUT` 与 K 点口径一致
-6. 若旧 HSE run 可能仍活着，不能在同一目录里补开第二个活跃进程
-7. 出错或卡住时优先用 `vasp_error` 诊断，再决定是否 terminate + rerun
+3. POTCAR 必须通过 `setup_vasp_inputs` 生成，并遵守 `electronic-structure` 的 POTCAR 强制规则；含 `Ga/In/Sn/Pb` 的体系必须确认实际使用 `Ga_d/In_d/Sn_d/Pb_d`
+4. HSE 启动前必须有单独确认回合
+5. 有 GPU 时必须问清 GPU 数量
+6. PBE 前置计算必须保存 `WAVECAR/CHGCAR`：`LWAVE = .TRUE.` 且 `LCHARG = .TRUE.`；若看到 `.FALSE.`，必须先改正再提交 PBE
+7. PBE 与 HSE 之间必须保证 `POTCAR`、`ENCUT` 与 K 点口径一致
+8. 若旧 HSE run 可能仍活着，不能在同一目录里补开第二个活跃进程
+9. 出错或卡住时优先用 `vasp_error` 诊断，再决定是否 terminate + rerun
+
+## 提交前硬提醒
+
+PBE -> HSE 带隙任务的 PBE `INCAR` 必须保留热启动文件：
+
+```text
+LWAVE  = .TRUE.
+LCHARG = .TRUE.
+```
+
+若模板或模型生成 `LWAVE = .FALSE.` 或 `LCHARG = .FALSE.`，必须先改成 `.TRUE.` 再提交 PBE。
 
 ## 参考
 

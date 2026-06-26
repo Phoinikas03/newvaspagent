@@ -33,7 +33,7 @@ structure/
 - 下游协作：
   - `relax`：结构优化。
   - `adsorption_energy`：三步吸附能计算。
-  - `setup_vasp_inputs`：基于 POSCAR/INCAR 生成 POTCAR 和必要输入。
+  - `setup_vasp_inputs`：基于 POSCAR/INCAR 生成 POTCAR 和必要输入；用户明确指定赝势变体时，通过 `potcar_overrides` 传入 JSON object（如 `{"Cr": "Cr_pv"}`）。
   - `run_vasp`：提交 VASP。
 
 ## 核心原则

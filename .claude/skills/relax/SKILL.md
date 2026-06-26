@@ -32,7 +32,7 @@ relax/
 - `Skill` (`literature`)：检索特定材料的 DFT 计算参数文献及实验对比值
 - `Skill` (`convergence`)：对**固定 POSCAR** 做静态单点（`NSW=0`）**ENCUT** 与 **`KSPACING`** 收敛测试（1 meV/atom），产出 **`Convergence_Report.md`**。在需要严格确定截断能与 K 点网格、或与后续静态/EOS/带隙计算参数对齐时使用；**不**替代本 skill 中的离子松弛
 - `Skill` (`vasp_error`)：当松弛计算失败、未收敛、疑似卡住、或需要判断是否应先停止当前 run 再修改参数重跑时使用
-- `setup_vasp_inputs`：生成 POTCAR 与 POSCAR 拷贝；若 **INCAR** 中含 **`KSPACING`** 则仅用 INCAR 定义 K 点、**不**生成 **KPOINTS**；否则按 `kpoints_density` 生成 **KPOINTS**
+- `setup_vasp_inputs`：生成 POTCAR 与 POSCAR 拷贝；若 **INCAR** 中含 **`KSPACING`** 则仅用 INCAR 定义 K 点、**不**生成 **KPOINTS**；否则按 `kpoints_density` 生成 **KPOINTS**；用户明确指定赝势变体时，通过 `potcar_overrides` 传入 JSON object（如 `{"Cr": "Cr_pv"}`）
 - `Write` / `Edit`：生成和修改工作区文件
 - `Bash`：文件管理、运行后处理脚本
 - `Read` / `Grep`：读取日志和输出文件
@@ -85,7 +85,7 @@ relax/
 
 ### 4. 补全输入文件
 
-调用 `setup_vasp_inputs`，传入 `poscar_path` 和 `incar_path`，自动生成 POTCAR（并在 INCAR 含 **`KSPACING`** 时不生成 **KPOINTS**）。
+调用 `setup_vasp_inputs`，传入 `poscar_path` 和 `incar_path`，自动生成 POTCAR（并在 INCAR 含 **`KSPACING`** 时不生成 **KPOINTS**）。若用户明确要求特定 POTCAR 变体，在同一次工具调用中传入 `potcar_overrides`，例如 `{"Cr": "Cr_pv"}`；如果工具拒绝该 override，停止并向用户报告错误，不得改用 Bash/Python 手工生成、拼接或复制 POTCAR。
 
 仅当 **`INCAR` 中未设置 `KSPACING`** 时，才依赖 `kpoints_density` 生成 **KPOINTS**；金属等需更密网格时应**优先**收紧 **`KSPACING`** 数值，而非仅调大 `kpoints_density`。
 

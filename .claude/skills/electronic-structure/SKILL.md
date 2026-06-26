@@ -1,7 +1,6 @@
 ---
 name: "vasp-electronic-structure"
 description: "执行 VASP 电子结构工作流：静态 SCF、带结构、DOS，以及高精度 HSE 带隙。它是在原 bandgap skill 基础上的升级版，统一收纳 PBE→HSE 带隙、band structure、DOS 等电子结构任务。真正运行前必须经过 run_vasp；涉及 GPU、KPAR、NCORE、NPAR 时必须先经过 performance。"
-version: "1.0.0"
 ---
 
 # VASP Electronic Structure Workflow
@@ -38,6 +37,44 @@ electronic-structure/
 - `convergence`：正式电子结构对比前建议先做 `ENCUT/KSPACING` 收敛
 - `relax`：若结构还未优化，优先先松弛
 - `vasp_error`：出错、卡住、超时时的诊断与恢复
+
+## 提交前硬提醒
+
+提交任何 PBE -> HSE 带隙任务前，必须显式检查 PBE `INCAR`：
+
+```text
+LWAVE  = .TRUE.
+LCHARG = .TRUE.
+```
+
+若看到 PBE 被写成 `LWAVE = .FALSE.` 或 `LCHARG = .FALSE.`，这是需要立即修正的输入错误，不能提交 PBE，也不能继续拿这个 PBE 结果启动 HSE。
+
+## POTCAR 强制规则
+
+电子结构、band structure、DOS、PBE/HSE 带隙任务的 POTCAR 必须由 MCP `setup_vasp_inputs` 生成，且必须使用 pymatgen / Materials Project 推荐赝势。不得为了降低计算量改用最少价电子的裸标准赝势。
+
+执行要求：
+
+1. 准备正式 PBE/HSE/DOS/band structure 输入时，必须调用 `setup_vasp_inputs` 生成 `POTCAR` 和该工作目录中的 `POSCAR` 副本；不得手动拼接、复制、编辑或复用旧 `POTCAR`。
+2. 对 `Ga`, `Ge`, `In`, `Sn`, `Tl`, `Pb` 等需要低位 d 态入价的 p 元素，必须保留推荐 `_d` 赝势；当前 benchmark 中尤其要确认 `Ga_d`, `In_d`, `Sn_d`, `Pb_d`。
+3. `setup_vasp_inputs` 返回的 `(Used POTCARs: ...)` 必须写入或汇报到任务记录中。若体系含 `Ga/In/Sn/Pb`，返回值中没有对应 `_d`，必须停止并修正输入，不能继续提交 VASP。
+4. PBE 预计算和 HSE 计算必须使用同一套 `POTCAR`、同一结构和一致的 `ENCUT/KSPACING` 口径，除非用户明确要求做单变量对照。
+5. 不得直接复用历史 `runs/bg_*` 目录中的输入文件作为新计算起点；旧目录可能来自旧赝势逻辑或被后续文件覆盖。需要重算时，从 `data/bandgap/<material>`、reference 结构或用户指定结构重新生成输入。
+
+## PBE -> HSE 文件保留规则
+
+PBE SCF 作为 HSE 的前置计算时，必须为 HSE 热启动保留波函数和电荷密度：
+
+```text
+LWAVE  = .TRUE.
+LCHARG = .TRUE.
+```
+
+执行要求：
+
+1. 准备 PBE SCF `INCAR` 时，不得设置 `LWAVE = .FALSE.` 或 `LCHARG = .FALSE.`；若模板或模型生成了这两个值，必须在提交 PBE 前改为 `.TRUE.`。
+2. 启动 HSE 前必须确认 PBE 目录中存在且非空的 `WAVECAR` 和 `CHGCAR`。缺失时不能用该 PBE 结果继续 HSE，必须先重跑 PBE 或明确改为冷启动并说明代价。
+3. HSE 阶段应从 PBE 的 `WAVECAR/CHGCAR` 热启动，并保持同一 `POTCAR`、同一结构、同一 `ENCUT/KSPACING` 口径。
 
 ## 工作流选择
 
