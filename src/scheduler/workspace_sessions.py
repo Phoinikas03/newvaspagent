@@ -251,6 +251,22 @@ class WorkspaceSessionIndex:
         self.conn.commit()
         return self.get(agent_session_id)
 
+    def clear_claude_session_id(self, agent_session_id: str) -> dict[str, Any] | None:
+        row = self.get(agent_session_id)
+        if not row:
+            return None
+        self.conn.execute(
+            """
+            update workspace_sessions
+               set claude_session_id = null,
+                   updated_at = ?
+             where agent_session_id = ?
+            """,
+            (utc_now(), agent_session_id),
+        )
+        self.conn.commit()
+        return self.get(agent_session_id)
+
     def _unique_session_id(self, base: str, workspace: Path | None = None) -> str:
         candidate = base
         suffix = 2
