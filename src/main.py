@@ -601,6 +601,11 @@ async def _dispatch_message_to_web(
                     }
                 )
             elif isinstance(block, TextBlock):
+                text = getattr(block, "text", "")
+                if text.strip() == "[Request interrupted by user]":
+                    if session_state is not None:
+                        session_state["saw_interrupt_context"] = True
+                    continue
                 if is_skill_injection_context_text(block.text):
                     await ui.send(
                         {
@@ -621,19 +626,33 @@ async def _dispatch_message_to_web(
             session_state is not None
             and (session_state.get("pending_interrupt_text") or "").strip()
         )
+        user_interrupted = bool(
+            session_state is not None
+            and session_state.get("user_interrupt_requested")
+        )
         result_text = (getattr(msg, "result", None) or "").strip()
-        if session_state is not None and not result_text and session_state.get("last_tool_error"):
+        if (
+            session_state is not None
+            and not user_interrupted
+            and not result_text
+            and session_state.get("last_tool_error")
+        ):
             await ui.send({"type": "agent_text", "text": EMPTY_RESULT_WITH_TOOL_ERROR_FALLBACK})
         if session_state is not None:
             session_state["last_tool_error"] = False
-        failed = result_message_indicates_failure(msg)
+        failed = result_message_indicates_failure(msg) and not user_interrupted
         await ui.send({
             "type": "result",
             "turns": getattr(msg, "num_turns", 0),
             "error": failed,
+            "interrupted": user_interrupted,
+            "pending_interrupt": has_pending_interrupt,
             "subtype": getattr(msg, "subtype", None) or "",
             "summary": getattr(msg, "result", None) or "",
         })
+        if session_state is not None:
+            session_state["user_interrupt_requested"] = False
+            session_state["saw_interrupt_context"] = False
         if has_pending_interrupt:
             await ui.send({"type": "status", "text": "已打断，正在切换到新指令...", "thinking": True})
         else:
@@ -700,6 +719,7 @@ async def web_agent_loop(
 
     async def interrupt_current_turn(text: str) -> None:
         pending = text.strip()
+        session_state["user_interrupt_requested"] = True
         if pending:
             await ui.send({"type": "status", "text": "正在打断并准备新指令...", "thinking": True})
         else:
@@ -714,6 +734,7 @@ async def web_agent_loop(
             else:
                 session_state.pop("pending_interrupt_text", None)
         except Exception as e:
+            session_state["user_interrupt_requested"] = False
             scheduler.interrupt_in_flight = False
             session_state["interrupt_in_flight"] = False
             await ui.send({"type": "agent_text", "text": f"[错误] 打断失败: {e}"})
@@ -815,6 +836,7 @@ async def web_main(
                 web_session_state: dict[str, Any] = {
                     "busy": False,
                     "interrupt_in_flight": False,
+                    "user_interrupt_requested": False,
                     "last_tool_error": False,
                     "persist_assistant_buf": "",
                 }
