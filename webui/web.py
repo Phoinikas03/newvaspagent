@@ -749,6 +749,19 @@ function renderActiveSession() {
   scrollBottom();
 }
 
+function formatSessionTime(value) {
+  if (!value) return '';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleString('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+}
+
 function renderSessionList() {
   if (!sessions.length) {
     sessionListEl.innerHTML = '<div class="todo-empty">暂无会话</div>';
@@ -809,7 +822,8 @@ function renderSessionList() {
 
     const meta = document.createElement('div');
     meta.className = 'session-meta';
-    meta.textContent = `${s.status || 'idle'} · ${sid}`;
+    const changed = formatSessionTime(s.workspace_modified_at);
+    meta.textContent = `${s.status || 'idle'}${changed ? ` · 改 ${changed}` : ''} · ${sid}`;
 
     item.appendChild(star);
     item.appendChild(title);

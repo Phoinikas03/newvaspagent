@@ -910,7 +910,6 @@ class WorkspaceRuntime:
 
     async def start(self) -> None:
         if self.started:
-            self.index.touch(self.agent_session_id)
             return
 
         self.workspace.mkdir(parents=True, exist_ok=True)

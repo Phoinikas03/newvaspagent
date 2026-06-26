@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +33,39 @@ def _parse_last_session_id(log_path: Path) -> str | None:
         text,
     )
     return matches[-1] if matches else None
+
+
+def _workspace_modified_timestamp(workspace: Path) -> float | None:
+    latest: float | None = None
+    for root, dirs, files in os.walk(workspace):
+        dirs[:] = [name for name in dirs if name != SCHEDULER_DIR_NAME]
+        root_path = Path(root)
+        if root_path != workspace:
+            try:
+                latest = max(latest or 0.0, root_path.stat().st_mtime)
+            except OSError:
+                pass
+        for name in files:
+            try:
+                latest = max(latest or 0.0, (root_path / name).stat().st_mtime)
+            except OSError:
+                continue
+    return latest
+
+
+def _parse_iso_timestamp(value: str | None) -> float | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value).timestamp()
+    except ValueError:
+        return None
+
+
+def _format_timestamp(ts: float) -> str | None:
+    if ts <= 0:
+        return None
+    return datetime.fromtimestamp(ts, timezone.utc).isoformat(timespec="seconds")
 
 
 class WorkspaceSessionIndex:
@@ -163,10 +197,17 @@ class WorkspaceSessionIndex:
             """
             select * from workspace_sessions
              where deleted_at is null
-             order by starred desc, coalesce(last_opened_at, updated_at) desc, title collate nocase asc
             """
         ).fetchall()
-        return [self._row_to_dict(row) for row in rows]
+        sessions = [self._with_workspace_modified(self._row_to_dict(row)) for row in rows]
+        sessions.sort(
+            key=lambda item: (
+                not bool(item.get("starred")),
+                -float(item.get("workspace_modified_ts") or 0),
+                str(item.get("title") or "").casefold(),
+            )
+        )
+        return sessions
 
     def get(self, agent_session_id: str, *, include_deleted: bool = False) -> dict[str, Any] | None:
         sql = "select * from workspace_sessions where agent_session_id = ?"
@@ -286,4 +327,14 @@ class WorkspaceSessionIndex:
         data = dict(row)
         data["starred"] = bool(data.get("starred"))
         data["metadata"] = json.loads(data.pop("metadata_json") or "{}")
+        return data
+
+    def _with_workspace_modified(self, data: dict[str, Any]) -> dict[str, Any]:
+        ts = _workspace_modified_timestamp(Path(data["workspace"]))
+        if ts is None:
+            ts = _parse_iso_timestamp(str(data.get("created_at") or ""))
+        if ts is None:
+            ts = 0.0
+        data["workspace_modified_ts"] = ts
+        data["workspace_modified_at"] = _format_timestamp(ts)
         return data
