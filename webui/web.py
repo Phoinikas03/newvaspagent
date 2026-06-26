@@ -45,6 +45,7 @@ _HTML = """<!DOCTYPE html>
     --user-bg: #1f3557; --agent-bg: #161b22;
     --tool-bg: #1a1f2b; --tool-border: #388bfd;
     --success: #3fb950; --error: #f85149;
+    --warning: #d29922;
     --radius: 10px; --font: 'Segoe UI', system-ui, sans-serif;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -225,6 +226,7 @@ _HTML = """<!DOCTYPE html>
   }
   .result-bar.ok { color: var(--success); }
   .result-bar.err { color: var(--error); }
+  .result-bar.interrupted { color: var(--warning); }
 
   .result-sdk-summary {
     margin-top: 8px; padding: 8px 10px;
@@ -573,7 +575,11 @@ function toggleTool(id) {
 function appendResult(d) {
   ensureAgentBubble();
   const bar = document.createElement('div');
-  if (d.error) {
+  if (d.interrupted) {
+    bar.className = 'result-bar interrupted';
+    const next = d.pending_interrupt ? '，正在切换到新指令' : '';
+    bar.textContent = `已停止${next}  轮次: ${d.turns}`;
+  } else if (d.error) {
     bar.className = 'result-bar err';
     const sub = (d.subtype && String(d.subtype).trim()) ? `  ${d.subtype}` : '';
     bar.textContent = `✗ 出错  轮次: ${d.turns}${sub}`;
