@@ -3,6 +3,7 @@ import re
 import sys
 import asyncio
 import argparse
+import inspect
 import json
 from contextlib import suppress
 from datetime import datetime
@@ -34,6 +35,7 @@ from webui.web_history import (
     write_user_turn_log,
 )
 from src.conversation_store import PERSIST_FILENAME, load_persist_context_for_prompt, persist_on_sdk_message
+from src.scheduler import AgentScheduler, SchedulerStateStore, TaskRegistry, load_structured_resume_session_id
 from src.litellm_proxy import (
     configure_anthropic_for_litellm,
     direct_model_from_upstream,
@@ -88,7 +90,8 @@ def resolve_workspace(run_dir: str | None) -> tuple[Path, str | None]:
     - run_dir 为空：新建 runs/<时间戳>，不恢复。
     - run_dir 为单级目录名：兼容旧行为，解析为 runs/<run_dir>。
     - run_dir 为相对/绝对路径：直接按该路径解析。
-    若最终目录存在 log.txt，则解析 session_id 供 SDK resume。
+    若最终目录存在结构化 scheduler state，则优先使用其中的 Claude session_id；
+    否则 fallback 到解析 log.txt 供 SDK resume。
     """
     base = RUNS_ROOT.resolve()
     raw = (run_dir or "").strip()
@@ -114,7 +117,7 @@ def resolve_workspace(run_dir: str | None) -> tuple[Path, str | None]:
         pass
     if not ws.is_dir():
         raise ValueError(f"目录不存在: {ws}")
-    resume = _parse_last_session_id(ws / SESSION_LOG_NAME)
+    resume = load_structured_resume_session_id(ws) or _parse_last_session_id(ws / SESSION_LOG_NAME)
     return ws, resume
 
 
@@ -139,6 +142,12 @@ def _print_process_error_help(workspace: str, resume: str | None) -> None:
     )
     if resume:
         print(f"  当前 resume session_id: {resume}", file=sys.stderr)
+
+
+def _make_agent_options(**kwargs) -> ClaudeAgentOptions:
+    """Build options while tolerating older claude-agent-sdk versions."""
+    supported = inspect.signature(ClaudeAgentOptions).parameters
+    return ClaudeAgentOptions(**{k: v for k, v in kwargs.items() if k in supported})
 
 
 def build_options(
@@ -188,13 +197,14 @@ The following was saved by VASP Agent to `{PERSIST_FILENAME}` under this workspa
         or None
     )
 
-    return ClaudeAgentOptions(
+    return _make_agent_options(
         cwd=workspace,
         resume=resume,
         setting_sources=["project"],
         permission_mode="bypassPermissions",
         stderr=_cli_stderr,
         model=model_name,
+        enable_file_checkpointing=True,
         system_prompt=f"""Your workspace directory is: {workspace}
 All VASP input/output files should be read from and written to this directory.
 
@@ -317,15 +327,23 @@ def _dispatch_message_to_cli(msg: Any) -> None:
     if isinstance(msg, StreamEvent):
         return
 
-    if isinstance(msg, SystemMessage):
-        if msg.subtype == "task_notification":
-            summary = (msg.data or {}).get("summary") or ""
+    subtype = getattr(msg, "subtype", "") or ""
+    data = getattr(msg, "data", None)
+    data = data if isinstance(data, dict) else {}
+    if isinstance(msg, SystemMessage) or subtype in {"task_notification", "task_started", "task_updated"}:
+        if subtype == "task_notification":
+            summary = data.get("summary") or ""
             if summary:
                 print(f"[后台任务] {summary}\n", flush=True)
-        elif msg.subtype == "task_started":
-            desc = (msg.data or {}).get("description") or ""
+        elif subtype == "task_started":
+            desc = data.get("description") or ""
             if desc:
                 print(f"[后台任务] 已启动: {desc}\n", flush=True)
+        elif subtype == "task_updated":
+            task_id = data.get("task_id") or ""
+            patch = data.get("patch") if isinstance(data.get("patch"), dict) else {}
+            status = patch.get("status") or data.get("status") or "updated"
+            print(f"[后台任务] {task_id} {status}\n", flush=True)
         return
 
     if isinstance(msg, AssistantMessage):
@@ -366,6 +384,7 @@ async def _cli_sdk_receive_loop(
     log_file,
     workspace: str,
     persist_state: dict[str, Any],
+    scheduler: AgentScheduler,
 ) -> None:
     """持续消费 SDK 消息流（ClaudeSDKClient.receive_messages）。
 
@@ -374,17 +393,28 @@ async def _cli_sdk_receive_loop(
     """
     async for msg in client.receive_messages():
         _append_sdk_log_line(log_file, msg)
+        scheduler.observe_message(msg)
         persist_on_sdk_message(workspace, msg, persist_state)
         _dispatch_message_to_cli(msg)
+        if isinstance(msg, ResultMessage):
+            failed = result_message_indicates_failure(msg)
+            pending = scheduler.complete_result(msg, failed=failed)
+            if pending:
+                print("[scheduler] 已打断，正在处理新指令...\n", flush=True)
+                write_user_turn_log(log_file, pending)
+                await scheduler.submit(pending)
 
 
 async def cli_agent_loop(
     client: ClaudeSDKClient,
     log_file,
     workspace: str,
+    scheduler: AgentScheduler,
 ) -> None:
     persist_state: dict[str, Any] = {"persist_assistant_buf": ""}
-    drain = asyncio.create_task(_cli_sdk_receive_loop(client, log_file, workspace, persist_state))
+    drain = asyncio.create_task(
+        _cli_sdk_receive_loop(client, log_file, workspace, persist_state, scheduler)
+    )
     try:
         while True:
             try:
@@ -398,9 +428,19 @@ async def cli_agent_loop(
             if not user_input.strip():
                 continue
 
-            print("思考中...\n", flush=True)
-            write_user_turn_log(log_file, user_input)
-            await client.query(user_input)
+            control = await scheduler.handle_control_command(user_input, allow_interrupt=True)
+            if control.handled:
+                if control.text:
+                    print(f"[scheduler] {control.text}\n", flush=True)
+                continue
+
+            if scheduler.busy:
+                print("正在打断当前回复并切换到新指令...\n", flush=True)
+                await scheduler.interrupt(user_input)
+            else:
+                print("思考中...\n", flush=True)
+                write_user_turn_log(log_file, user_input)
+                await scheduler.submit(user_input)
     finally:
         drain.cancel()
         with suppress(asyncio.CancelledError):
@@ -420,7 +460,7 @@ async def cli_main(
     print(f"VASP Agent (CLI 模式)  |  输入 quit 或 exit 退出")
     print(f"工作目录: {workspace}")
     if resume:
-        print(f"恢复会话: {resume}（自 log.txt 解析）")
+        print(f"恢复会话: {resume}（结构化状态或 log.txt）")
     else:
         print("新会话（无 resume 或 log 中无 session_id）")
     if persist_context:
@@ -429,16 +469,19 @@ async def cli_main(
 
     log_mode = "a" if log_append else "w"
     log_file = open(log_path, log_mode, encoding="utf-8")
+    store = SchedulerStateStore(workspace)
     try:
         try:
             async with ClaudeSDKClient(
                 options=build_options(workspace, resume=resume, persist_context=persist_context),
             ) as client:
-                await cli_agent_loop(client, log_file, workspace)
+                scheduler = AgentScheduler(client, store, TaskRegistry(store))
+                await cli_agent_loop(client, log_file, workspace, scheduler)
         except ProcessError:
             _print_process_error_help(workspace, resume)
             raise
     finally:
+        store.close()
         log_file.close()
 
 
@@ -476,16 +519,23 @@ async def _dispatch_message_to_web(
     if isinstance(msg, StreamEvent):
         return
 
-    if isinstance(msg, SystemMessage):
-        data = msg.data or {}
-        if msg.subtype == "task_notification":
+    subtype = getattr(msg, "subtype", "") or ""
+    data = getattr(msg, "data", None)
+    data = data if isinstance(data, dict) else {}
+    if isinstance(msg, SystemMessage) or subtype in {"task_notification", "task_started", "task_updated"}:
+        if subtype == "task_notification":
             summary = data.get("summary") or ""
             if summary:
                 await ui.send({"type": "agent_text", "text": f"[后台任务] {summary}"})
-        elif msg.subtype == "task_started":
+        elif subtype == "task_started":
             desc = data.get("description") or ""
             if desc:
                 await ui.send({"type": "agent_text", "text": f"[后台任务] 已启动: {desc}"})
+        elif subtype == "task_updated":
+            task_id = data.get("task_id") or ""
+            patch = data.get("patch") if isinstance(data.get("patch"), dict) else {}
+            status = patch.get("status") or data.get("status") or "updated"
+            await ui.send({"type": "agent_text", "text": f"[后台任务] {task_id} {status}"})
         return
 
     if isinstance(msg, AssistantMessage):
@@ -597,23 +647,31 @@ async def _web_sdk_receive_loop(
     ui: Any,
     session_state: dict[str, Any],
     workspace: str,
+    scheduler: AgentScheduler,
 ) -> None:
     """后台持续 consume receive_messages()，与主协程中仅负责 query(用户输入) 分离。"""
     try:
         async for msg in client.receive_messages():
             _append_sdk_log_line(log_file, msg)
+            scheduler.observe_message(msg)
             persist_on_sdk_message(workspace, msg, session_state)
+            if scheduler.pending_after_interrupt:
+                session_state["pending_interrupt_text"] = scheduler.pending_after_interrupt
+            else:
+                session_state.pop("pending_interrupt_text", None)
             await _dispatch_message_to_web(msg, ui, session_state)
             if isinstance(msg, ResultMessage):
-                session_state["busy"] = False
-                session_state["interrupt_in_flight"] = False
-                pending = (session_state.pop("pending_interrupt_text", "") or "").strip()
+                failed = result_message_indicates_failure(msg)
+                pending = scheduler.complete_result(msg, failed=failed)
+                session_state["busy"] = scheduler.busy
+                session_state["interrupt_in_flight"] = scheduler.interrupt_in_flight
+                session_state.pop("pending_interrupt_text", None)
                 if pending:
                     await ui.send({"type": "status", "text": "处理中断后的新指令...", "thinking": True})
                     write_user_turn_log(log_file, pending)
                     session_state["last_tool_error"] = False
-                    session_state["busy"] = True
-                    await client.query(pending)
+                    await scheduler.submit(pending)
+                    session_state["busy"] = scheduler.busy
     except asyncio.CancelledError:
         raise
     except Exception as e:
@@ -627,33 +685,36 @@ async def web_agent_loop(
     ui,
     session_state: dict[str, Any],
     workspace: str,
+    scheduler: AgentScheduler,
 ) -> None:
     drain = asyncio.create_task(
-        _web_sdk_receive_loop(client, log_file, ui, session_state, workspace),
+        _web_sdk_receive_loop(client, log_file, ui, session_state, workspace, scheduler),
     )
 
     async def submit_user_message(text: str) -> None:
         await ui.send({"type": "status", "text": "思考中...", "thinking": True})
         write_user_turn_log(log_file, text)
         session_state["last_tool_error"] = False
-        session_state["busy"] = True
-        await client.query(text)
+        await scheduler.submit(text)
+        session_state["busy"] = scheduler.busy
 
     async def interrupt_current_turn(text: str) -> None:
         pending = text.strip()
         if pending:
-            session_state["pending_interrupt_text"] = pending
             await ui.send({"type": "status", "text": "正在打断并准备新指令...", "thinking": True})
         else:
-            session_state.pop("pending_interrupt_text", None)
             await ui.send({"type": "status", "text": "正在停止当前回复...", "thinking": True})
 
-        if session_state.get("interrupt_in_flight"):
-            return
-        session_state["interrupt_in_flight"] = True
         try:
-            await client.interrupt()
+            await scheduler.interrupt(pending)
+            session_state["busy"] = scheduler.busy
+            session_state["interrupt_in_flight"] = scheduler.interrupt_in_flight
+            if scheduler.pending_after_interrupt:
+                session_state["pending_interrupt_text"] = scheduler.pending_after_interrupt
+            else:
+                session_state.pop("pending_interrupt_text", None)
         except Exception as e:
+            scheduler.interrupt_in_flight = False
             session_state["interrupt_in_flight"] = False
             await ui.send({"type": "agent_text", "text": f"[错误] 打断失败: {e}"})
             await ui.send({"type": "status", "text": "打断失败，仍在等待当前回复...", "thinking": True})
@@ -670,8 +731,20 @@ async def web_agent_loop(
             if user_input.lower() in ("quit", "exit"):
                 break
 
+            control = await scheduler.handle_control_command(user_input, allow_interrupt=True)
+            if control.handled:
+                if control.text:
+                    await ui.send({"type": "agent_text", "text": f"[scheduler]\n{control.text}"})
+                if scheduler.busy or control.thinking:
+                    await ui.send({"type": "status", "text": "仍在处理当前回复...", "thinking": True})
+                else:
+                    await ui.send({"type": "status", "text": "就绪 — 请在下方输入", "thinking": False})
+                    if control.done:
+                        await ui.send({"type": "done"})
+                continue
+
             if event_type == "interrupt":
-                if session_state.get("busy"):
+                if scheduler.busy:
                     await interrupt_current_turn(user_input)
                 elif user_input.strip():
                     await submit_user_message(user_input)
@@ -680,7 +753,7 @@ async def web_agent_loop(
                     await ui.send({"type": "done"})
                 continue
 
-            if session_state.get("busy"):
+            if scheduler.busy:
                 await interrupt_current_turn(user_input)
             else:
                 await submit_user_message(user_input)
@@ -716,7 +789,7 @@ async def web_main(
     print(f"网页界面: http://localhost:{ui.port}")
     print(f"工作目录: {workspace}")
     if resume:
-        print(f"恢复会话: {resume}")
+        print(f"恢复会话: {resume}（结构化状态或 log.txt）")
     else:
         print("新会话（无 resume 或 log 中无 session_id）")
     if persist_context:
@@ -725,11 +798,14 @@ async def web_main(
 
     log_mode = "a" if log_append else "w"
     log_file = open(log_path, log_mode, encoding="utf-8")
+    store = SchedulerStateStore(workspace)
     try:
         try:
             async with ClaudeSDKClient(
                 options=build_options(workspace, resume=resume, persist_context=persist_context),
             ) as client:
+                scheduler = AgentScheduler(client, store, TaskRegistry(store))
+
                 async def _notify_log():
                     while ui._ws is None:
                         await asyncio.sleep(0.5)
@@ -742,11 +818,12 @@ async def web_main(
                     "last_tool_error": False,
                     "persist_assistant_buf": "",
                 }
-                await web_agent_loop(client, log_file, ui, web_session_state, workspace)
+                await web_agent_loop(client, log_file, ui, web_session_state, workspace, scheduler)
         except ProcessError:
             _print_process_error_help(workspace, resume)
             raise
     finally:
+        store.close()
         log_file.close()
         await ui.stop()
 
@@ -772,7 +849,7 @@ def parse_args() -> argparse.Namespace:
             "工作目录；省略则新建 runs/<时间戳>。"
             "传单级目录名时按 runs/<name> 解析；"
             "也支持相对路径或绝对路径。"
-            "若目录内有 log.txt，则尝试恢复会话"
+            "若目录内有 scheduler state 或 log.txt，则尝试恢复会话"
         ),
     )
     parser.add_argument(
