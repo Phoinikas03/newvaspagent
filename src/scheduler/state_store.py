@@ -161,6 +161,30 @@ class SchedulerStateStore:
             metadata={"claude_session_source": source},
         )
 
+    def clear_claude_session_id(self, *, invalid_session_id: str | None = None, source: str) -> None:
+        data = load_session_state(self.workspace)
+        now = utc_now()
+        if invalid_session_id and data.get("claude_session_id") == invalid_session_id:
+            data.pop("claude_session_id", None)
+        data["claude_session_source"] = source
+        data["updated_at"] = now
+        invalid = data.get("invalid_claude_session_ids")
+        if not isinstance(invalid, list):
+            invalid = []
+        if invalid_session_id and invalid_session_id not in invalid:
+            invalid.append(invalid_session_id)
+        data["invalid_claude_session_ids"] = invalid
+        _write_json_atomic(self.state_file, data)
+        self.conn.execute(
+            """
+            update sessions
+               set claude_session_id = null, updated_at = ?
+             where scheduler_session_id = ?
+            """,
+            (now, self.scheduler_session_id),
+        )
+        self.conn.commit()
+
     def upsert_session(
         self,
         *,

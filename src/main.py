@@ -43,6 +43,7 @@ from src.scheduler import (
     WorkspaceSessionIndex,
     load_structured_resume_session_id,
 )
+from src.scheduler.state_store import load_session_state
 from src.litellm_proxy import (
     configure_anthropic_for_litellm,
     direct_model_from_upstream,
@@ -91,6 +92,25 @@ def _parse_last_session_id(log_path: Path) -> str | None:
     return matches[-1] if matches else None
 
 
+def _invalid_resume_session_ids(workspace: Path) -> set[str]:
+    data = load_session_state(workspace)
+    invalid = data.get("invalid_claude_session_ids")
+    if not isinstance(invalid, list):
+        return set()
+    return {str(item) for item in invalid if item}
+
+
+def _workspace_resume_session_id(workspace: Path, log_path: Path) -> str | None:
+    invalid = _invalid_resume_session_ids(workspace)
+    structured = load_structured_resume_session_id(workspace)
+    if structured and structured not in invalid:
+        return structured
+    logged = _parse_last_session_id(log_path)
+    if logged and logged not in invalid:
+        return logged
+    return None
+
+
 def resolve_workspace(run_dir: str | None) -> tuple[Path, str | None]:
     """
     解析工作区路径与是否恢复会话。
@@ -124,7 +144,7 @@ def resolve_workspace(run_dir: str | None) -> tuple[Path, str | None]:
         pass
     if not ws.is_dir():
         raise ValueError(f"目录不存在: {ws}")
-    resume = load_structured_resume_session_id(ws) or _parse_last_session_id(ws / SESSION_LOG_NAME)
+    resume = _workspace_resume_session_id(ws, ws / SESSION_LOG_NAME)
     return ws, resume
 
 
@@ -149,6 +169,19 @@ def _print_process_error_help(workspace: str, resume: str | None) -> None:
     )
     if resume:
         print(f"  当前 resume session_id: {resume}", file=sys.stderr)
+
+
+def _stderr_indicates_missing_conversation(workspace: str, resume: str | None) -> bool:
+    if not resume:
+        return False
+    path = Path(workspace) / CLAUDE_STDERR_LOG
+    if not path.is_file():
+        return False
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    return f"No conversation found with session ID: {resume}" in text[-6000:]
 
 
 def _make_agent_options(**kwargs) -> ClaudeAgentOptions:
@@ -486,7 +519,27 @@ async def cli_main(
                 await cli_agent_loop(client, log_file, workspace, scheduler)
         except ProcessError:
             _print_process_error_help(workspace, resume)
-            raise
+            if not _stderr_indicates_missing_conversation(workspace, resume):
+                raise
+            store.clear_claude_session_id(
+                invalid_session_id=resume,
+                source="resume_missing_conversation",
+            )
+            print(
+                "[系统提示] 原 Claude Code 会话已无法恢复，"
+                "正在使用同一 workspace 启动新会话，并注入本地持久化历史。\n",
+                flush=True,
+            )
+            fallback_context = load_persist_context_for_prompt(ws)
+            try:
+                async with ClaudeSDKClient(
+                    options=build_options(workspace, resume=None, persist_context=fallback_context),
+                ) as client:
+                    scheduler = AgentScheduler(client, store, TaskRegistry(store))
+                    await cli_agent_loop(client, log_file, workspace, scheduler)
+            except ProcessError:
+                _print_process_error_help(workspace, None)
+                raise
     finally:
         store.close()
         log_file.close()
@@ -862,7 +915,7 @@ class WorkspaceRuntime:
 
         self.workspace.mkdir(parents=True, exist_ok=True)
         log_path = self.workspace / SESSION_LOG_NAME
-        resume = load_structured_resume_session_id(self.workspace) or _parse_last_session_id(log_path)
+        resume = _workspace_resume_session_id(self.workspace, log_path)
         persist_context = None if resume else load_persist_context_for_prompt(self.workspace)
         log_mode = "a" if log_path.exists() else "w"
         self.log_file = open(log_path, log_mode, encoding="utf-8")
@@ -875,8 +928,38 @@ class WorkspaceRuntime:
             await self.client.connect()
         except ProcessError:
             _print_process_error_help(str(self.workspace), resume)
-            self.index.update_runtime_state(self.agent_session_id, status="error")
-            raise
+            if not _stderr_indicates_missing_conversation(str(self.workspace), resume):
+                self.index.update_runtime_state(self.agent_session_id, status="error")
+                raise
+            self.store.clear_claude_session_id(
+                invalid_session_id=resume,
+                source="resume_missing_conversation",
+            )
+            self.index.clear_claude_session_id(self.agent_session_id)
+            await self.sender.send(
+                {
+                    "type": "agent_text",
+                    "text": (
+                        "[系统提示] 原 Claude Code 会话已无法恢复，"
+                        "正在使用同一 workspace 启动新会话，并注入本地持久化历史。"
+                    ),
+                }
+            )
+            persist_context = load_persist_context_for_prompt(self.workspace)
+            self.client = ClaudeSDKClient(
+                options=build_options(
+                    str(self.workspace),
+                    resume=None,
+                    persist_context=persist_context,
+                ),
+            )
+            try:
+                await self.client.connect()
+            except ProcessError:
+                _print_process_error_help(str(self.workspace), None)
+                self.index.update_runtime_state(self.agent_session_id, status="error")
+                raise
+            resume = None
         self.scheduler = AgentScheduler(self.client, self.store, TaskRegistry(self.store))
         self.receive_task = asyncio.create_task(self._receive_loop())
         self.started = True
