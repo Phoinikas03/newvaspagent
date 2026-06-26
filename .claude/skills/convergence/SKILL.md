@@ -27,7 +27,7 @@ convergence/
 
 ## 可用工具
 
-- `setup_vasp_inputs`：生成 POTCAR 与 POSCAR 拷贝；**INCAR** 中含 **`KSPACING`** 时**不**生成 **KPOINTS**
+- `setup_vasp_inputs`：生成 POTCAR 与 POSCAR 拷贝；**INCAR** 中含 **`KSPACING`** 时**不**生成 **KPOINTS**；用户明确指定赝势变体时，通过 `potcar_overrides` 传入 JSON object（如 `{"Cr": "Cr_pv"}`）
 - Skill（`run_vasp`）：运行 VASP 前须载入全文并按 GPU/CPU 规则调用
 - Skill（`vasp_error`）：当某个测试点失败、未收敛、疑似卡住、或需要判断是否应先停止当前 run 再调整参数重跑时使用
 - `Write` / `Edit`、`Bash`、`Read` / `Grep`
@@ -61,7 +61,7 @@ convergence/
 
 1. 确认工作目录中有可靠的 **`POSCAR`**（来自 `Skill: structure` 或用户路径）。
 2. `Read templates/INCAR_static_convergence`，复制为工作区中的 **`INCAR`** 或 **`INCAR_template`**，按体系设置 **`ISMEAR` / `SIGMA`**、**`ISPIN` / `MAGMOM`** 等（与后续正式计算保持一致）。
-3. 尚未有 **POTCAR** 时，可先调用 **`setup_vasp_inputs`**（传入 `poscar_path` 与 `incar_path`）生成 **POTCAR**；**INCAR 须含 `KSPACING`**（模板已预留占位符），以便不写 **KPOINTS**。
+3. 尚未有 **POTCAR** 时，可先调用 **`setup_vasp_inputs`**（传入 `poscar_path` 与 `incar_path`）生成 **POTCAR**；**INCAR 须含 `KSPACING`**（模板已预留占位符），以便不写 **KPOINTS**。若用户明确要求特定 POTCAR 变体，必须在该工具调用中传入 `potcar_overrides`，不得手工生成或拼接 POTCAR。
 
 ---
 
@@ -98,7 +98,7 @@ convergence_test/
 └── kspacing_test/k_<KSPACING>/
 ```
 
-每个子目录内：放入对应 **POSCAR**、**INCAR**（该点上的 **ENCUT** 或 **KSPACING**），调用 **`setup_vasp_inputs`**（保证 **KSPACING** 在 INCAR 中、且无多余 **KPOINTS**），再通过 **`python .claude/skills/run_vasp/scripts/vasp_runner.py`** 提交。算完后：
+每个子目录内：放入对应 **POSCAR**、**INCAR**（该点上的 **ENCUT** 或 **KSPACING**），调用 **`setup_vasp_inputs`**（保证 **KSPACING** 在 INCAR 中、且无多余 **KPOINTS**；若用户指定赝势变体则同步传入相同的 `potcar_overrides`），再通过 **`python .claude/skills/run_vasp/scripts/vasp_runner.py`** 提交。算完后：
 
 ```bash
 # 在仓库根执行（与 system_prompt 中 SKILL & `.claude` PATH RULE 一致）：

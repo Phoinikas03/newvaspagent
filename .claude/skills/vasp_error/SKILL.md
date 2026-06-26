@@ -86,7 +86,7 @@ cd "<repo_root>" && python .claude/skills/vasp_error/scripts/analyze_error.py --
 - `ZBRENT`
 - 内存/LAPACK 错误
 - `WAVECAR` 不匹配
-- `POTCAR` 顺序问题
+- `POTCAR` 顺序或用户指定赝势变体未同步的问题
 - 晶胞异常变化
 - HSE 极慢或卡住
 - 长时间无新输出的 stalled run
@@ -128,6 +128,7 @@ cd "<repo_root>" && python .claude/skills/run_vasp/scripts/terminate.py --work-d
 停止后，回到 `run_vasp` 流程：
 
 - 修改输入
+- 若需要重新生成 `POTCAR`，必须调用 `setup_vasp_inputs`；若用户原先指定过赝势变体，必须在同一次工具调用中传入相同的 `potcar_overrides` JSON object（如 `{"Cr": "Cr_pv"}`），不得用 Bash/Python 手工生成、拼接或复制 `POTCAR`
 - 向用户展示新的 `vasp_runner.py` 命令
 - 再次取得用户确认
 - 重新提交
@@ -138,3 +139,4 @@ cd "<repo_root>" && python .claude/skills/run_vasp/scripts/terminate.py --work-d
 - 不得在旧 run 可能仍活着时，向同一目录再补开一个新的 `mpirun`
 - 不得只看到 “fatal error” 就直接认定必须重算
 - 不得在未获用户同意时自动 terminate + rerun
+- 不得绕过 `setup_vasp_inputs` 手工修复 `POTCAR`；用户指定赝势变体时，错误恢复和重跑必须继续使用同一份 `potcar_overrides`

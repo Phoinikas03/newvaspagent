@@ -90,7 +90,7 @@ LAPACK: Routine ZPOTRF failed!
 POSCAR and POTCAR are inconsistent
 ```
 
-**处理**：检查 POSCAR 第六行的元素顺序是否与 POTCAR 中各赝势的顺序完全一致。调用 `setup_vasp_inputs` 重新生成 POTCAR 通常可自动修复。
+**处理**：检查 POSCAR 第六行的元素顺序是否与 POTCAR 中各赝势的顺序完全一致。通过 `setup_vasp_inputs` 重新生成 POTCAR 通常可自动修复；若用户指定过赝势变体，必须同步传入同一份 `potcar_overrides`（例如 `{"Cr": "Cr_pv"}`），不得手工生成、拼接或复制 POTCAR。
 
 ---
 

@@ -48,6 +48,17 @@ CLAUDE_STDERR_LOG = "claude_stderr.log"
 WEB_PORT = 18688
 RUNS_ROOT = REPO_ROOT / "runs"
 
+
+def _configure_repo_potcar_dir() -> None:
+    """Expose the repository-local POTCAR library to pymatgen and child tools."""
+    repo_potcar_dir = REPO_ROOT / "POTCAR_dir"
+    current = os.environ.get("PMG_VASP_PSP_DIR")
+    if repo_potcar_dir.is_dir() and (not current or not Path(current).exists()):
+        os.environ["PMG_VASP_PSP_DIR"] = str(repo_potcar_dir)
+
+
+_configure_repo_potcar_dir()
+
 # Web：ResultMessage.result 为空且本轮最后一条工具返回 is_error 时，避免界面无文字说明
 EMPTY_RESULT_WITH_TOOL_ERROR_FALLBACK = (
     "[系统提示] 本轮在工具执行阶段出现错误，且模型未返回结束摘要。"
@@ -194,7 +205,7 @@ SKILL & `.claude` PATH RULE (mandatory):
 - Any Bash that loads or runs skill assets (Python scripts under `.claude/skills/`, `vasp_runner.py`, `probe_env.py`, `quick_test.py`, sourcing templates, etc.) MUST start by changing directory to the repository root: prefix with `cd "{repo_root}" && ...`, **or** use absolute paths beginning with `{repo_root}/`.
 - Do **not** assume `.claude` exists under the session workspace.
 
-VASP FILE PROVENANCE (mandatory): You MUST NOT use Write, Edit, or Bash/heredocs to manually author the full contents of **POSCAR**, **POTCAR**, or **KPOINTS**. Obtain and construct crystal structures through **`Skill: structure`** and its scripts (for example `.claude/skills/structure/scripts/fetch_mp_poscar.py`, `build_surface.py`, or `build_adsorption.py`), or through explicitly documented external retrieval procedures—not by typing lattice vectors and coordinates from memory. Generate **POTCAR** (and the POSCAR copy used with them in the workspace) **only** via **`setup_vasp_inputs`**. Prefer **KSPACING** (and optionally **KGAMMA**) in **INCAR** so **`setup_vasp_inputs`** does not create a **KPOINTS** file; only when **KSPACING** is absent does the tool write **KPOINTS** from density. You MAY create or adjust **INCAR** by copying skill templates and changing parameters (ENCUT, ISMEAR, KSPACING, etc.).
+VASP FILE PROVENANCE (mandatory): You MUST NOT use Write, Edit, or Bash/heredocs to manually author the full contents of **POSCAR**, **POTCAR**, or **KPOINTS**. Obtain and construct crystal structures through **`Skill: structure`** and its scripts (for example `.claude/skills/structure/scripts/fetch_mp_poscar.py`, `build_surface.py`, or `build_adsorption.py`), or through explicitly documented external retrieval procedures—not by typing lattice vectors and coordinates from memory. Generate **POTCAR** (and the POSCAR copy used with them in the workspace) **only** via **`setup_vasp_inputs`**. If the user explicitly requests a POTCAR variant, pass it through `setup_vasp_inputs` using `potcar_overrides` as a JSON object such as `{{"Cr": "Cr_pv"}}`; do not generate, edit, concatenate, or copy POTCAR manually with Bash/Python as a fallback. Prefer **KSPACING** (and optionally **KGAMMA**) in **INCAR** so **`setup_vasp_inputs`** does not create a **KPOINTS** file; only when **KSPACING** is absent does the tool write **KPOINTS** from density. You MAY create or adjust **INCAR** by copying skill templates and changing parameters (ENCUT, ISMEAR, KSPACING, etc.).
 
 CRITICAL INTERACTION RULE: You MUST NOT call or attempt to use the `AskUserQuestion` tool. Instead, whenever you finish a major workflow step, encounter an error, or need permission to proceed to a computationally expensive task (like running VASP), you MUST output a plain text block. In this text block, clearly summarize what you have achieved so far, and explicitly ask the user for confirmation to proceed to the next step. NEVER terminate your turn silently without reporting your status.
 
@@ -271,7 +282,7 @@ RESTART-IN-PLACE SAFETY FOR GPU / MPI FAILURES (CRITICAL):
 
 ITERATIVE EXECUTION RULE: When performing parameter sweeps or convergence tests, DO NOT write and execute monolithic Python/Bash scripts containing loops to run VASP multiple times. Instead, manage the loop in your reasoning and run **each** heavy step **one at a time** with **`run_in_background: true`** (or the workload manager per `run_vasp`). This preserves intermediate checks and avoids many uncontrolled concurrent processes.
 
-POTCAR SELECTION RULE: Use the pymatgen / Materials Project **recommended** pseudopotential for each element. For transition metals, alkali, alkaline-earth and many heavy elements this is the semi-core variant (e.g., Ti_pv, Fe_pv, Mn_pv, Cr_pv, Ni_pv, Li_sv, Ba_sv, Ca_sv, Na_pv, Sn_d, Pb_d), NOT the bare standard potential. `setup_vasp_inputs` applies this recommended mapping automatically. Do NOT downgrade to the fewest-valence-electron standard version to save computational cost: doing so shifts the total-energy reference (making energies incomparable with reference/benchmark data) and loses accuracy where semi-core states matter. Only deviate from the recommended choice if the user explicitly requests it.
+POTCAR SELECTION RULE: Use the pymatgen / Materials Project **recommended** pseudopotential for each element. For transition metals, alkali, alkaline-earth and many heavy elements this is the semi-core variant (e.g., Ti_pv, Fe_pv, Mn_pv, Cr_pv, Ni_pv, Li_sv, Ba_sv, Ca_sv, Na_pv, Sn_d, Pb_d), NOT the bare standard potential. `setup_vasp_inputs` applies this recommended mapping automatically. Do NOT downgrade to the fewest-valence-electron standard version to save computational cost: doing so shifts the total-energy reference (making energies incomparable with reference/benchmark data) and loses accuracy where semi-core states matter. Only deviate from the recommended choice if the user explicitly requests it, and then pass the exact element-to-POTCAR map via `potcar_overrides` (for example `{{"Cr": "Cr_pv"}}`). If `setup_vasp_inputs` rejects the override, stop and report the error instead of bypassing the tool.
 {persist_block}""",
         mcp_servers={mcp_name: mcp_server},
         allowed_tools=[

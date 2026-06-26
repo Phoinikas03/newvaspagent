@@ -80,7 +80,8 @@ WAVECAR: reading failed
 ### 建议
 1. 检查 `POTCAR` 中 `VRHFIN` 顺序
 2. 确保它与 `POSCAR` 第 6 行元素顺序完全一致
-3. 不一致时重新生成 `POTCAR`
+3. 不一致时通过 `setup_vasp_inputs` 重新生成 `POTCAR`
+4. 若用户指定过赝势变体，重生成时必须传入同一份 `potcar_overrides`（例如 `{"Cr": "Cr_pv"}`）；如果工具拒绝该 override，停止并报告错误，不得用 Bash/Python 手工生成、拼接或复制 `POTCAR`
 
 ## 晶胞异常膨胀 / 坍缩
 
