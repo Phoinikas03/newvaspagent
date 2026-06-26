@@ -64,6 +64,22 @@ _HTML = """<!DOCTYPE html>
     min-height: 0;
     align-items: stretch;
   }
+  #main-row.sessions-collapsed #session-sidebar {
+    width: 44px;
+  }
+  #main-row.sessions-collapsed #session-list,
+  #main-row.sessions-collapsed #new-session-btn,
+  #main-row.sessions-collapsed #session-title-text {
+    display: none;
+  }
+  #main-row.sessions-collapsed #session-sidebar-header {
+    justify-content: center;
+    padding-left: 6px;
+    padding-right: 6px;
+  }
+  #main-row.sessions-collapsed #toggle-sessions-btn {
+    transform: rotate(180deg);
+  }
   #chat-column {
     flex: 1;
     min-width: 0;
@@ -273,6 +289,7 @@ _HTML = """<!DOCTYPE html>
     display: flex;
     flex-direction: column;
     min-height: 0;
+    transition: width .18s ease;
   }
   #session-sidebar-header {
     padding: 10px 12px;
@@ -285,6 +302,7 @@ _HTML = """<!DOCTYPE html>
     font-weight: 600;
   }
   #new-session-btn,
+  #toggle-sessions-btn,
   .session-star,
   .session-rename,
   .task-stop-btn {
@@ -297,7 +315,9 @@ _HTML = """<!DOCTYPE html>
     line-height: 1;
   }
   #new-session-btn { width: 28px; height: 28px; font-size: 18px; }
+  #toggle-sessions-btn { width: 28px; height: 28px; }
   #new-session-btn:hover,
+  #toggle-sessions-btn:hover,
   .session-star:hover,
   .session-rename:hover,
   .task-stop-btn:hover { border-color: var(--accent); color: var(--accent); }
@@ -481,6 +501,7 @@ _HTML = """<!DOCTYPE html>
   }
   @media (max-width: 900px) {
     #session-sidebar { width: 220px; }
+    #main-row.sessions-collapsed #session-sidebar { width: 44px; }
     #todo-panel { display: none; }
   }
 </style>
@@ -491,10 +512,11 @@ _HTML = """<!DOCTYPE html>
   <span id="status-badge">就绪</span>
   <span id="log-path"></span>
 </div>
-<div id="main-row">
+<div id="main-row" class="sessions-collapsed">
   <aside id="session-sidebar">
     <div id="session-sidebar-header">
-      <span>会话</span>
+      <button id="toggle-sessions-btn" title="展开/收起会话">‹</button>
+      <span id="session-title-text">会话</span>
       <button id="new-session-btn" title="新建会话">＋</button>
     </div>
     <div id="session-list"></div>
@@ -522,8 +544,10 @@ const sendBtn = document.getElementById('send-btn');
 const statusBadge = document.getElementById('status-badge');
 const logPathEl = document.getElementById('log-path');
 const todoListEl = document.getElementById('todo-list');
+const mainRowEl = document.getElementById('main-row');
 const sessionListEl = document.getElementById('session-list');
 const newSessionBtn = document.getElementById('new-session-btn');
+const toggleSessionsBtn = document.getElementById('toggle-sessions-btn');
 const runtimeTaskListEl = document.getElementById('runtime-task-list');
 
 let curBubble = null, textStackEl = null, toolsStackEl = null;
@@ -533,6 +557,11 @@ let toolCardByUseId = {};
 let activeSessionId = null;
 let sessions = [];
 let sessionStates = {};
+
+const sessionsCollapsed = localStorage.getItem('vasp-agent.sessions-collapsed');
+if (sessionsCollapsed === 'false') {
+  mainRowEl.classList.remove('sessions-collapsed');
+}
 
 const EVENT_TYPES = new Set(['user_message', 'agent_text', 'tool_use', 'tool_result', 'result']);
 
@@ -993,13 +1022,20 @@ function selectSession(id) {
 
 function createSession() {
   const title = prompt('新建会话名称');
-  wsSend({ type: 'create_session', title: title && title.trim() ? title.trim() : '' });
+  if (title === null) return;
+  wsSend({ type: 'create_session', title: title.trim() });
+}
+
+function toggleSessionSidebar() {
+  const collapsed = mainRowEl.classList.toggle('sessions-collapsed');
+  localStorage.setItem('vasp-agent.sessions-collapsed', collapsed ? 'true' : 'false');
 }
 
 inputEl.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
 inputEl.addEventListener('input',   ()  => { inputEl.style.height = ''; inputEl.style.height = Math.min(inputEl.scrollHeight, 200) + 'px'; });
 sendBtn.addEventListener('click', send);
 newSessionBtn.addEventListener('click', createSession);
+toggleSessionsBtn.addEventListener('click', toggleSessionSidebar);
 </script>
 </body>
 </html>
