@@ -10,6 +10,8 @@ Exposes a single WebUI class that:
 import asyncio
 import errno
 import json
+from collections.abc import Awaitable, Callable
+from typing import Any
 from aiohttp import web
 import aiohttp
 
@@ -262,7 +264,95 @@ _HTML = """<!DOCTYPE html>
   #send-btn.stop:hover { background: #ff6b64; }
   #send-btn:disabled { background: #21262d; color: var(--muted); cursor: not-allowed; }
 
-  /* --- 右侧 Todo 栏 --- */
+  /* --- 左侧会话栏 --- */
+  #session-sidebar {
+    width: min(300px, 34vw);
+    flex-shrink: 0;
+    border-right: 1px solid var(--border);
+    background: var(--surface);
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  #session-sidebar-header {
+    padding: 10px 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 13px;
+    font-weight: 600;
+  }
+  #new-session-btn,
+  .session-star,
+  .session-rename,
+  .task-stop-btn {
+    border: 1px solid var(--border);
+    background: #21262d;
+    color: var(--text);
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12px;
+    line-height: 1;
+  }
+  #new-session-btn { width: 28px; height: 28px; font-size: 18px; }
+  #new-session-btn:hover,
+  .session-star:hover,
+  .session-rename:hover,
+  .task-stop-btn:hover { border-color: var(--accent); color: var(--accent); }
+  #session-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px;
+  }
+  .session-item {
+    width: 100%;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    padding: 8px;
+    margin-bottom: 6px;
+    background: transparent;
+    color: var(--text);
+    display: grid;
+    grid-template-columns: 26px 1fr 26px;
+    gap: 8px;
+    align-items: center;
+    cursor: pointer;
+    text-align: left;
+  }
+  .session-item.active {
+    background: #1f2937;
+    border-color: var(--accent);
+  }
+  .session-item.unread .session-title::after {
+    content: ' •';
+    color: var(--accent);
+  }
+  .session-title {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .session-meta {
+    grid-column: 2 / 4;
+    color: var(--muted);
+    font-size: 11px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .session-star,
+  .session-rename {
+    width: 26px;
+    height: 24px;
+  }
+  .session-star.on { color: var(--warning); border-color: rgba(210,153,34,.55); }
+
+  /* --- 右侧任务栏 --- */
   #todo-panel {
     width: min(320px, 38vw);
     flex-shrink: 0;
@@ -280,12 +370,30 @@ _HTML = """<!DOCTYPE html>
     border-bottom: 1px solid var(--border);
     flex-shrink: 0;
   }
+  #runtime-task-header {
+    padding: 12px 14px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--muted);
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
   #todo-list {
     flex: 1;
+    min-height: 0;
     overflow-y: auto;
     padding: 10px 12px 16px;
     font-size: 13px;
     line-height: 1.45;
+  }
+  #runtime-task-list {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 10px 12px 16px;
+    font-size: 12px;
+    line-height: 1.4;
   }
   #todo-list::-webkit-scrollbar { width: 5px; }
   #todo-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
@@ -342,6 +450,39 @@ _HTML = """<!DOCTYPE html>
     word-break: break-word;
   }
   .todo-item.todo-muted .todo-label { color: var(--muted); }
+  .runtime-task-item {
+    border-bottom: 1px solid #21262d;
+    padding: 8px 4px;
+  }
+  .runtime-task-top {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .runtime-task-label {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .runtime-task-meta {
+    margin-top: 4px;
+    color: var(--muted);
+    font-family: monospace;
+    font-size: 11px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .task-stop-btn {
+    padding: 4px 7px;
+    color: var(--error);
+  }
+  @media (max-width: 900px) {
+    #session-sidebar { width: 220px; }
+    #todo-panel { display: none; }
+  }
 </style>
 </head>
 <body>
@@ -351,6 +492,13 @@ _HTML = """<!DOCTYPE html>
   <span id="log-path"></span>
 </div>
 <div id="main-row">
+  <aside id="session-sidebar">
+    <div id="session-sidebar-header">
+      <span>会话</span>
+      <button id="new-session-btn" title="新建会话">＋</button>
+    </div>
+    <div id="session-list"></div>
+  </aside>
   <div id="chat-column">
     <div id="chat-container"></div>
     <div id="input-area">
@@ -359,8 +507,10 @@ _HTML = """<!DOCTYPE html>
     </div>
   </div>
   <aside id="todo-panel">
-    <div id="todo-panel-header">任务列表</div>
+    <div id="todo-panel-header">Todo</div>
     <div id="todo-list"><div class="todo-empty">暂无任务</div></div>
+    <div id="runtime-task-header">后台任务</div>
+    <div id="runtime-task-list"><div class="todo-empty">暂无后台任务</div></div>
   </aside>
 </div>
 <script>
@@ -372,11 +522,35 @@ const sendBtn = document.getElementById('send-btn');
 const statusBadge = document.getElementById('status-badge');
 const logPathEl = document.getElementById('log-path');
 const todoListEl = document.getElementById('todo-list');
+const sessionListEl = document.getElementById('session-list');
+const newSessionBtn = document.getElementById('new-session-btn');
+const runtimeTaskListEl = document.getElementById('runtime-task-list');
 
 let curBubble = null, textStackEl = null, toolsStackEl = null;
 let isThinking = false;
 /** @type {Record<string, HTMLElement>} 按 tool_use_id 合并「请求+返回」到同一卡片 */
 let toolCardByUseId = {};
+let activeSessionId = null;
+let sessions = [];
+let sessionStates = {};
+
+const EVENT_TYPES = new Set(['user_message', 'agent_text', 'tool_use', 'tool_result', 'result']);
+
+function ensureSessionState(id) {
+  const sid = id || activeSessionId || '__default__';
+  if (!sessionStates[sid]) {
+    sessionStates[sid] = {
+      events: [],
+      todos: [],
+      tasks: [],
+      statusText: '就绪',
+      thinking: false,
+      logPath: '',
+      unread: false,
+    };
+  }
+  return sessionStates[sid];
+}
 
 const ws = new WebSocket(`ws://${location.host}/ws`);
 ws.onopen  = () => { setStatus('已连接', false); sendBtn.disabled = false; };
@@ -384,37 +558,158 @@ ws.onclose = () => { setStatus('连接断开', false); sendBtn.disabled = false;
 ws.onerror = () => { setStatus('连接错误', false); sendBtn.disabled = false; };
 ws.onmessage = (ev) => {
   const d = JSON.parse(ev.data);
-  if (d.type === 'history') {
-    let lastStatus = null;
-    d.events.forEach((e) => {
-      if (e.type === 'status') lastStatus = e;
-      dispatch(e, true);
-    });
-    const lastEv = d.events.length ? d.events[d.events.length - 1] : null;
-    if (lastEv && lastEv.type === 'result') {
-      setStatus('就绪', false);
-    } else if (lastStatus) {
-      setStatus(lastStatus.text, lastStatus.thinking ?? false);
-    } else {
-      setStatus('就绪', false);
-    }
-    sendBtn.disabled = false;
-    scrollBottom();
-    return;
-  }
   dispatch(d, false);
 };
 
 function dispatch(d, replay) {
+  if (d.type === 'session_list') {
+    sessions = Array.isArray(d.sessions) ? d.sessions : [];
+    if (d.active_session_id) activeSessionId = d.active_session_id;
+    renderSessionList();
+    return;
+  }
+  if (d.type === 'session_history') {
+    const sid = d.agent_session_id;
+    if (!activeSessionId) activeSessionId = sid;
+    const st = ensureSessionState(sid);
+    st.events = Array.isArray(d.events) ? d.events : [];
+    st.tasks = Array.isArray(d.tasks) ? d.tasks : [];
+    st.logPath = d.log_path || st.logPath || '';
+    hydrateSessionState(st);
+    st.unread = false;
+    if (sid === activeSessionId) renderActiveSession();
+    renderSessionList();
+    return;
+  }
+
+  const sid = d.agent_session_id || activeSessionId;
+  const st = ensureSessionState(sid);
+  if (EVENT_TYPES.has(d.type)) st.events.push(d);
+  if (d.type === 'log_path') st.logPath = d.path || '';
+  if (d.type === 'status') {
+    st.statusText = d.text || '就绪';
+    st.thinking = !!d.thinking;
+  }
+  if (d.type === 'todo_update') st.todos = Array.isArray(d.todos) ? d.todos : [];
+  if (d.type === 'task_snapshot') st.tasks = Array.isArray(d.tasks) ? d.tasks : [];
+  if (d.type === 'done') {
+    st.thinking = false;
+    sendBtn.disabled = false;
+  }
+
+  if (sid !== activeSessionId) {
+    if (EVENT_TYPES.has(d.type) || d.type === 'status' || d.type === 'task_snapshot') {
+      st.unread = true;
+      renderSessionList();
+    }
+    return;
+  }
+  renderEvent(d, replay);
+}
+
+function hydrateSessionState(st) {
+  st.todos = [];
+  st.statusText = '就绪';
+  st.thinking = false;
+  (st.events || []).forEach((e) => {
+    if (e.type === 'todo_update') st.todos = Array.isArray(e.todos) ? e.todos : [];
+    else if (e.type === 'status') {
+      st.statusText = e.text || st.statusText;
+      st.thinking = !!e.thinking;
+    } else if (e.type === 'log_path') {
+      st.logPath = e.path || st.logPath || '';
+    } else if (e.type === 'result') {
+      st.statusText = '就绪';
+      st.thinking = false;
+    }
+  });
+}
+
+function renderEvent(d, replay) {
   if      (d.type === 'user_message') appendUserMsg(d.text);
   else if (d.type === 'agent_text')   appendText(d.text, d);
   else if (d.type === 'tool_use')     appendTool(d.name, d.input_str || '', d.tool_use_id);
   else if (d.type === 'tool_result')  appendToolResult(d);
   else if (d.type === 'result')       appendResult(d);
-  else if (d.type === 'log_path')     logPathEl.textContent = d.path;
+  else if (d.type === 'log_path')     logPathEl.textContent = d.path || '';
   else if (d.type === 'status')       setStatus(d.text, d.thinking ?? false);
   else if (d.type === 'todo_update') renderTodoPanel(d.todos);
-  else if (!replay && d.type === 'done')   sendBtn.disabled = false;
+  else if (d.type === 'task_snapshot') renderRuntimeTasks(d.tasks);
+  else if (!replay && d.type === 'done') sendBtn.disabled = false;
+}
+
+function renderActiveSession() {
+  const st = ensureSessionState(activeSessionId);
+  chat.innerHTML = '';
+  curBubble = textStackEl = toolsStackEl = null;
+  toolCardByUseId = {};
+  st.events.forEach((e) => renderEvent(e, true));
+  renderTodoPanel(st.todos);
+  renderRuntimeTasks(st.tasks);
+  logPathEl.textContent = st.logPath || '';
+  setStatus(st.statusText || '就绪', !!st.thinking);
+  sendBtn.disabled = false;
+  scrollBottom();
+}
+
+function renderSessionList() {
+  if (!sessions.length) {
+    sessionListEl.innerHTML = '<div class="todo-empty">暂无会话</div>';
+    return;
+  }
+  sessionListEl.innerHTML = '';
+  sessions.forEach((s) => {
+    const sid = String(s.agent_session_id);
+    const st = ensureSessionState(sid);
+    const item = document.createElement('div');
+    item.className = 'session-item' + (sid === activeSessionId ? ' active' : '') + (st.unread ? ' unread' : '');
+    item.role = 'button';
+    item.tabIndex = 0;
+    item.onclick = () => selectSession(sid);
+    item.onkeydown = (ev) => {
+      if (ev.key === 'Enter' || ev.key === ' ') {
+        ev.preventDefault();
+        selectSession(sid);
+      }
+    };
+
+    const star = document.createElement('button');
+    star.className = 'session-star' + (s.starred ? ' on' : '');
+    star.type = 'button';
+    star.title = s.starred ? '取消星标' : '标星';
+    star.textContent = s.starred ? '★' : '☆';
+    star.onclick = (ev) => {
+      ev.stopPropagation();
+      wsSend({ type: 'star_session', agent_session_id: sid, starred: !s.starred });
+    };
+
+    const title = document.createElement('div');
+    title.className = 'session-title';
+    title.textContent = s.title || sid;
+
+    const rename = document.createElement('button');
+    rename.className = 'session-rename';
+    rename.type = 'button';
+    rename.title = '重命名';
+    rename.textContent = '✎';
+    rename.onclick = (ev) => {
+      ev.stopPropagation();
+      const next = prompt('重命名会话', s.title || sid);
+      if (next && next.trim()) {
+        wsSend({ type: 'rename_session', agent_session_id: sid, title: next.trim() });
+      }
+    };
+
+    const meta = document.createElement('div');
+    meta.className = 'session-meta';
+    meta.textContent = `${s.status || 'idle'} · ${sid}`;
+
+    item.appendChild(star);
+    item.appendChild(title);
+    item.appendChild(rename);
+    item.appendChild(meta);
+    sessionListEl.appendChild(item);
+  });
 }
 
 function renderTodoPanel(todos) {
@@ -436,6 +731,40 @@ function renderTodoPanel(todos) {
     const muted = (st === 'pending') ? ' todo-muted' : '';
     return `<div class="todo-item${muted}">${ic}<span class="todo-label">${esc(t.label || '')}</span></div>`;
   }).join('');
+}
+
+function renderRuntimeTasks(tasks) {
+  const list = Array.isArray(tasks) ? tasks : [];
+  if (!list.length) {
+    runtimeTaskListEl.innerHTML = '<div class="todo-empty">暂无后台任务</div>';
+    return;
+  }
+  runtimeTaskListEl.innerHTML = '';
+  list.forEach((t) => {
+    const row = document.createElement('div');
+    row.className = 'runtime-task-item';
+    const top = document.createElement('div');
+    top.className = 'runtime-task-top';
+    const label = document.createElement('div');
+    label.className = 'runtime-task-label';
+    label.textContent = t.label || t.task_id || 'task';
+    top.appendChild(label);
+    const terminal = ['completed', 'failed', 'stopped', 'cancelled', 'canceled', 'killed'].includes(String(t.status || '').toLowerCase());
+    if (t.kind === 'claude' && !terminal) {
+      const stop = document.createElement('button');
+      stop.className = 'task-stop-btn';
+      stop.type = 'button';
+      stop.textContent = '停止';
+      stop.onclick = () => wsSend({ type: 'stop_task', agent_session_id: activeSessionId, task_id: t.task_id });
+      top.appendChild(stop);
+    }
+    const meta = document.createElement('div');
+    meta.className = 'runtime-task-meta';
+    meta.textContent = `${t.kind || '?'} · ${t.status || '?'} · ${t.task_id || ''}`;
+    row.appendChild(top);
+    row.appendChild(meta);
+    runtimeTaskListEl.appendChild(row);
+  });
 }
 
 function setStatus(text, thinking) {
@@ -629,18 +958,16 @@ function send() {
   }
   if (isThinking) {
     if (text) {
-      appendUserMsg(text);
-      ws.send(JSON.stringify({ type: 'interrupt', text }));
+      wsSend({ type: 'interrupt', text });
       inputEl.value = '';
       inputEl.style.height = '';
       setStatus('正在打断并发送新指令...', true);
     } else {
-      ws.send(JSON.stringify({ type: 'interrupt', text: '' }));
+      wsSend({ type: 'interrupt', text: '' });
       setStatus('正在停止当前回复...', true);
     }
   } else {
-    appendUserMsg(text);
-    ws.send(JSON.stringify({ type: 'user_message', text }));
+    wsSend({ type: 'user_message', text });
     inputEl.value = '';
     inputEl.style.height = '';
     setStatus('思考中...', true);
@@ -650,9 +977,29 @@ function send() {
   /* 不在此处清空 Todo：右侧列表由服务端下发的 todo_update 驱动；若清空会在下一轮首个 TodoWrite 之前长时间显示「暂无任务」。 */
 }
 
+function wsSend(payload) {
+  if (!payload.agent_session_id && activeSessionId) payload.agent_session_id = activeSessionId;
+  ws.send(JSON.stringify(payload));
+}
+
+function selectSession(id) {
+  activeSessionId = id;
+  const st = ensureSessionState(id);
+  st.unread = false;
+  renderActiveSession();
+  renderSessionList();
+  wsSend({ type: 'select_session', agent_session_id: id });
+}
+
+function createSession() {
+  const title = prompt('新建会话名称');
+  wsSend({ type: 'create_session', title: title && title.trim() ? title.trim() : '' });
+}
+
 inputEl.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
 inputEl.addEventListener('input',   ()  => { inputEl.style.height = ''; inputEl.style.height = Math.min(inputEl.scrollHeight, 200) + 'px'; });
 sendBtn.addEventListener('click', send);
+newSessionBtn.addEventListener('click', createSession);
 </script>
 </body>
 </html>
@@ -676,17 +1023,31 @@ _HISTORY_TYPES = {
 
 
 class WebUI:
-    def __init__(self, port: int = WEB_PORT) -> None:
+    def __init__(
+        self,
+        port: int = WEB_PORT,
+        *,
+        on_event: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+        on_connect: Callable[["WebUI", web.WebSocketResponse], Awaitable[None]] | None = None,
+        api_handler: Callable[[str, web.Request], Awaitable[Any]] | None = None,
+    ) -> None:
         self.port = port
         self.input_queue: asyncio.Queue = asyncio.Queue()
         self._ws: web.WebSocketResponse | None = None
+        self._clients: set[web.WebSocketResponse] = set()
         self._runner: web.AppRunner | None = None
         self._history: list[dict] = []
+        self._on_event = on_event
+        self._on_connect = on_connect
+        self._api_handler = api_handler
 
     async def start(self) -> None:
         app = web.Application()
         app.router.add_get("/", self._html_handler)
         app.router.add_get("/ws", self._ws_handler)
+        app.router.add_get("/api/sessions", self._api_sessions)
+        app.router.add_post("/api/sessions", self._api_sessions)
+        app.router.add_patch("/api/sessions/{agent_session_id}", self._api_session)
         self._runner = web.AppRunner(app)
         await self._runner.setup()
         requested = int(self.port)
@@ -719,21 +1080,50 @@ class WebUI:
     async def send(self, data: dict) -> None:
         if data.get("type") in _HISTORY_TYPES:
             self._history.append(data)
-        if self._ws and not self._ws.closed:
+        dead: list[web.WebSocketResponse] = []
+        for ws in list(self._clients):
+            if ws.closed:
+                dead.append(ws)
+                continue
             try:
-                await self._ws.send_json(data)
+                await ws.send_json(data)
+            except Exception:
+                dead.append(ws)
+        for ws in dead:
+            self._clients.discard(ws)
+
+    async def send_to(self, ws: web.WebSocketResponse, data: dict) -> None:
+        if not ws.closed:
+            try:
+                await ws.send_json(data)
             except Exception:
                 pass
 
     async def _html_handler(self, _request: web.Request) -> web.Response:
         return web.Response(text=_HTML, content_type="text/html")
 
+    async def _api_sessions(self, request: web.Request) -> web.Response:
+        if not self._api_handler:
+            return web.json_response({"error": "session API is not configured"}, status=501)
+        action = "list_sessions" if request.method == "GET" else "create_session"
+        data = await self._api_handler(action, request)
+        return web.json_response(data)
+
+    async def _api_session(self, request: web.Request) -> web.Response:
+        if not self._api_handler:
+            return web.json_response({"error": "session API is not configured"}, status=501)
+        data = await self._api_handler("update_session", request)
+        return web.json_response(data)
+
     async def _ws_handler(self, request: web.Request) -> web.WebSocketResponse:
         ws = web.WebSocketResponse()
         await ws.prepare(request)
         self._ws = ws
+        self._clients.add(ws)
+        if self._on_connect:
+            await self._on_connect(self, ws)
         # Replay history to newly connected client
-        if self._history:
+        if self._history and not self._on_connect:
             try:
                 await ws.send_json({"type": "history", "events": self._history})
             except Exception:
@@ -742,7 +1132,9 @@ class WebUI:
             if msg.type == aiohttp.WSMsgType.TEXT:
                 try:
                     data = json.loads(msg.data)
-                    if data.get("type") == "user_message":
+                    if self._on_event:
+                        await self._on_event(data)
+                    elif data.get("type") == "user_message":
                         self._history.append(data)
                         await self.input_queue.put({"type": "user_message", "text": data["text"]})
                     elif data.get("type") == "interrupt":
@@ -754,5 +1146,6 @@ class WebUI:
                     pass
             elif msg.type in (aiohttp.WSMsgType.ERROR, aiohttp.WSMsgType.CLOSE):
                 break
+        self._clients.discard(ws)
         self._ws = None
         return ws
