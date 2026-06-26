@@ -1,0 +1,40 @@
+SYSTEM = Cr35 Full Structural Relaxation (magnetic metal)
+# --- 电子结构 ---
+ISTART  = 0          # 从头开始
+ICHARG  = 2          # 从叠加原子电荷密度初始化
+PREC    = Accurate
+ENCUT   = 520        # ENMAX(Cr_pv) * 1.3，消除 Pulay 应力
+EDIFF   = 1E-6       # 电子步收敛标准
+NELM    = 100        # 最大电子步数
+
+# --- 交换关联 ---
+GGA     = PE         # PBE 泛函
+
+# --- 磁性体系 ---
+ISPIN   = 2          # 自旋极化计算
+MAGMOM  = 35*3.0     # 35个Cr原子，每个初始磁矩3.0
+
+# --- 展宽（金属体系）---
+ISMEAR  = 1          # Methfessel-Paxton 一阶展宽（金属）
+SIGMA   = 0.2        # 较大展宽，改善K点收敛
+
+# --- 离子弛豫 ---
+IBRION  = 2          # 共轭梯度 CG
+ISIF    = 3          # 同时优化原子位置 + 晶胞形状 + 体积
+NSW     = 200        # 最大离子步数
+EDIFFG  = -0.02      # 力收敛标准 (eV/Å)
+POTIM   = 0.5        # CG 步长
+
+# --- 算法 ---
+ALGO    = Normal     # 常规迭代算法，对磁性体系更稳定
+
+# --- 输出（松弛阶段不需要保留 WAVECAR） ---
+LWAVE   = .FALSE.
+LCHARG  = .FALSE.
+
+# --- K 点（仅用 INCAR，不写 KPOINTS；金属需较密网格）---
+KSPACING = 0.15
+KGAMMA   = .TRUE.
+
+# --- 并行 ---
+NCORE   = 4          # 根据计算节点核数调整
