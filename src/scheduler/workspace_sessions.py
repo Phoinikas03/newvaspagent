@@ -13,6 +13,11 @@ from .state_store import SCHEDULER_DIR_NAME, load_structured_resume_session_id, 
 
 SESSION_INDEX_DIR = SCHEDULER_DIR_NAME
 SESSION_INDEX_DB = "session_index.sqlite3"
+INTERNAL_WORKSPACE_FILES = {
+    "claude_stderr.log",
+    "conversation_turns.jsonl",
+    "log.txt",
+}
 
 
 def _slug(value: str) -> str:
@@ -46,6 +51,8 @@ def _workspace_modified_timestamp(workspace: Path) -> float | None:
             except OSError:
                 pass
         for name in files:
+            if name in INTERNAL_WORKSPACE_FILES:
+                continue
             try:
                 latest = max(latest or 0.0, (root_path / name).stat().st_mtime)
             except OSError:
