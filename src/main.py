@@ -35,7 +35,13 @@ from webui.web_history import (
     write_user_turn_log,
 )
 from src.conversation_store import PERSIST_FILENAME, load_persist_context_for_prompt, persist_on_sdk_message
-from src.scheduler import AgentScheduler, SchedulerStateStore, TaskRegistry, load_structured_resume_session_id
+from src.scheduler import (
+    AgentScheduler,
+    SchedulerStateStore,
+    TaskRegistry,
+    WorkspaceSessionIndex,
+    load_structured_resume_session_id,
+)
 from src.litellm_proxy import (
     configure_anthropic_for_litellm,
     direct_model_from_upstream,
@@ -784,6 +790,426 @@ async def web_agent_loop(
             await drain
 
 
+class _SessionSender:
+    def __init__(self, ui: Any, agent_session_id: str) -> None:
+        self.ui = ui
+        self.agent_session_id = agent_session_id
+
+    async def send(self, data: dict[str, Any]) -> None:
+        payload = dict(data)
+        payload.setdefault("agent_session_id", self.agent_session_id)
+        await self.ui.send(payload)
+
+
+def _with_session_id(events: list[dict[str, Any]], agent_session_id: str) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for event in events:
+        item = dict(event)
+        item.setdefault("agent_session_id", agent_session_id)
+        out.append(item)
+    return out
+
+
+def _tasks_for_ui(store: SchedulerStateStore) -> list[dict[str, Any]]:
+    tasks: list[dict[str, Any]] = []
+    for task in store.list_tasks(include_terminal=True):
+        tasks.append(
+            {
+                "task_id": task.get("task_id"),
+                "kind": task.get("kind"),
+                "status": task.get("status"),
+                "label": task.get("label"),
+                "owner": task.get("owner"),
+                "updated_at": task.get("updated_at"),
+            }
+        )
+    return tasks
+
+
+class WorkspaceRuntime:
+    def __init__(
+        self,
+        *,
+        record: dict[str, Any],
+        ui: Any,
+        index: WorkspaceSessionIndex,
+    ) -> None:
+        self.record = record
+        self.agent_session_id = str(record["agent_session_id"])
+        self.workspace = Path(record["workspace"])
+        self.ui = ui
+        self.index = index
+        self.sender = _SessionSender(ui, self.agent_session_id)
+        self.log_file = None
+        self.store: SchedulerStateStore | None = None
+        self.client: ClaudeSDKClient | None = None
+        self.scheduler: AgentScheduler | None = None
+        self.session_state: dict[str, Any] = {
+            "busy": False,
+            "interrupt_in_flight": False,
+            "user_interrupt_requested": False,
+            "last_tool_error": False,
+            "persist_assistant_buf": "",
+        }
+        self.receive_task: asyncio.Task | None = None
+        self.started = False
+
+    async def start(self) -> None:
+        if self.started:
+            self.index.touch(self.agent_session_id)
+            return
+
+        self.workspace.mkdir(parents=True, exist_ok=True)
+        log_path = self.workspace / SESSION_LOG_NAME
+        resume = load_structured_resume_session_id(self.workspace) or _parse_last_session_id(log_path)
+        persist_context = None if resume else load_persist_context_for_prompt(self.workspace)
+        log_mode = "a" if log_path.exists() else "w"
+        self.log_file = open(log_path, log_mode, encoding="utf-8")
+        self.store = SchedulerStateStore(self.workspace)
+        self.index.update_runtime_state(self.agent_session_id, status="opening", claude_session_id=resume)
+        self.client = ClaudeSDKClient(
+            options=build_options(str(self.workspace), resume=resume, persist_context=persist_context),
+        )
+        try:
+            await self.client.connect()
+        except ProcessError:
+            _print_process_error_help(str(self.workspace), resume)
+            self.index.update_runtime_state(self.agent_session_id, status="error")
+            raise
+        self.scheduler = AgentScheduler(self.client, self.store, TaskRegistry(self.store))
+        self.receive_task = asyncio.create_task(self._receive_loop())
+        self.started = True
+        self.index.update_runtime_state(self.agent_session_id, status="idle", claude_session_id=resume)
+        await self.sender.send({"type": "log_path", "path": str(log_path)})
+        await self.sender.send({"type": "task_snapshot", "tasks": _tasks_for_ui(self.store)})
+        await self.send_session_list()
+
+    async def close(self) -> None:
+        if self.receive_task:
+            self.receive_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self.receive_task
+        if self.client:
+            await self.client.disconnect()
+        if self.store:
+            self.store.close()
+        if self.log_file:
+            self.log_file.close()
+        self.index.update_runtime_state(self.agent_session_id, status="detached")
+        self.started = False
+
+    def history_events(self) -> list[dict[str, Any]]:
+        log_path = self.workspace / SESSION_LOG_NAME
+        events = parse_log_file_to_ui_events(
+            log_path,
+            format_tool_result=_format_tool_result_content,
+            result_failed=result_message_indicates_failure,
+        )
+        return _with_session_id(events, self.agent_session_id)
+
+    async def send_snapshot(self, ws: Any | None = None) -> None:
+        if not self.store:
+            return
+        payload = {
+            "type": "task_snapshot",
+            "agent_session_id": self.agent_session_id,
+            "tasks": _tasks_for_ui(self.store),
+        }
+        if ws is not None:
+            await self.ui.send_to(ws, payload)
+        else:
+            await self.ui.send(payload)
+
+    async def send_session_list(self) -> None:
+        await self.ui.send(
+            {
+                "type": "session_list",
+                "sessions": self.index.list_sessions(),
+            }
+        )
+
+    async def handle_user_message(self, text: str) -> None:
+        await self.start()
+        assert self.scheduler is not None
+        assert self.log_file is not None
+
+        control = await self.scheduler.handle_control_command(text, allow_interrupt=True)
+        if control.handled:
+            if control.text:
+                await self.sender.send({"type": "agent_text", "text": f"[scheduler]\n{control.text}"})
+            await self.send_snapshot()
+            if self.scheduler.busy or control.thinking:
+                await self.sender.send({"type": "status", "text": "仍在处理当前回复...", "thinking": True})
+            else:
+                await self.sender.send({"type": "status", "text": "就绪 — 请在下方输入", "thinking": False})
+                if control.done:
+                    await self.sender.send({"type": "done"})
+            return
+
+        if self.scheduler.busy:
+            await self._interrupt_current_turn(text)
+            return
+
+        await self.sender.send({"type": "user_message", "text": text})
+        await self.sender.send({"type": "status", "text": "思考中...", "thinking": True})
+        write_user_turn_log(self.log_file, text)
+        self.session_state["last_tool_error"] = False
+        await self.scheduler.submit(text)
+        self.session_state["busy"] = self.scheduler.busy
+        self.index.update_runtime_state(self.agent_session_id, status="running")
+        await self.send_session_list()
+
+    async def handle_interrupt(self, text: str) -> None:
+        await self.start()
+        assert self.scheduler is not None
+        if self.scheduler.busy:
+            await self._interrupt_current_turn(text)
+        elif text.strip():
+            await self.handle_user_message(text)
+        else:
+            await self.sender.send({"type": "status", "text": "就绪 — 请在下方输入", "thinking": False})
+            await self.sender.send({"type": "done"})
+
+    async def stop_task(self, task_id: str) -> None:
+        await self.start()
+        assert self.scheduler is not None
+        response = await self.scheduler.handle_control_command(
+            f"/stop-claude-task {task_id}",
+            allow_interrupt=True,
+        )
+        if response.text:
+            await self.sender.send({"type": "agent_text", "text": f"[scheduler]\n{response.text}"})
+        await self.send_snapshot()
+
+    async def _interrupt_current_turn(self, text: str) -> None:
+        assert self.scheduler is not None
+        pending = text.strip()
+        self.session_state["user_interrupt_requested"] = True
+        if pending:
+            await self.sender.send({"type": "user_message", "text": pending})
+            await self.sender.send({"type": "status", "text": "正在打断并准备新指令...", "thinking": True})
+        else:
+            await self.sender.send({"type": "status", "text": "正在停止当前回复...", "thinking": True})
+        try:
+            await self.scheduler.interrupt(pending)
+            self.session_state["busy"] = self.scheduler.busy
+            self.session_state["interrupt_in_flight"] = self.scheduler.interrupt_in_flight
+            if self.scheduler.pending_after_interrupt:
+                self.session_state["pending_interrupt_text"] = self.scheduler.pending_after_interrupt
+            else:
+                self.session_state.pop("pending_interrupt_text", None)
+            self.index.update_runtime_state(self.agent_session_id, status="interrupting")
+            await self.send_session_list()
+        except Exception as e:
+            self.session_state["user_interrupt_requested"] = False
+            self.scheduler.interrupt_in_flight = False
+            self.session_state["interrupt_in_flight"] = False
+            await self.sender.send({"type": "agent_text", "text": f"[错误] 打断失败: {e}"})
+            await self.sender.send({"type": "status", "text": "打断失败，仍在等待当前回复...", "thinking": True})
+
+    async def _receive_loop(self) -> None:
+        assert self.client is not None
+        assert self.log_file is not None
+        assert self.scheduler is not None
+        assert self.store is not None
+        try:
+            async for msg in self.client.receive_messages():
+                _append_sdk_log_line(self.log_file, msg)
+                self.scheduler.observe_message(msg)
+                session_id = getattr(msg, "session_id", None)
+                data = getattr(msg, "data", None)
+                if not session_id and isinstance(data, dict):
+                    session_id = data.get("session_id")
+                if session_id:
+                    self.index.update_runtime_state(
+                        self.agent_session_id,
+                        claude_session_id=str(session_id),
+                    )
+                persist_on_sdk_message(str(self.workspace), msg, self.session_state)
+                if self.scheduler.pending_after_interrupt:
+                    self.session_state["pending_interrupt_text"] = self.scheduler.pending_after_interrupt
+                else:
+                    self.session_state.pop("pending_interrupt_text", None)
+                user_interrupted = bool(self.session_state.get("user_interrupt_requested"))
+                await _dispatch_message_to_web(msg, self.sender, self.session_state)
+                subtype = getattr(msg, "subtype", "") or ""
+                if subtype in {"task_started", "task_notification", "task_updated"}:
+                    await self.send_snapshot()
+                if isinstance(msg, ResultMessage):
+                    failed = result_message_indicates_failure(msg) and not user_interrupted
+                    pending = self.scheduler.complete_result(msg, failed=failed)
+                    self.session_state["busy"] = self.scheduler.busy
+                    self.session_state["interrupt_in_flight"] = self.scheduler.interrupt_in_flight
+                    self.session_state.pop("pending_interrupt_text", None)
+                    self.index.update_runtime_state(
+                        self.agent_session_id,
+                        status="idle" if not failed else "error",
+                    )
+                    await self.send_session_list()
+                    await self.send_snapshot()
+                    if pending:
+                        await self.sender.send(
+                            {"type": "status", "text": "处理中断后的新指令...", "thinking": True}
+                        )
+                        write_user_turn_log(self.log_file, pending)
+                        self.session_state["last_tool_error"] = False
+                        await self.scheduler.submit(pending)
+                        self.session_state["busy"] = self.scheduler.busy
+                        self.index.update_runtime_state(self.agent_session_id, status="running")
+                        await self.send_session_list()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            self.index.update_runtime_state(self.agent_session_id, status="error")
+            await self.send_session_list()
+            await self.sender.send({"type": "agent_text", "text": f"[错误] SDK 消息流异常: {e}"})
+            raise
+
+
+class WorkspaceRuntimeManager:
+    def __init__(self, *, runs_root: Path, ui: Any, initial_workspace: Path) -> None:
+        self.runs_root = runs_root.resolve()
+        self.ui = ui
+        self.index = WorkspaceSessionIndex(self.runs_root)
+        self.index.sync_from_runs()
+        initial = self.index.ensure_session_for_workspace(initial_workspace, title=initial_workspace.name)
+        self.active_session_id = str(initial["agent_session_id"])
+        self.runtimes: dict[str, WorkspaceRuntime] = {}
+
+    async def start_initial(self) -> None:
+        await self.open_runtime(self.active_session_id)
+
+    async def close(self) -> None:
+        for runtime in list(self.runtimes.values()):
+            await runtime.close()
+        self.index.close()
+
+    async def open_runtime(self, agent_session_id: str) -> WorkspaceRuntime:
+        runtime = self.runtimes.get(agent_session_id)
+        if runtime:
+            await runtime.start()
+            return runtime
+        record = self.index.get(agent_session_id)
+        if not record:
+            raise ValueError(f"unknown session: {agent_session_id}")
+        runtime = WorkspaceRuntime(record=record, ui=self.ui, index=self.index)
+        self.runtimes[agent_session_id] = runtime
+        await runtime.start()
+        return runtime
+
+    async def on_connect(self, ui: Any, ws: Any) -> None:
+        await self.send_session_list(ws=ws)
+        await self.send_session_history(self.active_session_id, ws=ws)
+
+    async def on_event(self, data: dict[str, Any]) -> None:
+        event_type = str(data.get("type") or "")
+        agent_session_id = str(data.get("agent_session_id") or self.active_session_id)
+
+        if event_type == "create_session":
+            title = str(data.get("title") or "").strip() or None
+            record = self.index.create_session(title=title)
+            self.active_session_id = str(record["agent_session_id"])
+            await self.open_runtime(self.active_session_id)
+            await self.send_session_list()
+            await self.send_session_history(self.active_session_id)
+            return
+
+        if event_type == "select_session":
+            if not self.index.get(agent_session_id):
+                await self.ui.send({"type": "agent_text", "agent_session_id": self.active_session_id, "text": f"[错误] 未找到会话: {agent_session_id}"})
+                return
+            self.active_session_id = agent_session_id
+            await self.open_runtime(agent_session_id)
+            await self.send_session_list()
+            await self.send_session_history(agent_session_id)
+            return
+
+        if event_type == "rename_session":
+            title = str(data.get("title") or "").strip()
+            self.index.rename(agent_session_id, title)
+            await self.send_session_list()
+            return
+
+        if event_type == "star_session":
+            self.index.set_starred(agent_session_id, bool(data.get("starred")))
+            await self.send_session_list()
+            return
+
+        if event_type == "stop_task":
+            runtime = await self.open_runtime(agent_session_id)
+            await runtime.stop_task(str(data.get("task_id") or ""))
+            return
+
+        if event_type in {"user_message", "interrupt"}:
+            runtime = await self.open_runtime(agent_session_id)
+            text = str(data.get("text") or "")
+            if event_type == "interrupt":
+                await runtime.handle_interrupt(text)
+            else:
+                await runtime.handle_user_message(text)
+            await self.send_session_list()
+
+    async def handle_api(self, action: str, request: Any) -> Any:
+        if action == "list_sessions":
+            return {"sessions": self.index.list_sessions(), "active_session_id": self.active_session_id}
+        if action == "create_session":
+            body = await request.json() if request.can_read_body else {}
+            record = self.index.create_session(title=str(body.get("title") or "").strip() or None)
+            self.active_session_id = str(record["agent_session_id"])
+            await self.open_runtime(self.active_session_id)
+            await self.send_session_list()
+            return {"session": record, "active_session_id": self.active_session_id}
+        if action == "update_session":
+            agent_session_id = str(request.match_info["agent_session_id"])
+            body = await request.json() if request.can_read_body else {}
+            if "title" in body:
+                self.index.rename(agent_session_id, str(body.get("title") or ""))
+            if "starred" in body:
+                self.index.set_starred(agent_session_id, bool(body.get("starred")))
+            await self.send_session_list()
+            return {"session": self.index.get(agent_session_id)}
+        return {"error": f"unknown action: {action}"}
+
+    async def send_session_list(self, ws: Any | None = None) -> None:
+        payload = {
+            "type": "session_list",
+            "sessions": self.index.list_sessions(),
+            "active_session_id": self.active_session_id,
+        }
+        if ws is not None:
+            await self.ui.send_to(ws, payload)
+        else:
+            await self.ui.send(payload)
+
+    async def send_session_history(self, agent_session_id: str, ws: Any | None = None) -> None:
+        record = self.index.get(agent_session_id)
+        if not record:
+            return
+        runtime = self.runtimes.get(agent_session_id)
+        events = runtime.history_events() if runtime else _with_session_id(
+            parse_log_file_to_ui_events(
+                Path(record["workspace"]) / SESSION_LOG_NAME,
+                format_tool_result=_format_tool_result_content,
+                result_failed=result_message_indicates_failure,
+            ),
+            agent_session_id,
+        )
+        tasks: list[dict[str, Any]] = []
+        if runtime and runtime.store:
+            tasks = _tasks_for_ui(runtime.store)
+        payload = {
+            "type": "session_history",
+            "agent_session_id": agent_session_id,
+            "events": events,
+            "log_path": str(Path(record["workspace"]) / SESSION_LOG_NAME),
+            "tasks": tasks,
+        }
+        if ws is not None:
+            await self.ui.send_to(ws, payload)
+        else:
+            await self.ui.send(payload)
+
+
 async def web_main(
     workspace: str,
     resume: str | None,
@@ -795,58 +1221,47 @@ async def web_main(
 
     ws = Path(workspace)
     ws.mkdir(parents=True, exist_ok=True)
-    log_path = ws / SESSION_LOG_NAME
+    manager_holder: dict[str, WorkspaceRuntimeManager] = {}
 
-    prior_events = parse_log_file_to_ui_events(
-        log_path,
-        format_tool_result=_format_tool_result_content,
-        result_failed=result_message_indicates_failure,
+    async def _on_event(data: dict[str, Any]) -> None:
+        await manager_holder["manager"].on_event(data)
+
+    async def _on_connect(ui_obj: Any, ws_obj: Any) -> None:
+        await manager_holder["manager"].on_connect(ui_obj, ws_obj)
+
+    async def _api_handler(action: str, request: Any) -> Any:
+        return await manager_holder["manager"].handle_api(action, request)
+
+    ui = WebUI(
+        port=port,
+        on_event=_on_event,
+        on_connect=_on_connect,
+        api_handler=_api_handler,
     )
-    ui = WebUI(port=port)
-    ui.extend_history(prior_events)
+    manager = WorkspaceRuntimeManager(runs_root=RUNS_ROOT, ui=ui, initial_workspace=ws)
+    manager_holder["manager"] = manager
     await ui.start()
     if ui.port != port:
         print(f"[web] 端口 {port} 已被占用，已改用 {ui.port}", flush=True)
     print(f"网页界面: http://localhost:{ui.port}")
-    print(f"工作目录: {workspace}")
+    print(f"初始工作目录: {workspace}")
     if resume:
         print(f"恢复会话: {resume}（结构化状态或 log.txt）")
     else:
         print("新会话（无 resume 或 log 中无 session_id）")
     if persist_context:
         print(f"已注入本地持久化历史: {Path(workspace) / PERSIST_FILENAME}（约 {len(persist_context)} 字符）")
-    print(f"日志写入: {log_path}（{'追加' if log_append else '新建'}）\n")
-
-    log_mode = "a" if log_append else "w"
-    log_file = open(log_path, log_mode, encoding="utf-8")
-    store = SchedulerStateStore(workspace)
+    print(f"会话索引: {RUNS_ROOT / '.scheduler' / 'session_index.sqlite3'}\n")
     try:
         try:
-            async with ClaudeSDKClient(
-                options=build_options(workspace, resume=resume, persist_context=persist_context),
-            ) as client:
-                scheduler = AgentScheduler(client, store, TaskRegistry(store))
-
-                async def _notify_log():
-                    while ui._ws is None:
-                        await asyncio.sleep(0.5)
-                    await ui.send({"type": "log_path", "path": str(log_path)})
-                asyncio.create_task(_notify_log())
-
-                web_session_state: dict[str, Any] = {
-                    "busy": False,
-                    "interrupt_in_flight": False,
-                    "user_interrupt_requested": False,
-                    "last_tool_error": False,
-                    "persist_assistant_buf": "",
-                }
-                await web_agent_loop(client, log_file, ui, web_session_state, workspace, scheduler)
+            await manager.start_initial()
+            while True:
+                await asyncio.sleep(3600)
         except ProcessError:
             _print_process_error_help(workspace, resume)
             raise
     finally:
-        store.close()
-        log_file.close()
+        await manager.close()
         await ui.stop()
 
 
