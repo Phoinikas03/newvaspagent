@@ -305,6 +305,7 @@ _HTML = """<!DOCTYPE html>
   #toggle-sessions-btn,
   .session-star,
   .session-rename,
+  .session-delete,
   .task-stop-btn {
     border: 1px solid var(--border);
     background: #21262d;
@@ -320,6 +321,7 @@ _HTML = """<!DOCTYPE html>
   #toggle-sessions-btn:hover,
   .session-star:hover,
   .session-rename:hover,
+  .session-delete:hover,
   .task-stop-btn:hover { border-color: var(--accent); color: var(--accent); }
   #session-list {
     flex: 1;
@@ -335,7 +337,7 @@ _HTML = """<!DOCTYPE html>
     background: transparent;
     color: var(--text);
     display: grid;
-    grid-template-columns: 26px 1fr 26px;
+    grid-template-columns: 26px 1fr 26px 26px;
     gap: 8px;
     align-items: center;
     cursor: pointer;
@@ -358,7 +360,7 @@ _HTML = """<!DOCTYPE html>
     font-weight: 600;
   }
   .session-meta {
-    grid-column: 2 / 4;
+    grid-column: 2 / 5;
     color: var(--muted);
     font-size: 11px;
     overflow: hidden;
@@ -366,11 +368,13 @@ _HTML = """<!DOCTYPE html>
     white-space: nowrap;
   }
   .session-star,
-  .session-rename {
+  .session-rename,
+  .session-delete {
     width: 26px;
     height: 24px;
   }
   .session-star.on { color: var(--warning); border-color: rgba(210,153,34,.55); }
+  .session-delete { color: var(--error); }
 
   /* --- 右侧任务栏 --- */
   #todo-panel {
@@ -729,6 +733,20 @@ function renderSessionList() {
       }
     };
 
+    const del = document.createElement('button');
+    del.className = 'session-delete';
+    del.type = 'button';
+    del.title = '删除';
+    del.textContent = '×';
+    del.onclick = (ev) => {
+      ev.stopPropagation();
+      const name = s.title || sid;
+      const ok = confirm(`删除会话「${name}」？\n\n这只会从会话栏移除该会话，不会删除 runs 目录中的计算文件和日志。`);
+      if (ok) {
+        wsSend({ type: 'delete_session', agent_session_id: sid });
+      }
+    };
+
     const meta = document.createElement('div');
     meta.className = 'session-meta';
     meta.textContent = `${s.status || 'idle'} · ${sid}`;
@@ -736,6 +754,7 @@ function renderSessionList() {
     item.appendChild(star);
     item.appendChild(title);
     item.appendChild(rename);
+    item.appendChild(del);
     item.appendChild(meta);
     sessionListEl.appendChild(item);
   });
@@ -1084,6 +1103,7 @@ class WebUI:
         app.router.add_get("/api/sessions", self._api_sessions)
         app.router.add_post("/api/sessions", self._api_sessions)
         app.router.add_patch("/api/sessions/{agent_session_id}", self._api_session)
+        app.router.add_delete("/api/sessions/{agent_session_id}", self._api_session)
         self._runner = web.AppRunner(app)
         await self._runner.setup()
         requested = int(self.port)
@@ -1148,7 +1168,8 @@ class WebUI:
     async def _api_session(self, request: web.Request) -> web.Response:
         if not self._api_handler:
             return web.json_response({"error": "session API is not configured"}, status=501)
-        data = await self._api_handler("update_session", request)
+        action = "delete_session" if request.method == "DELETE" else "update_session"
+        data = await self._api_handler(action, request)
         return web.json_response(data)
 
     async def _ws_handler(self, request: web.Request) -> web.WebSocketResponse:
