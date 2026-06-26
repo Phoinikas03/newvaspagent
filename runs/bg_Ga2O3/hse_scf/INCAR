@@ -1,0 +1,32 @@
+# HSE06 SCF for Ga2O3
+SYSTEM = Ga2O3 HSE06 SCF
+
+# Electronic optimization
+ENCUT = 520
+PREC = Accurate
+EDIFF = 1E-6
+NELM = 200
+
+# HSE06 hybrid functional
+LHFCALC = .TRUE.
+AEXX = 0.25
+HFSCREEN = 0.2
+ALGO = All
+TIME = 0.4
+
+# K-point and parallelization
+KSPACING = 0.3
+KGAMMA = .TRUE.
+KPAR = 8
+
+# Smearing
+ISMEAR = 0
+SIGMA = 0.05
+
+# Warm start from PBE
+ISTART = 1
+ICHARG = 1
+
+# Output
+LWAVE = .FALSE.
+LCHARG = .FALSE.

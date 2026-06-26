@@ -1,35 +1,19 @@
-SYSTEM = InP HSE06 Band Gap Calculation (restart from PBE)
-# --- 电子结构 ---
-ISTART  = 1          # 从 PBE 的 WAVECAR 读取初始波函数
-ICHARG  = 2          # 从 CHGCAR 读取电荷密度
-PREC    = Accurate
-ENCUT   = 350        # 必须与 PBE SCF 阶段完全一致
-EDIFF   = 1E-5       # HSE 收敛标准
-NELM    = 100
-
-# --- 杂化泛函 HSE06 ---
-LHFCALC = .TRUE.
-HFSCREEN = 0.2       # HSE06 标准屏蔽参数
-AEXX     = 0.25      # HSE06 标准精确交换混合比例
-
-# --- 算法 ---
-ALGO    = Damped
-TIME    = 0.4
-
-# --- 加速选项 ---
-PRECFOCK = Fast
-
-# --- 展宽 ---
-ISMEAR  = 0
-SIGMA   = 0.05
-
-# --- 输出 ---
-LWAVE   = .FALSE.
-LCHARG  = .FALSE.
-
-# --- K 点（必须与 PBE SCF 完全一致）---
-KSPACING = 0.20
-KGAMMA   = .TRUE.
-
-# --- 并行（7 GPU）---
-KPAR    = 7
+AEXX = 0.25
+ALGO = All
+EDIFF = 1e-06
+ENCUT = 520.0
+HFSCREEN = 0.2
+ICHARG = 1
+ISMEAR = 0
+ISTART = 1
+KGAMMA = True
+KPAR = 8
+KSPACING = 0.3
+LCHARG = False
+LHFCALC = True
+LWAVE = False
+NELM = 200
+PREC = Accurate
+SIGMA = 0.05
+SYSTEM = InP HSE06 SCF
+TIME = 0.4

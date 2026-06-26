@@ -1,12 +1,12 @@
- running    7 mpi-ranks, with    2 threads/rank, on    1 nodes
- distrk:  each k-point on    1 cores,    7 groups
+ running    8 mpi-ranks, with    2 threads/rank, on    1 nodes
+ distrk:  each k-point on    1 cores,    8 groups
  distr:  one band on    1 cores,    1 groups
- Offloading initialized ...    7 GPUs detected
- vasp.6.5.1 10Mar25 (build Apr 15 2026 12:55:44) complex                         
+ OpenACC runtime initialized ...    8 GPUs detected
+ vasp.6.4.2 20Jul23 (build Mar  2 2025 11:04:54) complex                         
  POSCAR found type information on POSCAR InSe
  POSCAR found :  2 types and       8 ions
  scaLAPACK will be used selectively (only on CPU)
- LDA part: xc-table for (Slater+PW92), standard interpolation
+ LDA part: xc-table for Pade appr. of Perdew
  -----------------------------------------------------------------------------
 |                                                                             |
 |           W    W    AA    RRRRR   N    N  II  N    N   GGGG   !!!           |
@@ -29,23 +29,62 @@
  FFT: planning ... GRID
  reading WAVECAR
  the WAVECAR file was read successfully
+ charge-density read from file: InSe                                    
  initial charge from wavefunction
  entering main loop
-       N       E                     dE             d eps       ncg     rms           ort
-SDA:   1    -0.342759041620E+02   -0.34276E+02   -0.19993E+00   874   0.500E+00   0.000E+00
-DMP:   2    -0.344307258496E+02   -0.15482E+00   -0.11183E+00   874   0.175E+00   0.275E+00
-DMP:   3    -0.345086969692E+02   -0.77971E-01   -0.34865E-01   874   0.448E-01   0.111E+00
-DMP:   4    -0.345313855228E+02   -0.22689E-01   -0.98252E-02   874   0.145E-01   0.263E-01
-DMP:   5    -0.345377661556E+02   -0.63806E-02   -0.38153E-02   874   0.676E-02   0.727E-02
-DMP:   6    -0.345403479719E+02   -0.25818E-02   -0.16508E-02   874   0.285E-02   0.335E-02
-DMP:   7    -0.345414235683E+02   -0.10756E-02   -0.55126E-03   874   0.890E-03   0.128E-02
-DMP:   8    -0.345417560393E+02   -0.33247E-03   -0.15305E-03   874   0.262E-03   0.315E-03
-DMP:   9    -0.345418380955E+02   -0.82056E-04   -0.46783E-04   874   0.992E-04   0.465E-04
-DMP:  10    -0.345418638385E+02   -0.25743E-04   -0.22010E-04   874   0.474E-04   0.200E-04
-DMP:  11    -0.345418778595E+02   -0.14021E-04   -0.10801E-04   874   0.202E-04   0.177E-04
-DMP:  12    -0.345418853406E+02   -0.74811E-05   -0.46279E-05   874   0.753E-05   0.106E-04
- final diagonalization occupied
-   1 F= -.34541885E+02 E0= -.34541885E+02  d E =-.319058E-15
+       N       E                     dE             d eps       ncg     rms          ort
+ gam= 0.000 g(H,U,f)=  0.658E+00 0.733E-01 0.323E-12 ort(H,U,f) = 0.000E+00 0.000E+00 0.000E+00
+SDA:   1    -0.342306314902E+02   -0.34231E+02    0.00000E+00   630   0.732E+00 0.000E+00
+ gam= 0.000 trial= 0.400  step= 0.366 mean= 0.400
+ gam= 0.658 g(H,U,f)=  0.420E+00 0.608E-01-0.656E-26 ort(H,U,f) =-0.630E-01 0.630E-01-0.758E-26
+CGA:   2    -0.343644987700E+02   -0.13387E+00   -0.13390E+00   630   0.481E+00 0.479E-04
+ gam= 0.658 trial= 0.398  step= 0.488 mean= 0.398
+ gam= 0.159 g(H,U,f)=  0.625E-01 0.141E-01 0.303E-13 ort(H,U,f) =-0.358E-01 0.426E-01 0.784E-13
+CGA:   3    -0.344823263524E+02   -0.11783E+00   -0.11741E+00   630   0.767E-01 0.676E-02
+ gam= 0.159 trial= 0.403  step= 0.698 mean= 0.403
+ gam= 0.438 g(H,U,f)=  0.270E-01 0.659E-02 0.161E-12 ort(H,U,f) =-0.131E-01 0.134E-01 0.413E-12
+CGA:   4    -0.345095328091E+02   -0.27206E-01   -0.27150E-01   630   0.336E-01 0.315E-03
+ gam= 0.438 trial= 0.418  step= 0.674 mean= 0.418
+ gam= 0.463 g(H,U,f)=  0.141E-01 0.140E-02 0.140E-26 ort(H,U,f) =-0.171E-02 0.225E-02 0.692E-26
+CGA:   5    -0.345209783043E+02   -0.11445E-01   -0.11364E-01   630   0.155E-01 0.533E-03
+ gam= 0.463 trial= 0.430  step= 0.519 mean= 0.430
+ gam= 0.390 g(H,U,f)=  0.582E-02 0.243E-03-0.645E-29 ort(H,U,f) =-0.137E-02 0.131E-02-0.559E-28
+CGA:   6    -0.345250737103E+02   -0.40954E-02   -0.40978E-02   630   0.607E-02-0.633E-04
+ gam= 0.390 trial= 0.435  step= 0.424 mean= 0.435
+ gam= 0.323 g(H,U,f)=  0.190E-02 0.561E-04 0.515E-15 ort(H,U,f) =-0.138E-03 0.234E-03 0.100E-13
+CGA:   7    -0.345263552753E+02   -0.12816E-02   -0.12821E-02   630   0.196E-02 0.965E-04
+ gam= 0.323 trial= 0.434  step= 0.418 mean= 0.434
+ gam= 0.327 g(H,U,f)=  0.570E-03 0.708E-04 0.488E-16 ort(H,U,f) =-0.104E-03 0.590E-04-0.101E-14
+CGA:   8    -0.345267718469E+02   -0.41657E-03   -0.41621E-03   630   0.641E-03-0.452E-04
+ gam= 0.327 trial= 0.433  step= 0.500 mean= 0.433
+ gam= 0.270 g(H,U,f)=  0.163E-03 0.975E-05 0.221E-15 ort(H,U,f) =-0.141E-04 0.316E-04-0.673E-15
+CGA:   9    -0.345269288497E+02   -0.15700E-03   -0.15641E-03   630   0.173E-03 0.176E-04
+ gam= 0.270 trial= 0.437  step= 0.705 mean= 0.437
+ gam= 0.379 g(H,U,f)=  0.628E-04 0.283E-05 0.279E-15 ort(H,U,f) =-0.165E-04 0.805E-05 0.540E-16
+CGA:  10    -0.345269904195E+02   -0.61570E-04   -0.62710E-04   630   0.656E-04-0.842E-05
+ gam= 0.379 trial= 0.450  step= 0.600 mean= 0.450
+ gam= 0.385 g(H,U,f)=  0.244E-04 0.826E-06 0.193E-15 ort(H,U,f) =-0.515E-05 0.223E-05 0.290E-15
+CGA:  11    -0.345270089315E+02   -0.18512E-04   -0.18735E-04   630   0.253E-04-0.292E-05
+ gam= 0.385 trial= 0.458  step= 0.525 mean= 0.458
+ gam= 0.575 g(H,U,f)=  0.143E-04 0.255E-06 0.122E-39 ort(H,U,f) =-0.385E-05-0.403E-06 0.280E-39
+CGA:  12    -0.345270151184E+02   -0.61869E-05   -0.63304E-05   630   0.145E-04-0.425E-05
+ gam= 0.575 trial= 0.461  step= 0.369 mean= 0.461
+ gam= 0.304 g(H,U,f)=  0.421E-05 0.203E-06 0.696E-40 ort(H,U,f) = 0.503E-07-0.898E-07 0.244E-39
+CGA:  13    -0.345270173439E+02   -0.22255E-05   -0.22258E-05   630   0.441E-05-0.395E-07
+ gam= 0.304 trial= 0.456  step= 0.535 mean= 0.456
+ gam= 0.440 g(H,U,f)=  0.184E-05 0.946E-07 0.321E-32 ort(H,U,f) =-0.531E-06 0.109E-06 0.119E-31
+CGA:  14    -0.345270185030E+02   -0.11591E-05   -0.11760E-05   630   0.194E-05-0.422E-06
+ gam= 0.440 trial= 0.460  step= 0.793 mean= 0.460
+ gam= 0.000 g(H,U,f)=  0.253E-05 0.117E-06 0.240E-41 ort(H,U,f) =-0.107E-05 0.449E-07 0.374E-40
+CGA:  15    -0.345270190289E+02   -0.52595E-06   -0.69522E-06   630   0.265E-05-0.102E-05
+ gam= 0.000 trial= 0.477  step= 0.188 mean= 0.477
+ final diagonalization
+   1 F= -.34527019E+02 E0= -.34527019E+02  d E =-.173451E-12
+Warning: ieee_invalid is signaling
+Warning: ieee_divide_by_zero is signaling
+Warning: ieee_underflow is signaling
+Warning: ieee_inexact is signaling
+FORTRAN STOP
 Warning: ieee_invalid is signaling
 Warning: ieee_divide_by_zero is signaling
 Warning: ieee_underflow is signaling
