@@ -1,5 +1,5 @@
 ---
-name: agile-skill-creator
+name: simple-skill-creator
 description: >
   创建、编辑或改进 AI Skill 的 meta-agent。以下场景必须触发本 skill，不得自行处理：
   1. 用户要求创建新 skill；
@@ -182,4 +182,4 @@ kill $(grep '^PID=' /tmp/skill_diff.log | cut -d= -f2) 2>/dev/null
 - **可泛化**：好的 Skill 处理的是一类问题，不只是用户当前的例子
 - **description 是触发关键**：写得具体但不冗长，让 Claude 能在合适的时机自动调用
 - 若多个测试用例都独立产生了类似的辅助脚本，应将其提取到 `scripts/` 中统一维护
-- **VASP / 材料计算类 Skill**：须在正文中写明与项目 system_prompt 一致的 **ITERATIVE EXECUTION RULE**（禁止 `for`/`while` 或 monolithic 脚本一次提交多点、多阶段、多目录 VASP；每步单独核查后再继续），并与 Skill **`run_vasp`** 的探针、**STRICT HARDWARE ALIGNMENT**、`vasp_runner.py --dirs` 分批策略对齐。措辞可参考同仓库 `relax`、`bandgap`、`lattice_constant`、`literature` 等已有「执行方式」「核心原则」段落。
+- **VASP / 材料计算类 Skill**：须在正文中写明与项目 system_prompt 一致的 **ITERATIVE EXECUTION RULE**（禁止 `for`/`while` 或 monolithic 脚本一次提交多点、多阶段、多目录 VASP；每步单独核查后再继续），并与 Skill **`run-vasp`** 的探针、**STRICT HARDWARE ALIGNMENT**、`vasp_runner.py --dirs` 分批策略对齐。措辞可参考同仓库 `workflow-relax`、`workflow-electronic-structure`、`workflow-eos-lattice-constant`、`research-literature` 等已有「执行方式」「核心原则」段落。
