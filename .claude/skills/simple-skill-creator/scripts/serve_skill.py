@@ -214,7 +214,8 @@ def main():
     print(f"PID={os.getpid()}", flush=True)
     print(f"Editing {SKILL_FILE} on port {port} ...", flush=True)
 
-    HTTPServer(("0.0.0.0", port), Handler).serve_forever()
+    # 该服务无鉴权且可写 SKILL.md，只监听回环；远程访问走 SSH 端口转发。
+    HTTPServer(("127.0.0.1", port), Handler).serve_forever()
 
 
 if __name__ == "__main__":

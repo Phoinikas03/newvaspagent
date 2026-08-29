@@ -8,7 +8,9 @@ workspace/
 litellm_autostart_config.yaml
 litellm_autostart.log
 .env
-scripts/
+# 仅忽略仓库根的临时运行脚本目录。不加前导斜杠会匹配任意层级的 scripts/，
+# 从而把 .claude/skills/*/scripts/ 里的 skill 脚本一并吞掉。
+/scripts/
 CHGCAR
 WAVECAR
 

@@ -4,20 +4,28 @@
 用户可逐条 Accept / Reject，最终点击"应用"写回文件。
 
 用法:
-  后台启动:
+  改进已有 skill（路径 B）:
     nohup python scripts/diff_skill.py \\
       --old /tmp/SKILL_snapshot.md \\
       --new <skill目录>/SKILL.md \\
       [--trajectory <轨迹文件>] \\
       > /tmp/skill_diff.log 2>&1 &
+  从轨迹沉淀新 skill（路径 C）——省略 --old，整份内容按新增呈现:
+    nohup python scripts/diff_skill.py \\
+      --new <新skill目录>/SKILL.md \\
+      --trajectory <轨迹摘要> \\
+      > /tmp/skill_new.log 2>&1 &
   读取 URL: grep '^URL=' /tmp/skill_diff.log
   停止服务: kill $(grep '^PID=' /tmp/skill_diff.log | cut -d= -f2)
 
 典型流程:
-  1. 快照旧版: cp <skill>/SKILL.md /tmp/SKILL_snapshot.md
-  2. Agent 根据轨迹生成新版 SKILL.md
-  3. 启动此脚本，用户逐条审阅变更
-  4. 点击"应用已接受的变更"写回文件
+  1. 用 extract_trajectory.py 把 log.jsonl 压成摘要
+  2. 改进场景先快照旧版: cp <skill>/SKILL.md /tmp/SKILL_snapshot.md
+  3. Agent 根据轨迹生成 SKILL.md
+  4. 启动此脚本，用户逐条审阅变更（可对照「执行轨迹」标签判断依据）
+  5. 点击"应用已接受的变更"写回文件
+
+服务只监听 127.0.0.1。远程访问用 SSH 端口转发：ssh -L 8800:localhost:8800 user@host
 """
 import argparse
 import difflib
@@ -156,7 +164,9 @@ def render_segments_html(segments: list) -> str:
 
 
 def build_html() -> str:
-    old_content = Path(STATE["old_path"]).read_text("utf-8")
+    # 新建 skill 时没有旧版文件，基线为空。
+    old_path = Path(STATE["old_path"]) if STATE.get("old_path") else None
+    old_content = old_path.read_text("utf-8") if old_path and old_path.is_file() else ""
     new_content = Path(STATE["new_path"]).read_text("utf-8")
 
     import re
@@ -358,25 +368,37 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     ap = argparse.ArgumentParser(description="SKILL 变更逐条审阅器")
-    ap.add_argument("--old", required=True, help="旧版 SKILL.md 路径")
+    ap.add_argument(
+        "--old",
+        default=None,
+        help="旧版 SKILL.md 路径。新建 skill 时省略，全部内容按新增（绿色）呈现",
+    )
     ap.add_argument("--new", required=True, help="新版 SKILL.md 路径（应用后将覆写此文件）")
     ap.add_argument("--trajectory", default=None, help="执行轨迹文件路径（可选）")
     ap.add_argument("--port", type=int, default=None)
     args = ap.parse_args()
 
-    old_path = Path(args.old).resolve()
     new_path = Path(args.new).resolve()
-    for p, label in [(old_path, "--old"), (new_path, "--new")]:
-        if not p.exists():
-            print(f"ERROR: {label} file not found: {p}", flush=True)
-            raise SystemExit(1)
+    if not new_path.exists():
+        print(f"ERROR: --new file not found: {new_path}", flush=True)
+        raise SystemExit(1)
 
-    old_lines = old_path.read_text("utf-8").splitlines()
+    # --old 省略即「从零新建」：与空白基线对比，每一行都是待审阅的新增。
+    if args.old:
+        old_path = Path(args.old).resolve()
+        if not old_path.exists():
+            print(f"ERROR: --old file not found: {old_path}", flush=True)
+            raise SystemExit(1)
+        old_lines = old_path.read_text("utf-8").splitlines()
+    else:
+        old_path = None
+        old_lines = []
+
     new_lines = new_path.read_text("utf-8").splitlines()
     opcodes = list(difflib.SequenceMatcher(None, old_lines, new_lines, autojunk=False).get_opcodes())
 
     STATE.update({
-        "old_path": str(old_path),
+        "old_path": str(old_path) if old_path else None,
         "new_path": str(new_path),
         "traj_path": args.trajectory,
         "old_lines": old_lines,
@@ -391,7 +413,8 @@ def main():
     change_count = sum(1 for tag, *_ in opcodes if tag != "equal")
     print(f"Diff viewer: {change_count} changes, serving on port {port} ...", flush=True)
 
-    HTTPServer(("0.0.0.0", port), Handler).serve_forever()
+    # 该服务无鉴权且可写 SKILL.md，只监听回环；远程访问走 SSH 端口转发。
+    HTTPServer(("127.0.0.1", port), Handler).serve_forever()
 
 
 if __name__ == "__main__":
