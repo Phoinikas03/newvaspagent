@@ -1,7 +1,6 @@
 ---
 name: "workflow-eos-lattice-constant"
-description: "执行 VASP 平衡晶格常数计算和状态方程 (EOS) 拟合。EOS 前须征得用户同意后，再通过 workflow-convergence 做 ENCUT/KSPACING 收敛；否则采用用户指定或模板参数并注明。随后各向同性缩放、批量静态计算、拟合 EOS 得平衡晶格常数与体积。"
-version: "1.2.1"
+description: "执行 VASP 平衡晶格常数计算和状态方程 (EOS) 拟合。EOS 前须征得用户同意后，再通过 workflow-convergence 做 ENCUT/KSPACING 收敛；否则采用用户指定或模板参数并注明。随后各向同性缩放、批量静态计算、初拟合 EOS，并按拟合质量、边界位置和局部网格间距决定是否在最小点附近二次加密采样，最终得到平衡晶格常数、体积和体模量。"
 ---
 
 # VASP 平衡晶格常数与 EOS 计算工作流 (Lattice Constant & EOS Workflow)
@@ -13,8 +12,8 @@ version: "1.2.1"
 workflow-eos-lattice-constant/
 ├── SKILL.md                       ← 本文件（EOS 工作流）
 ├── scripts/
-│   ├── generate_scaled_poscars.py ← 根据缩放因子列表批量生成带应变的 POSCAR
-│   └── fit_eos.py                 ← 提取批量计算能量，拟合 EOS (如 Birch-Murnaghan) 并输出结果 JSON
+│   ├── generate_scaled_poscars.py ← 根据缩放因子列表或中心/步长批量生成带应变的 POSCAR
+│   └── fit_eos.py                 ← 提取批量计算能量，拟合 EOS，并输出 a_eq 与二次采样建议
 ├── references/
 │   ├── convergence_rules.md       ← 占位：指向 workflow-convergence/references/convergence_rules.md
 │   └── troubleshooting.md         ← EOS 拟合与计算异常
@@ -84,9 +83,9 @@ workflow-eos-lattice-constant/
 
 **目标**：在平衡体积附近生成一系列各向同性缩放的晶胞结构，用于描绘能量势阱。
 
-1. 设定缩放因子列表，通常推荐选取 7-9 个点，例如：`0.94, 0.96, 0.98, 1.00, 1.02, 1.04, 1.06`。
+1. 设定首轮缩放因子列表，目标是先 bracket 能量最低点。若实验/文献晶格常数可靠，通常用较窄的 7-9 点网格；若初始结构不确定，可用较宽的粗扫，例如：`0.94, 0.96, 0.98, 1.00, 1.02, 1.04, 1.06`。
 2. `Bash`：`python scripts/generate_scaled_poscars.py --poscar POSCAR --scales 0.94 0.96 0.98 1.00 1.02 1.04 1.06`
-3. 检查当前目录下是否已成功生成子文件夹（如 `scale_0.94/`, `scale_0.96/` ...），每个文件夹内包含对应的 `POSCAR`。
+3. 检查当前目录下是否已成功生成子文件夹（如 `scale_0.940/`, `scale_0.960/` ...），每个文件夹内包含对应的 `POSCAR`。
 
 ---
 
@@ -94,7 +93,7 @@ workflow-eos-lattice-constant/
 
 **目标**：获取所有不同体积/缩放比例下系统的精确总能量。
 
-对每个 `scale_x.xx` 子文件夹准备输入并提交计算（各目录可**并行**提交多个独立任务，**禁止**单个脚本在同一进程内 `for` 串行跑完所有 scale）：
+对每个 `scale_x.xxx` 子文件夹准备输入并提交计算（各目录可**并行**提交多个独立任务，**禁止**单个脚本在同一进程内 `for` 串行跑完所有 scale）：
 1. 复制模板与配置：将 `templates/INCAR_static` 拷贝至当前子目录，并填入 **`workflow-convergence`** 得到的 **`ENCUT`** 与 **`KSPACING`**。
 2. 调用 `setup_vasp_inputs` 准备与收敛测试一致的 POTCAR；**INCAR** 须含与收敛测试相同的 **`KSPACING`**，以便不生成 **KPOINTS**。若用户指定赝势变体，所有 `scale_*` 子目录必须传入同一个 `potcar_overrides` 映射，不得手工复制或拼接 POTCAR。
 3. 按 Skill `run-vasp` 与 orchestration 规则，**通过 Bash 调用 `python .claude/skills/run-vasp/scripts/vasp_runner.py`**（`run_in_background: true`）及上文 **Web / IDE 等待规则** 在该子目录**单独**提交并完成一次 VASP 计算（一点一任务）；**禁止**长时间阻塞式 `TaskOutput` 冻结会话，也**不得**直接手写 `mpirun ... vasp_std/vasp_gpu`。
@@ -107,25 +106,47 @@ workflow-eos-lattice-constant/
 
 ### 5. 状态方程拟合 (EOS Fitting)
 
-**目标**：从离散的体积-能量数据点中找出解析能量最低点。
+**目标**：从首轮离散的体积-能量数据点中找出解析能量最低点，并判断是否需要二次加密采样。
 
 1. 确保所有缩放任务的 VASP 计算均正常结束。
-2. `Bash`：`python scripts/fit_eos.py --dirs scale_* --eos_type birch_murnaghan`
+2. `Bash`：`python scripts/fit_eos.py --dirs scale_* --eos_type birch_murnaghan --reference-poscar POSCAR`
 3. 从脚本输出的 JSON 中读取结果：
-   - `V_0`：平衡体积
-   - `E_0`：最低系统能量
-   - `B_0`：体积弹性模量 (Bulk Modulus)
-   - `a_eq`：计算得出的平衡晶格常数 (Lattice Constant)
+   - `V_0_Ang3`：平衡体积
+   - `E_0_eV`：最低系统能量
+   - `B_0_GPa`：体积弹性模量 (Bulk Modulus)
+   - `linear_scale_eq`：相对于参考 `POSCAR` 的平衡线性缩放因子
+   - `a_eq_A` / `lattice_lengths_eq_A`：计算得出的平衡晶格常数或晶格矢量长度
    - `R_squared`：拟合优度
+   - `refinement_recommended`、`refinement_reasons`、`suggested_new_refinement_scales`：是否应在最小点附近补点
 
 ---
 
-### 6. 结果汇报与核查
+### 6. 二次采样与最终拟合 (Refinement)
+
+**目标**：避免首轮网格过宽或过粗导致的平衡晶格常数和体模量不稳定。
+
+1. 若满足以下任一条件，执行二次采样：
+   - `refinement_recommended: true`；
+   - 离散最低能点在首轮 scale 边界；
+   - 拟合 `V_0_Ang3` 靠近或超出采样体积边界；
+   - `R_squared < 0.999`、残差有系统偏差，或曲线底部明显由过少点决定；
+   - 首轮 scale 间隔较粗（例如 `0.02`），而用户需要高精度晶格常数或体模量。
+2. 二次采样围绕 **拟合得到的 `linear_scale_eq`**，而不是只围绕离散最低能点。通常补 5-7 个点，线性 scale 步长 `0.003-0.005`；默认可用：
+   - `python scripts/generate_scaled_poscars.py --poscar POSCAR --center-scale <linear_scale_eq> --step 0.005 --points 5`
+   - 或直接使用 `fit_eos.py` 输出的 `suggested_new_refinement_scales`，只生成尚未计算过的新 scale。
+3. 对新增 `scale_*` 子目录重复第 4 步：准备同一套 `INCAR/POTCAR/KSPACING`，逐目录提交静态单点，逐点用 `check_convergence.py` 核查。不得把新增点写成一个脚本在同一 VASP 进程中串行执行。
+4. 新增点完成后，对首轮和二次采样的全部有效目录重新执行：
+   - `python scripts/fit_eos.py --dirs scale_* --eos_type birch_murnaghan --reference-poscar POSCAR`
+5. 若 `refinement_recommended: false` 且最低点被清楚 bracket、局部 scale 间距已足够密、拟合残差小，可不执行二次采样；结果汇报中说明“未触发二次采样”。
+
+---
+
+### 7. 结果汇报与核查
 
 向用户报告：
 - 最优计算参数（使用的 ENCUT 和 K 点网格）。
 - 计算得出的平衡晶格常数 a_eq 和体积弹性模量 B_0。
-- 拟合优度（若 R^2 < 0.99，需警告用户曲线可能未包含能量最低点，需扩大缩放范围）。
+- 拟合优度与二次采样状态：是否执行二次采样；若 `R^2 < 0.999` 或 `fit_eos.py` 仍建议 refinement，需说明残余风险；若 `R^2 < 0.99`，需强烈警告曲线可能未包含能量最低点或存在异常点。
 - 与实验值的对比：将计算结果与第 1 步检索到的实验晶格常数进行对比，计算误差百分比 `Error (%) = |a_calc - a_exp| / a_exp * 100%`。
 
 ---
@@ -136,6 +157,7 @@ workflow-eos-lattice-constant/
 - **禁止单作业内串行多点 VASP**：除 `generate_scaled_poscars.py`、`fit_eos.py`、`run-vasp/scripts/check_convergence.py` 等明确允许的脚本外，不得用**一个** Bash/Python 脚本或**一次**作业提交，在**同一进程/同一作业**内循环或顺序执行多个 VASP。**允许**将多个单点 VASP 作为多个独立任务**并行**提交；每个任务仍是一点一算、一目录一输入，结束后分别用通用 `check_convergence.py` 等核查。
 - **参数绝对一致**：在第 4 步的批量计算中，所有子任务的 `ENCUT`、`POTCAR` 类别和 K 点网格划分方式必须**完全一致**。改变基点截断能会导致 Pulay 应力带来的巨大误差。
 - **静态计算优先**：EOS 拟合过程中，各个比例下的 VASP 计算必须是**单点静态计算 (ISIF=2 且 NSW=0)**，不能在内部再次进行晶胞体积松弛，否则能量-体积对应关系将失效。
+- **二次采样按证据触发**：首轮粗扫只用于 bracket 最小点；若拟合最低点靠边、局部网格粗、`R_squared` 不足或用户要求高精度，必须在 `linear_scale_eq` 附近补 5-7 个静态点并重新拟合。
 - **异常点剔除**：若 `fit_eos.py` 报错或拟合曲线存在明显偏离抛物线底部的异常点（例如 SCF 未真正收敛导致的能量畸变），必须重新检查该点的 `OUTCAR`。
 - **失败/卡住先走 `vasp-error-recovery`**：若某个 `scale_*` 点报错、未收敛或疑似卡住，先看本地 `references/troubleshooting.md`，再调用 `vasp-error-recovery` 做统一诊断；只有在用户明确同意后，才可用 `terminate.py` 停掉该点的旧 run 并重跑。
 - **日志规范**：EOS 目录批量运行时应显式使用 `--log-prefix`，让每个 `scale_*` 子目录中都有稳定、可追溯的运行日志。
