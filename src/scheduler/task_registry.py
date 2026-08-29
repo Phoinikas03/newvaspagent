@@ -23,16 +23,23 @@ def _message_session_id(msg: Any) -> str | None:
     return str(session_id) if session_id else None
 
 
-def _status_for(subtype: str, data: dict[str, Any]) -> str:
+def _status_for(subtype: str, data: dict[str, Any], previous: str | None = None) -> str:
+    """推断任务状态。
+
+    此前在缺 status 字段时返回 ``"updated"`` / ``"notification"``，这两个都不在
+    ``TERMINAL_TASK_STATUSES`` 里，导致任务永远不会终结，``/running-tasks`` 和
+    界面的任务面板会永久堆积僵尸条目。现在没有明确状态时沿用上一次的状态，
+    只有真正拿到 status 才改变它。
+    """
     patch = data.get("patch") if isinstance(data.get("patch"), dict) else {}
     status = data.get("status") or patch.get("status")
     if status:
         return str(status)
     if subtype == "task_started":
         return "running"
-    if subtype == "task_updated":
-        return "updated"
-    return "notification"
+    if previous:
+        return previous
+    return "running" if subtype == "task_updated" else "notification"
 
 
 def _task_label(subtype: str, data: dict[str, Any]) -> str:
@@ -73,12 +80,18 @@ class TaskRegistry:
         if raw_task_id:
             task_id = str(raw_task_id)
         else:
+            # 兜底 id 只能用同一任务生命周期内**不变**的量。此前把 subtype 和
+            # label 也算进摘要，而两者都随 task_started → task_updated 变化，
+            # 于是同一个任务在表里裂成多行，首尾永远关联不上。
+            tool_use_id = getattr(msg, "tool_use_id", None) or data.get("tool_use_id")
+            anchor = str(tool_use_id) if tool_use_id else f"turn:{turn_id}"
             digest = hashlib.sha1(
-                f"{self.store.scheduler_session_id}:{turn_id}:{subtype}:{label}".encode("utf-8")
+                f"{self.store.scheduler_session_id}:{anchor}".encode("utf-8")
             ).hexdigest()[:12]
             task_id = f"claude:{digest}"
 
-        status = _status_for(subtype, data)
+        existing = self.store.get_task(task_id)
+        status = _status_for(subtype, data, previous=(existing or {}).get("status"))
         self.store.upsert_task(
             task_id=task_id,
             kind="claude",
@@ -86,7 +99,9 @@ class TaskRegistry:
             label=label,
             owner="claude-code",
             turn_id=turn_id,
-            metadata={"subtype": subtype, "data": data},
+            # data 按 subtype 分槽存放，避免每次更新把上一次的 data 整个覆盖掉，
+            # 那样 task_started 的启动信息会在第一次 update 后就消失。
+            metadata={"subtype": subtype, f"data_{subtype}": data},
         )
         self.store.record_event(
             "task.claude.updated",

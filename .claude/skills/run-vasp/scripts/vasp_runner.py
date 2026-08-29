@@ -437,6 +437,52 @@ def build_mpirun_shell(
     return inner
 
 
+def mirror_to_event_log(work_dir: Path, event: str, state: dict) -> None:
+    """把运行生命周期镜像一条到工作区的 ``log.jsonl``。
+
+    ``.vasp_run_state.json`` **仍是控制面的权威**——它可变、按算例目录一份、
+    且 terminate.py 会在没有 agent 会话的情况下独立读它。这里只是把「启动了
+    什么、跑了多久、成没成」补进那条追加式的轨迹，让蒸馏和事后审计不必再去
+    翻散落在各算例目录里的状态文件。
+
+    任何失败都必须静默：日志镜像绝不能影响 VASP 的运行。
+    """
+    try:
+        repo_root = Path(__file__).resolve().parents[4]
+        if str(repo_root) not in sys.path:
+            sys.path.insert(0, str(repo_root))
+        from src.event_log import append_external_record, find_workspace_root
+
+        ws = find_workspace_root(work_dir)
+        if ws is None:
+            return
+        try:
+            rel = str(Path(work_dir).resolve().relative_to(ws))
+        except ValueError:
+            rel = str(work_dir)
+        append_external_record(
+            ws,
+            type="VaspRunEvent",
+            payload={
+                "event": event,
+                "dir": rel or ".",
+                "status": state.get("status"),
+                "exe": state.get("exe"),
+                "mode": state.get("mode"),
+                "np": state.get("np"),
+                "gpu_ids": state.get("gpu_ids"),
+                "log_file": state.get("log_file"),
+                "pid": state.get("pid"),
+                "returncode": state.get("returncode"),
+                "started_at": state.get("started_at"),
+                "ended_at": state.get("ended_at"),
+                "failure_reason": state.get("failure_reason"),
+            },
+        )
+    except Exception:
+        return
+
+
 def mark_local_task_started(state_path: Path, proc: subprocess.Popen, launch_cmd: str) -> None:
     pgid = None
     try:
@@ -453,6 +499,7 @@ def mark_local_task_started(state_path: Path, proc: subprocess.Popen, launch_cmd
         failure_reason=None,
         termination_reason=None,
     )
+    mirror_to_event_log(state_path.parent, "launched", load_state(state_path) or {})
 
 
 def mark_task_finished(state_path: Path, returncode: int) -> None:
@@ -462,6 +509,7 @@ def mark_task_finished(state_path: Path, returncode: int) -> None:
         ended_at=utc_now_iso(),
         returncode=int(returncode),
     )
+    mirror_to_event_log(state_path.parent, "finished", load_state(state_path) or {})
 
 
 def launch_local_task(

@@ -46,12 +46,32 @@ class AgentScheduler:
         self.pending_after_interrupt = None
         self.busy = True
         self.store.start_turn(turn_id, text)
-        await self.client.query(text)
+        try:
+            await self.client.query(text)
+        except Exception as exc:
+            # query 失败后不会有 ResultMessage 来复位状态。不在这里回滚的话，
+            # busy 会永远是 True，之后所有输入都被当成「忙」转成 interrupt，
+            # 会话彻底卡死且不留任何记录。
+            self.busy = False
+            self.current_turn_id = None
+            self.store.finish_turn(turn_id, "failed", {"error": f"query failed: {exc}"})
+            self.store.record_event(
+                "control.submit_failed",
+                text=str(exc),
+                payload={"turn_id": turn_id},
+                turn_id=turn_id,
+            )
+            raise
 
     async def interrupt(self, pending_text: str | None = None) -> None:
         pending = (pending_text or "").strip()
         if pending:
-            self.pending_after_interrupt = pending
+            # 连续两次在忙时提交会覆盖上一条 pending，而它已经回显给用户了。
+            # 排队而不是丢弃；complete_result 会按顺序取走。
+            if self.pending_after_interrupt:
+                self.pending_after_interrupt = f"{self.pending_after_interrupt}\n\n{pending}"
+            else:
+                self.pending_after_interrupt = pending
         if not self.busy:
             if pending:
                 await self.submit(pending)
@@ -65,7 +85,13 @@ class AgentScheduler:
             payload={"has_pending_text": bool(pending)},
             turn_id=self.current_turn_id,
         )
-        await self.client.interrupt()
+        try:
+            await self.client.interrupt()
+        except Exception:
+            # 打断失败同样收不到 ResultMessage，必须自行复位，否则后续打断
+            # 会被 interrupt_in_flight 挡住而永远无法再打断。
+            self.interrupt_in_flight = False
+            raise
 
     def observe_message(self, msg: Any) -> None:
         session_id = self._extract_session_id(msg)
@@ -77,12 +103,25 @@ class AgentScheduler:
         session_id = self._extract_session_id(msg)
         if session_id:
             self.store.save_claude_session_id(session_id, source="result")
+        if not self.busy and not self.current_turn_id:
+            # 迟到的上一轮 result（例如打断后才送达）不应清掉当前轮的状态。
+            return ""
         if self.current_turn_id:
+            # ResultMessage 现成携带耗时/成本/token 用量，此前全部被丢弃。
+            # 这些是轨迹蒸馏判断「哪一步昂贵、哪一步卡住」的唯一来源。
             payload = {
                 "subtype": getattr(msg, "subtype", None),
                 "num_turns": getattr(msg, "num_turns", None),
                 "session_id": session_id,
                 "result": getattr(msg, "result", None),
+                "duration_ms": getattr(msg, "duration_ms", None),
+                "duration_api_ms": getattr(msg, "duration_api_ms", None),
+                "total_cost_usd": getattr(msg, "total_cost_usd", None),
+                "usage": getattr(msg, "usage", None),
+                "model_usage": getattr(msg, "model_usage", None),
+                "stop_reason": getattr(msg, "stop_reason", None),
+                "permission_denials": getattr(msg, "permission_denials", None),
+                "api_error_status": getattr(msg, "api_error_status", None),
             }
             self.store.finish_turn(
                 self.current_turn_id,

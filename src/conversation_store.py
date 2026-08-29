@@ -35,20 +35,60 @@ def append_turn(workspace: Path | str, role: str, text: str) -> None:
         f.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
 
-def load_persist_context_for_prompt(workspace: Path | str) -> str | None:
-    """读取 JSONL，格式化为可注入的纯文本；过长时保留尾部。"""
+def _blocks_from_event_log(workspace: Path | str) -> list[str]:
+    """从 log.jsonl 派生对话文本。
+
+    对话历史不再单独存一份文件——它是 log.jsonl 的视图。此前 log.txt 与
+    conversation_turns.jsonl 双写，后者写失败会被静默吞掉，两者长期漂移。
+    """
+    from src.event_log import LOG_FILENAME, read_messages
+
+    path = Path(workspace).resolve() / LOG_FILENAME
+    if not path.is_file():
+        return []
+
+    blocks: list[str] = []
+    buf: list[str] = []
+
+    def flush() -> None:
+        text = "\n".join(buf).strip()
+        buf.clear()
+        if text:
+            blocks.append(f"### Assistant\n{text}")
+
+    for rec, msg in read_messages(path):
+        rtype = rec.get("type")
+        if rtype == "UserTurn":
+            flush()
+            text = ((rec.get("payload") or {}).get("text") or "").strip()
+            if text:
+                blocks.append(f"### User\n{text}")
+        elif rtype == "AssistantMessage" and msg is not None:
+            for block in getattr(msg, "content", []) or []:
+                if type(block).__name__ == "TextBlock":
+                    chunk = (getattr(block, "text", "") or "").strip()
+                    if chunk:
+                        buf.append(chunk)
+        elif rtype == "ResultMessage":
+            flush()
+    flush()
+    return blocks
+
+
+def _blocks_from_legacy_store(workspace: Path | str) -> list[str]:
+    """读旧的 conversation_turns.jsonl（仅用于尚未产生 log.jsonl 的历史工作区）。"""
     p = persist_path(workspace)
     if not p.is_file():
-        return None
+        return []
     try:
         raw = p.read_text(encoding="utf-8", errors="replace")
     except OSError:
-        return None
-    lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
-    if not lines:
-        return None
+        return []
     blocks: list[str] = []
-    for ln in lines:
+    for ln in raw.splitlines():
+        ln = ln.strip()
+        if not ln:
+            continue
         try:
             o = json.loads(ln)
         except json.JSONDecodeError:
@@ -63,6 +103,12 @@ def load_persist_context_for_prompt(workspace: Path | str) -> str | None:
             blocks.append(f"### User\n{text}")
         elif role == "assistant":
             blocks.append(f"### Assistant\n{text}")
+    return blocks
+
+
+def load_persist_context_for_prompt(workspace: Path | str) -> str | None:
+    """格式化为可注入 system prompt 的纯文本；过长时保留尾部。"""
+    blocks = _blocks_from_event_log(workspace) or _blocks_from_legacy_store(workspace)
     if not blocks:
         return None
     out = "\n\n".join(blocks)
@@ -73,28 +119,10 @@ def load_persist_context_for_prompt(workspace: Path | str) -> str | None:
 
 
 def persist_on_sdk_message(workspace: Path | str, msg: Any, state: dict[str, Any]) -> None:
+    """保留为兼容占位：对话历史现在从 ``log.jsonl`` 派生，不再单独落盘。
+
+    此前这里把助手文本累积后写进 ``conversation_turns.jsonl``，与 ``log.txt`` 双写。
+    两者可能漂移，且助手文本只在 ``ResultMessage`` 时整轮落盘——中途崩溃就整轮丢失。
+    ``log.jsonl`` 逐条即时写入，信息更全，派生视图见 ``_blocks_from_event_log``。
     """
-    在 SDK 消息流中累积 Assistant 文本，在 ResultMessage 时落盘一行 assistant。
-    User 侧在 ``write_user_turn_log`` 中写入。
-    """
-    from claude_agent_sdk.types import AssistantMessage, ResultMessage, TextBlock
-
-    ws = Path(workspace).resolve()
-
-    if isinstance(msg, AssistantMessage):
-        parts: list[str] = []
-        for block in getattr(msg, "content", []):
-            if type(block).__name__ == "TextBlock" or isinstance(block, TextBlock):
-                parts.append(block.text)
-        if parts:
-            chunk = "\n".join(parts).strip()
-            if chunk:
-                buf = state.get("persist_assistant_buf", "")
-                state["persist_assistant_buf"] = (buf + "\n" + chunk).strip() if buf else chunk
-        return
-
-    if isinstance(msg, ResultMessage):
-        buf = (state.get("persist_assistant_buf") or "").strip()
-        state["persist_assistant_buf"] = ""
-        if buf:
-            append_turn(ws, "assistant", buf)
+    return

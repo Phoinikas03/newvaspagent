@@ -26,6 +26,7 @@ from claude_agent_sdk.types import StreamEvent
 from src.tool_wrapper import (
     setup_vasp_inputs_tool,
     duckduckgo_search_tool, google_search_tool, visit_webpage_tool, arxiv_search_tool,
+    semanticscholar_search_tool,
 )
 from src.result_message import result_message_indicates_failure
 from webui.web_history import (
@@ -36,6 +37,12 @@ from webui.web_history import (
     write_user_turn_log,
 )
 from src.conversation_store import PERSIST_FILENAME, load_persist_context_for_prompt, persist_on_sdk_message
+from src.event_log import (
+    LOG_FILENAME,
+    EventLogWriter,
+    last_session_id as _log_last_session_id,
+    resolve_log_path,
+)
 from src.scheduler import (
     AgentScheduler,
     SchedulerStateStore,
@@ -78,9 +85,14 @@ EMPTY_RESULT_WITH_TOOL_ERROR_FALLBACK = (
 
 
 def _parse_last_session_id(log_path: Path) -> str | None:
-    """从已有 log.txt 的 repr 行中提取最后一次出现的 Claude session_id（用于 --resume）。"""
+    """提取最后一次出现的 Claude session_id（用于 --resume）。
+
+    log.jsonl 直接读字段；仅对尚未迁移的旧 log.txt 才回落到全文正则。
+    """
     if not log_path.is_file():
         return None
+    if log_path.name == LOG_FILENAME:
+        return _log_last_session_id(log_path)
     try:
         text = log_path.read_text(encoding="utf-8", errors="replace")
     except OSError:
@@ -144,7 +156,7 @@ def resolve_workspace(run_dir: str | None) -> tuple[Path, str | None]:
         pass
     if not ws.is_dir():
         raise ValueError(f"目录不存在: {ws}")
-    resume = _workspace_resume_session_id(ws, ws / SESSION_LOG_NAME)
+    resume = _workspace_resume_session_id(ws, resolve_log_path(ws))
     return ws, resume
 
 
@@ -215,6 +227,7 @@ The following was saved by VASP Agent to `{PERSIST_FILENAME}` under this workspa
             google_search_tool(),
             visit_webpage_tool(),
             arxiv_search_tool(),
+            semanticscholar_search_tool(),
         ],
     )
     _stderr_first = True
@@ -255,7 +268,7 @@ SKILL & `.claude` PATH RULE (mandatory):
 - Any Bash that loads or runs skill assets (Python scripts under `.claude/skills/`, `vasp_runner.py`, `probe_env.py`, `quick_test.py`, sourcing templates, etc.) MUST start by changing directory to the repository root: prefix with `cd "{repo_root}" && ...`, **or** use absolute paths beginning with `{repo_root}/`.
 - Do **not** assume `.claude` exists under the session workspace.
 
-VASP FILE PROVENANCE (mandatory): You MUST NOT use Write, Edit, or Bash/heredocs to manually author the full contents of **POSCAR**, **POTCAR**, or **KPOINTS**. Obtain and construct crystal structures through **`Skill: structure`** and its scripts (for example `.claude/skills/structure/scripts/fetch_mp_poscar.py`, `build_surface.py`, or `build_adsorption.py`), or through explicitly documented external retrieval procedures—not by typing lattice vectors and coordinates from memory. Generate **POTCAR** (and the POSCAR copy used with them in the workspace) **only** via **`setup_vasp_inputs`**. If the user explicitly requests a POTCAR variant, pass it through `setup_vasp_inputs` using `potcar_overrides` as a JSON object such as `{{"Cr": "Cr_pv"}}`; do not generate, edit, concatenate, or copy POTCAR manually with Bash/Python as a fallback. Prefer **KSPACING** (and optionally **KGAMMA**) in **INCAR** so **`setup_vasp_inputs`** does not create a **KPOINTS** file; only when **KSPACING** is absent does the tool write **KPOINTS** from density. You MAY create or adjust **INCAR** by copying skill templates and changing parameters (ENCUT, ISMEAR, KSPACING, etc.).
+VASP FILE PROVENANCE (mandatory): You MUST NOT use Write, Edit, or Bash/heredocs to manually author the full contents of **POSCAR**, **POTCAR**, or **KPOINTS**. Obtain and construct crystal structures through **`Skill: structure`** and its scripts (for example `.claude/skills/structure/scripts/fetch_mp_poscar.py`, `build_surface.py`, or `build_adsorption.py`), or through explicitly documented external retrieval procedures—not by typing lattice vectors and coordinates from memory. Generate **POTCAR** (and the POSCAR copy used with them in the workspace) **only** via **`setup_vasp_inputs`**. If the user explicitly requests a POTCAR variant, pass it through `setup_vasp_inputs` using `potcar_overrides` as a JSON object such as `{{"Cr": "Cr_pv"}}`; do not generate, edit, concatenate, or copy POTCAR manually with Bash/Python as a fallback. For workflows that need one directory per case (adsorption stages, EOS volume points, per-configuration scans), pass `work_dir` (a path relative to the workspace, e.g. `configs/ontop_upright`) to `setup_vasp_inputs` and call it once per directory — this replaces any hand-written POTCAR generation. Prefer **KSPACING** (and optionally **KGAMMA**) in **INCAR** so **`setup_vasp_inputs`** does not create a **KPOINTS** file; only when **KSPACING** is absent does the tool write **KPOINTS** from density. You MAY create or adjust **INCAR** by copying skill templates and changing parameters (ENCUT, ISMEAR, KSPACING, etc.).
 
 CRITICAL INTERACTION RULE: You MUST NOT call or attempt to use the `AskUserQuestion` tool. Instead, whenever you finish a major workflow step, encounter an error, or need permission to proceed to a computationally expensive task (like running VASP), you MUST output a plain text block. In this text block, clearly summarize what you have achieved so far, and explicitly ask the user for confirmation to proceed to the next step. NEVER terminate your turn silently without reporting your status.
 
@@ -277,7 +290,10 @@ You are STRICTLY FORBIDDEN from ending a conversation turn silently.
 MARKDOWN & WEB UI (strikethrough / `~~`):
 User-visible replies are rendered as Markdown (GFM). A pair of `~~` starts GitHub-Flavored-Markdown **strikethrough**, which is often triggered by accident in paths or ranges (e.g. `e_300~~e_500`). In normal prose, **do not** type two tildes in a row. For ranges or "A to B", use an en dash (–), a hyphen (-), the word "to", Chinese 「至／到」, or a **single** `~` if needed—**not** `~~`.
 
-SKILL IMPROVEMENT: When you have fully completed a task that involved using a SKILL, proactively reflect on the execution trajectory. If the SKILL could be improved (unclear steps, missing edge cases, potential errors), use simple-skill-creator to update it and present the diff to the user for confirmation. Only do this once the task is truly complete, not mid-task.
+SKILL CONSOLIDATION (self-evolution): Once a task is **fully complete** and produced a valid result — never mid-task — reflect on the execution trajectory and consider whether it should be consolidated into the skill library. Two cases, both handled by `simple-skill-creator`:
+- **A SKILL was used and could be improved** (unclear steps, missing edge cases, errors you had to recover from): update that skill via its path B.
+- **No existing skill covered the task** and you completed it by combining other skills, consulting literature, or working it out yourself: distil the trajectory into a **new** skill via its path C. This is the case that matters most for self-evolution, and it is the one most easily missed — the absence of a matching skill is precisely the signal that one is needed.
+Apply judgement before consolidating: only do this when that class of task will recur. Do not create a skill for a one-off request; that pollutes the library. The full trajectory is in `<workspace>/log.jsonl` — do **not** read it directly, compress it first with `.claude/skills/simple-skill-creator/scripts/extract_trajectory.py`. Always present the result to the user for confirmation; never write into `.claude/skills/` without review.
 
 BASH ENVIRONMENT PROBES — NO "FAIL-FAST" CHAINS (CRITICAL):
 Fragile probes that exit non-zero on the first missing binary cause Bash tools to return ERROR. In parallel tool rounds, that can trigger **Sibling tool call errored** for other tools (e.g. Skill) in the same assistant message—even though Skill content is fine.
@@ -307,13 +323,13 @@ Use **TodoWrite** to mirror this checklist and advance items to `completed` / `i
 
 1. **Identify intent** — Quick test (e.g. INCAR/convergence sanity) vs production run; align with the user's goal.
 2. **Satisfy PLAN BEFORE SETTINGS** — Before asking VASP-specific settings or resources, apply the global rule above. For VASP, the plan should include structure source, planned stages (for example convergence / relaxation / PBE SCF / HSE / DOS / band structure), key input policy (`POTCAR`, `ENCUT`, `KSPACING`, `LWAVE/LCHARG` when relevant), and confirmation gates for expensive stages.
-3. **Probe environment** — **Prefer** `run_vasp` skill `scripts/probe_env.py` with Bash, obeying SKILL & `.claude` PATH RULE, e.g. `cd "{repo_root}" && python .claude/skills/run_vasp/scripts/probe_env.py` (CPU/ GPU / `sbatch`/`qsub` in PATH—no `sinfo` required). Optional extra Bash: CPU `lscpu`; GPU `nvidia-smi -L` (ignore if missing); node `hostname`. Treat Slurm as present if `sbatch` exists, PBS if `qsub` exists. Run `sinfo` / `qstat` **only** if `command -v` succeeds for them. **Never** chain `lscpu`, `nvidia-smi`, and optional `sinfo`/`qstat` with `&&` in one command (see BASH ENVIRONMENT PROBES).
+3. **Probe environment** — **Prefer** `run-vasp` skill `scripts/probe_env.py` with Bash, obeying SKILL & `.claude` PATH RULE, e.g. `cd "{repo_root}" && python .claude/skills/run-vasp/scripts/probe_env.py` (CPU/ GPU / `sbatch`/`qsub` in PATH—no `sinfo` required). Optional extra Bash: CPU `lscpu`; GPU `nvidia-smi -L` (ignore if missing); node `hostname`. Treat Slurm as present if `sbatch` exists, PBS if `qsub` exists. Run `sinfo` / `qstat` **only** if `command -v` succeeds for them. **Never** chain `lscpu`, `nvidia-smi`, and optional `sinfo`/`qstat` with `&&` in one command (see BASH ENVIRONMENT PROBES).
 4. **If BOTH GPU and CPU are detected** — Do not default to CPU. After the scientific workflow has been presented, ask the user: GPU vs CPU, and GPU count if GPU.
 5. **If a workload manager (Slurm/PBS) is detected** — Do not run heavy jobs locally without user input. Ask for partition/queue, nodes, walltime, and other cluster-specific parameters needed for the job script.
-6. **Confirm execution strategy** — After user answers, present the final plan as a **runner-facing command**: prefer the exact `python .claude/skills/run_vasp/scripts/vasp_runner.py ...` command with its parameters and log-file/log-prefix choices, or a full sbatch/qsub script. Explain, when useful, that `vasp_runner.py` will generate the corresponding `mpirun` / scheduler run lines in the background. Get **explicit confirmation** before launching expensive work. **Never** fire heavy local VASP work on a login node without this confirmation.
+6. **Confirm execution strategy** — After user answers, present the final plan as a **runner-facing command**: prefer the exact `python .claude/skills/run-vasp/scripts/vasp_runner.py ...` command with its parameters and log-file/log-prefix choices, or a full sbatch/qsub script. Explain, when useful, that `vasp_runner.py` will generate the corresponding `mpirun` / scheduler run lines in the background. Get **explicit confirmation** before launching expensive work. **Never** fire heavy local VASP work on a login node without this confirmation.
 
 LOCAL COMPUTE — BASH `run_in_background` (mandatory):
-- Any **real** workload (VASP, `vasp_runner`, `mpirun`, or anything expected to run **minutes+**) MUST be launched with **`run_in_background: true`** on Bash so the tool returns immediately and does not freeze the session (especially **web** chat). Use `nohup`, `&`, env scripts, and `run_vasp` skill patterns as documented. For formal VASP submission, prefer **`vasp_runner.py` / `quick_test.py`** as the user-facing entrypoints; the assistant should organize and confirm the runner command, and let the runner generate raw `mpirun` / job-script run lines in the background instead of hand-writing them in assistant Bash.
+- Any **real** workload (VASP, `vasp_runner`, `mpirun`, or anything expected to run **minutes+**) MUST be launched with **`run_in_background: true`** on Bash so the tool returns immediately and does not freeze the session (especially **web** chat). Use `nohup`, `&`, env scripts, and `run-vasp` skill patterns as documented. For formal VASP submission, prefer **`vasp_runner.py` / `quick_test.py`** as the user-facing entrypoints; the assistant should organize and confirm the runner command, and let the runner generate raw `mpirun` / job-script run lines in the background instead of hand-writing them in assistant Bash.
 - **Monitoring:** Periodic checking is encouraged. Prefer a coarse cadence for long jobs (for example, every 5 minutes) and only tighten the cadence near completion or when diagnosing anomalies. You may use `grep`/`tail` on `OUTCAR`, `OSZICAR`, logs, and `pgrep`/`ps` to inspect status.
 - **Sleep usage:** `sleep 300`-style waiting is allowed and often desirable for long VASP jobs, **provided** it does not freeze the user-facing session. Prefer **background** helper loops/scripts or non-blocking polling; if you use foreground waiting, keep the UI responsiveness tradeoff in mind and explain it briefly when relevant.
 - **`TaskOutput` vs frozen UI (critical):** After a long Bash job is started (including when the host auto-backgrounds `vasp_runner`), avoid overly chatty polling. You **must still** fully orchestrate the run yourself (poll until done, then read OUTCAR, run `check_convergence.py`, etc.), but prefer **periodic** checks over rapid-fire checks: use **`TaskOutput` with `block: false`** at a sensible cadence, typically coarse for long jobs, or a background Bash helper that sleeps between checks. Do not use **`TaskOutput` and `block: true`** with a single huge timeout that pins the whole agent turn and **freezes web/IDE chat** until VASP finishes.
@@ -321,9 +337,9 @@ LOCAL COMPUTE — BASH `run_in_background` (mandatory):
 
 PROCESS OWNERSHIP & TERMINATION SAFETY (CRITICAL):
 - You MUST treat process termination as a high-risk action. **Never** use broad kill commands such as `pkill`, `killall`, `pkill -f vasp_std`, `killall vasp_std`, or pattern-based `kill $(pgrep ...)` for VASP or MPI workloads.
-- When the user asks to stop/pause/cancel a VASP run, DO NOT hand-write any shell kill pipeline. Use the run_vasp termination entrypoint instead:
-  - State-backed run: `cd "{repo_root}" && python .claude/skills/run_vasp/scripts/terminate.py --work-dir "<exact_task_dir>" --reason "<reason>"`
-  - Legacy hand-launched run without `.vasp_run_state.json`: first inspect with `cd "{repo_root}" && python .claude/skills/run_vasp/scripts/terminate.py --work-dir "<exact_task_dir>" --allow-cwd-scan --dry-run`, then, only if every listed PID has `/proc/<pid>/cwd` exactly equal to the target task directory, run the same command without `--dry-run`.
+- When the user asks to stop/pause/cancel a VASP run, DO NOT hand-write any shell kill pipeline. Use the run-vasp termination entrypoint instead:
+  - State-backed run: `cd "{repo_root}" && python .claude/skills/run-vasp/scripts/terminate.py --work-dir "<exact_task_dir>" --reason "<reason>"`
+  - Legacy hand-launched run without `.vasp_run_state.json`: first inspect with `cd "{repo_root}" && python .claude/skills/run-vasp/scripts/terminate.py --work-dir "<exact_task_dir>" --allow-cwd-scan --dry-run`, then, only if every listed PID has `/proc/<pid>/cwd` exactly equal to the target task directory, run the same command without `--dry-run`.
 - `pkill -f` is especially forbidden: it can match the Bash/tool wrapper command line containing the pattern itself and terminate the message reader or agent process.
 - You MAY terminate a process **only if all of the following are true**:
   1. You launched that exact workload earlier in the same session/workflow; and
@@ -340,7 +356,7 @@ RESTART-IN-PLACE SAFETY FOR GPU / MPI FAILURES (CRITICAL):
 - Before any in-place retry, verify all of the following and report them in ordinary text: the old task/job id or PID evidence, whether the old run is still alive, whether it was terminated, and the exact replacement command you will use.
 - If you cannot prove the old run is gone, stop and ask the user instead of starting a second run that could race on the same files or log.
 
-ITERATIVE EXECUTION RULE: When performing parameter sweeps or convergence tests, DO NOT write and execute monolithic Python/Bash scripts containing loops to run VASP multiple times. Instead, manage the loop in your reasoning and run **each** heavy step **one at a time** with **`run_in_background: true`** (or the workload manager per `run_vasp`). This preserves intermediate checks and avoids many uncontrolled concurrent processes.
+ITERATIVE EXECUTION RULE: When performing parameter sweeps or convergence tests, DO NOT write and execute monolithic Python/Bash scripts containing loops to run VASP multiple times. Instead, manage the loop in your reasoning and run **each** heavy step **one at a time** with **`run_in_background: true`** (or the workload manager per `run-vasp`). This preserves intermediate checks and avoids many uncontrolled concurrent processes.
 
 POTCAR SELECTION RULE: Use the pymatgen / Materials Project **recommended** pseudopotential for each element. For transition metals, alkali, alkaline-earth and many heavy elements this is the semi-core variant (e.g., Ti_pv, Fe_pv, Mn_pv, Cr_pv, Ni_pv, Li_sv, Ba_sv, Ca_sv, Na_pv, Sn_d, Pb_d), NOT the bare standard potential. `setup_vasp_inputs` applies this recommended mapping automatically. Do NOT downgrade to the fewest-valence-electron standard version to save computational cost: doing so shifts the total-energy reference (making energies incomparable with reference/benchmark data) and loses accuracy where semi-core states matter. Only deviate from the recommended choice if the user explicitly requests it, and then pass the exact element-to-POTCAR map via `potcar_overrides` (for example `{{"Cr": "Cr_pv"}}`). If `setup_vasp_inputs` rejects the override, stop and report the error instead of bypassing the tool.
 {persist_block}""",
@@ -352,6 +368,7 @@ POTCAR SELECTION RULE: Use the pymatgen / Materials Project **recommended** pseu
             f"mcp__{mcp_name}__google_search",
             f"mcp__{mcp_name}__visit_webpage",
             f"mcp__{mcp_name}__arxiv_search",
+            f"mcp__{mcp_name}__semanticscholar_search",
         ],
     )
 
@@ -365,10 +382,9 @@ async def _async_input(prompt: str) -> str:
     return await loop.run_in_executor(None, lambda: input(prompt))
 
 
-def _append_sdk_log_line(log_file, msg: Any) -> None:
-    """每条 SDK 消息立即写入 log（与流式顺序一致）。"""
-    log_file.write(repr(msg) + "\n")
-    log_file.flush()
+def _append_sdk_log_line(log_writer: EventLogWriter, msg: Any, turn_id: str | None = None) -> None:
+    """每条 SDK 消息立即写入 log.jsonl（与流式顺序一致）。"""
+    log_writer.append_sdk_message(msg, turn_id=turn_id)
     print(repr(msg))
 
 
@@ -505,7 +521,7 @@ async def cli_main(
 ) -> None:
     ws = Path(workspace)
     ws.mkdir(parents=True, exist_ok=True)
-    log_path = ws / SESSION_LOG_NAME
+    log_path = ws / LOG_FILENAME
 
     print(f"VASP Agent (CLI 模式)  |  输入 quit 或 exit 退出")
     print(f"工作目录: {workspace}")
@@ -517,8 +533,7 @@ async def cli_main(
         print(f"已注入本地持久化历史: {Path(workspace) / PERSIST_FILENAME}（约 {len(persist_context)} 字符）")
     print(f"日志写入: {log_path}（{'追加' if log_append else '新建'}）\n")
 
-    log_mode = "a" if log_append else "w"
-    log_file = open(log_path, log_mode, encoding="utf-8")
+    log_file = EventLogWriter.open_for_workspace(ws)
     store = SchedulerStateStore(workspace)
     try:
         try:
@@ -730,130 +745,6 @@ async def _dispatch_message_to_web(
             await ui.send({"type": "done"})
 
 
-async def _web_sdk_receive_loop(
-    client: ClaudeSDKClient,
-    log_file,
-    ui: Any,
-    session_state: dict[str, Any],
-    workspace: str,
-    scheduler: AgentScheduler,
-) -> None:
-    """后台持续 consume receive_messages()，与主协程中仅负责 query(用户输入) 分离。"""
-    try:
-        async for msg in client.receive_messages():
-            _append_sdk_log_line(log_file, msg)
-            scheduler.observe_message(msg)
-            persist_on_sdk_message(workspace, msg, session_state)
-            if scheduler.pending_after_interrupt:
-                session_state["pending_interrupt_text"] = scheduler.pending_after_interrupt
-            else:
-                session_state.pop("pending_interrupt_text", None)
-            await _dispatch_message_to_web(msg, ui, session_state)
-            if isinstance(msg, ResultMessage):
-                failed = result_message_indicates_failure(msg)
-                pending = scheduler.complete_result(msg, failed=failed)
-                session_state["busy"] = scheduler.busy
-                session_state["interrupt_in_flight"] = scheduler.interrupt_in_flight
-                session_state.pop("pending_interrupt_text", None)
-                if pending:
-                    await ui.send({"type": "status", "text": "处理中断后的新指令...", "thinking": True})
-                    write_user_turn_log(log_file, pending)
-                    session_state["last_tool_error"] = False
-                    await scheduler.submit(pending)
-                    session_state["busy"] = scheduler.busy
-    except asyncio.CancelledError:
-        raise
-    except Exception as e:
-        await ui.send({"type": "agent_text", "text": f"[错误] SDK 消息流异常: {e}"})
-        raise
-
-
-async def web_agent_loop(
-    client: ClaudeSDKClient,
-    log_file,
-    ui,
-    session_state: dict[str, Any],
-    workspace: str,
-    scheduler: AgentScheduler,
-) -> None:
-    drain = asyncio.create_task(
-        _web_sdk_receive_loop(client, log_file, ui, session_state, workspace, scheduler),
-    )
-
-    async def submit_user_message(text: str) -> None:
-        await ui.send({"type": "status", "text": "思考中...", "thinking": True})
-        write_user_turn_log(log_file, text)
-        session_state["last_tool_error"] = False
-        await scheduler.submit(text)
-        session_state["busy"] = scheduler.busy
-
-    async def interrupt_current_turn(text: str) -> None:
-        pending = text.strip()
-        session_state["user_interrupt_requested"] = True
-        if pending:
-            await ui.send({"type": "status", "text": "正在打断并准备新指令...", "thinking": True})
-        else:
-            await ui.send({"type": "status", "text": "正在停止当前回复...", "thinking": True})
-
-        try:
-            await scheduler.interrupt(pending)
-            session_state["busy"] = scheduler.busy
-            session_state["interrupt_in_flight"] = scheduler.interrupt_in_flight
-            if scheduler.pending_after_interrupt:
-                session_state["pending_interrupt_text"] = scheduler.pending_after_interrupt
-            else:
-                session_state.pop("pending_interrupt_text", None)
-        except Exception as e:
-            session_state["user_interrupt_requested"] = False
-            scheduler.interrupt_in_flight = False
-            session_state["interrupt_in_flight"] = False
-            await ui.send({"type": "agent_text", "text": f"[错误] 打断失败: {e}"})
-            await ui.send({"type": "status", "text": "打断失败，仍在等待当前回复...", "thinking": True})
-
-    try:
-        while True:
-            event = await ui.input_queue.get()
-            if isinstance(event, dict):
-                event_type = event.get("type") or "user_message"
-                user_input = str(event.get("text") or "")
-            else:
-                event_type = "user_message"
-                user_input = str(event)
-            if user_input.lower() in ("quit", "exit"):
-                break
-
-            control = await scheduler.handle_control_command(user_input, allow_interrupt=True)
-            if control.handled:
-                if control.text:
-                    await ui.send({"type": "agent_text", "text": f"[scheduler]\n{control.text}"})
-                if scheduler.busy or control.thinking:
-                    await ui.send({"type": "status", "text": "仍在处理当前回复...", "thinking": True})
-                else:
-                    await ui.send({"type": "status", "text": "就绪 — 请在下方输入", "thinking": False})
-                    if control.done:
-                        await ui.send({"type": "done"})
-                continue
-
-            if event_type == "interrupt":
-                if scheduler.busy:
-                    await interrupt_current_turn(user_input)
-                elif user_input.strip():
-                    await submit_user_message(user_input)
-                else:
-                    await ui.send({"type": "status", "text": "就绪 — 请在下方输入", "thinking": False})
-                    await ui.send({"type": "done"})
-                continue
-
-            if scheduler.busy:
-                await interrupt_current_turn(user_input)
-            else:
-                await submit_user_message(user_input)
-    finally:
-        drain.cancel()
-        with suppress(asyncio.CancelledError):
-            await drain
-
-
 class _SessionSender:
     def __init__(self, ui: Any, agent_session_id: str) -> None:
         self.ui = ui
@@ -872,6 +763,39 @@ def _with_session_id(events: list[dict[str, Any]], agent_session_id: str) -> lis
         item.setdefault("agent_session_id", agent_session_id)
         out.append(item)
     return out
+
+
+VASP_RUN_STATE_NAME = ".vasp_run_state.json"
+
+
+def _live_vasp_runs(workspace: Path) -> list[tuple[str, int]]:
+    """返回该工作区下仍在运行的 VASP 任务 ``(相对目录, PID)``。
+
+    依据 run-vasp 写下的 ``.vasp_run_state.json``。只认「该 PID 存在且其 cwd
+    确实落在这个工作区内」——仅凭 PID 存在是不够的，PID 会被复用。
+    """
+    live: list[tuple[str, int]] = []
+    for state_path in workspace.rglob(VASP_RUN_STATE_NAME):
+        try:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if state.get("ended_at"):
+            continue
+        pid = state.get("pid")
+        if not isinstance(pid, int) or pid <= 0:
+            continue
+        try:
+            cwd = Path(f"/proc/{pid}/cwd").resolve()
+        except OSError:
+            continue  # 进程已退出
+        if cwd == workspace or workspace in cwd.parents:
+            try:
+                rel = str(state_path.parent.relative_to(workspace)) or "."
+            except ValueError:
+                rel = str(state_path.parent)
+            live.append((rel, pid))
+    return live
 
 
 def _tasks_for_ui(store: SchedulerStateStore) -> list[dict[str, Any]]:
@@ -917,17 +841,49 @@ class WorkspaceRuntime:
         }
         self.receive_task: asyncio.Task | None = None
         self.started = False
+        self._start_lock = asyncio.Lock()
 
     async def start(self) -> None:
-        if self.started:
-            return
+        # 同一个会话可能被两个浏览器标签同时选中，两条 _ws_handler 协程会并发
+        # 进入这里，产生两个 ClaudeSDKClient、两条接收循环、两个写同一日志的句柄。
+        async with self._start_lock:
+            if self.started:
+                return
+            try:
+                await self._start_locked()
+            except BaseException:
+                # start 中途失败会留下已打开的日志句柄和 sqlite 连接，而 started
+                # 仍为 False——用户一重试就再开一份，前一份永久泄漏。
+                await self._cleanup_partial_start()
+                raise
 
+    async def _cleanup_partial_start(self) -> None:
+        if self.receive_task:
+            self.receive_task.cancel()
+            with suppress(asyncio.CancelledError, Exception):
+                await self.receive_task
+            self.receive_task = None
+        if self.client:
+            with suppress(Exception):
+                await self.client.disconnect()
+            self.client = None
+        if self.store:
+            with suppress(Exception):
+                self.store.close()
+            self.store = None
+        if self.log_file:
+            with suppress(Exception):
+                self.log_file.close()
+            self.log_file = None
+        self.scheduler = None
+        self.started = False
+
+    async def _start_locked(self) -> None:
         self.workspace.mkdir(parents=True, exist_ok=True)
-        log_path = self.workspace / SESSION_LOG_NAME
-        resume = _workspace_resume_session_id(self.workspace, log_path)
+        log_path = self.workspace / LOG_FILENAME
+        resume = _workspace_resume_session_id(self.workspace, resolve_log_path(self.workspace))
         persist_context = None if resume else load_persist_context_for_prompt(self.workspace)
-        log_mode = "a" if log_path.exists() else "w"
-        self.log_file = open(log_path, log_mode, encoding="utf-8")
+        self.log_file = EventLogWriter.open_for_workspace(self.workspace)
         self.store = SchedulerStateStore(self.workspace)
         self.index.update_runtime_state(self.agent_session_id, status="opening", claude_session_id=resume)
         self.client = ClaudeSDKClient(
@@ -978,21 +934,32 @@ class WorkspaceRuntime:
         await self.send_session_list()
 
     async def close(self) -> None:
+        # 每一步都要独立 suppress：此前若 client.disconnect() 抛异常，
+        # store 和 log_file 就都不会被关闭。
         if self.receive_task:
             self.receive_task.cancel()
-            with suppress(asyncio.CancelledError):
+            with suppress(asyncio.CancelledError, Exception):
                 await self.receive_task
+            self.receive_task = None
         if self.client:
-            await self.client.disconnect()
+            with suppress(Exception):
+                await self.client.disconnect()
+            self.client = None
         if self.store:
-            self.store.close()
+            with suppress(Exception):
+                self.store.close()
+            self.store = None
         if self.log_file:
-            self.log_file.close()
-        self.index.update_runtime_state(self.agent_session_id, status="detached")
+            with suppress(Exception):
+                self.log_file.close()
+            self.log_file = None
+        self.scheduler = None
+        with suppress(Exception):
+            self.index.update_runtime_state(self.agent_session_id, status="detached")
         self.started = False
 
     def history_events(self) -> list[dict[str, Any]]:
-        log_path = self.workspace / SESSION_LOG_NAME
+        log_path = resolve_log_path(self.workspace)
         events = parse_log_file_to_ui_events(
             log_path,
             format_tool_result=_format_tool_result_content,
@@ -1187,7 +1154,13 @@ class WorkspaceRuntimeManager:
             raise ValueError(f"unknown session: {agent_session_id}")
         runtime = WorkspaceRuntime(record=record, ui=self.ui, index=self.index)
         self.runtimes[agent_session_id] = runtime
-        await runtime.start()
+        try:
+            await runtime.start()
+        except BaseException:
+            # 启动失败的 runtime 不能留在表里：下次取到它会因为 started=False
+            # 再走一遍 start()，而它内部的清理已经把资源释放过一次。
+            self.runtimes.pop(agent_session_id, None)
+            raise
         return runtime
 
     async def on_connect(self, ui: Any, ws: Any) -> None:
@@ -1290,6 +1263,24 @@ class WorkspaceRuntimeManager:
             return False
         workspace = Path(record["workspace"]).resolve()
 
+        # scheduler.busy 只说明 agent 是否正在回话，与后台 VASP 无关。
+        # 不查这一步就可能在 vasp_runner 正往目录里写 CHGCAR 时把它 rmtree 掉。
+        if delete_files:
+            live = _live_vasp_runs(workspace)
+            if live:
+                detail = "；".join(f"{d}（PID {p}）" for d, p in live[:5])
+                await self.ui.send(
+                    {
+                        "type": "agent_text",
+                        "agent_session_id": agent_session_id,
+                        "text": (
+                            f"[系统提示] 该会话目录下仍有 {len(live)} 个 VASP 进程在运行，"
+                            f"拒绝删除文件：{detail}。请先通过 run-vasp 的 terminate.py 停止它们。"
+                        ),
+                    }
+                )
+                return False
+
         if runtime:
             await runtime.close()
             self.runtimes.pop(agent_session_id, None)
@@ -1350,7 +1341,7 @@ class WorkspaceRuntimeManager:
         runtime = self.runtimes.get(agent_session_id)
         events = runtime.history_events() if runtime else _with_session_id(
             parse_log_file_to_ui_events(
-                Path(record["workspace"]) / SESSION_LOG_NAME,
+                resolve_log_path(Path(record["workspace"])),
                 format_tool_result=_format_tool_result_content,
                 result_failed=result_message_indicates_failure,
             ),
@@ -1363,7 +1354,7 @@ class WorkspaceRuntimeManager:
             "type": "session_history",
             "agent_session_id": agent_session_id,
             "events": events,
-            "log_path": str(Path(record["workspace"]) / SESSION_LOG_NAME),
+            "log_path": str(resolve_log_path(Path(record["workspace"]))),
             "tasks": tasks,
         }
         if ws is not None:

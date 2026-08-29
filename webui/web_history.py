@@ -79,27 +79,40 @@ def todo_write_items_for_ui(tool_input: Any) -> list[dict[str, str]]:
     return out
 
 
+#: Skill 正文注入的识别特征。CLI 措辞变化时这里会失配，后果是整份 SKILL.md
+#: 以明文灌进聊天流（而这恰恰是蒸馏最想精确识别的一段），所以列多个候选并
+#: 补一个结构性兜底，而不是只认一个前缀。
+_SKILL_INJECTION_PREFIXES = (
+    "Base directory for this skill:",
+    "Base directory for skill:",
+)
+
+
 def is_skill_injection_context_text(text: str) -> bool:
-    """
-    Skill 工具除 ToolResultBlock 外，还会在单独的 UserMessage/TextBlock 里注入整份 SKILL.md。
-    正文通常以「Base directory for this skill:」开头（与 CLI Skill 加载一致）。
+    """判断一段 UserMessage/TextBlock 是否为 Skill 工具注入的 SKILL.md 正文。
+
+    Skill 工具除 ToolResultBlock 外，还会单独注入整份 SKILL.md。
     """
     if not text or not isinstance(text, str):
         return False
-    return text.lstrip().startswith("Base directory for this skill:")
+    head = text.lstrip()
+    if head.startswith(_SKILL_INJECTION_PREFIXES):
+        return True
+    # 结构性兜底：首行提到 skill 的目录/路径，且正文带 YAML frontmatter。
+    first_line, _, rest = head.partition("\n")
+    if len(first_line) < 200 and "skill" in first_line.lower():
+        if ":" in first_line and rest.lstrip().startswith("---"):
+            return True
+    return False
 
 
-def write_user_turn_log(log_file, text: str) -> None:
-    """在发起 query 前写入一行，便于网页重载后还原「用户说了什么」。"""
-    line = json.dumps({USER_LOG_KEY: "user", "text": text}, ensure_ascii=False)
-    log_file.write(line + "\n")
-    log_file.flush()
-    try:
-        from src.conversation_store import append_turn
+def write_user_turn_log(log_writer, text: str, *, turn_id: str | None = None) -> None:
+    """在发起 query 前写入一行，便于网页重载后还原「用户说了什么」。
 
-        append_turn(Path(log_file.name).parent, "user", text)
-    except OSError:
-        pass
+    历史上这里要双写 log.txt 和 conversation_turns.jsonl，两者可能漂移（后者写失败
+    会被静默吞掉）。现在只写 log.jsonl，助手/用户文本由它统一派生。
+    """
+    log_writer.append_user_turn(text, turn_id=turn_id)
 
 
 def _format_tool_result_content(content: Any) -> str:
@@ -125,26 +138,21 @@ def _format_tool_result_content(content: Any) -> str:
 
 
 def _eval_sdk_message(line: str) -> Any | None:
-    """将 log 中单行 repr 还原为 SDK 消息对象。"""
-    ns = {
-        "AssistantMessage": AssistantMessage,
-        "UserMessage": UserMessage,
-        "ResultMessage": ResultMessage,
-        "SystemMessage": SystemMessage,
-        "TextBlock": TextBlock,
-        "ThinkingBlock": ThinkingBlock,
-        "ToolUseBlock": ToolUseBlock,
-        "ToolResultBlock": ToolResultBlock,
-    }
+    """将旧 log.txt 中单行 repr 还原为 SDK 消息对象。
+
+    命名空间取 SDK 全部 dataclass 类型。此前硬编码 8 个类名，导致
+    ``TaskStartedMessage`` / ``TaskNotificationMessage`` 等解析失败后被静默丢弃——
+    实测历史日志中有 502 条后台任务消息因此在重放里消失。
+    """
+    from src.event_log import SDK_TYPES
+
     line = line.strip()
     if not line:
         return None
     if line.startswith("StreamEvent"):
         return None
-    if line.startswith("SystemMessage"):
-        return None
     try:
-        return eval(line, {"__builtins__": {}}, ns)
+        return eval(line, {"__builtins__": {}}, SDK_TYPES)  # noqa: S307 - 受控命名空间
     except Exception:
         return None
 
@@ -158,6 +166,29 @@ def sdk_message_to_ui_events(
     """与 web_agent_loop 一致，将单条 SDK 消息转为前端事件列表（不含 status/done）。"""
     events: list[dict[str, Any]] = []
     msg_type = type(msg).__name__
+
+    # 后台任务消息：重放必须与实时显示一致，否则刷新页面后 VASP 长任务的
+    # 启停记录会整段消失（见 src/main.py 的 _dispatch_message_to_web）。
+    subtype = getattr(msg, "subtype", "") or ""
+    if subtype in {"task_notification", "task_started", "task_updated"}:
+        data = getattr(msg, "data", None)
+        data = data if isinstance(data, dict) else {}
+        if subtype == "task_notification":
+            summary = data.get("summary") or ""
+            if summary:
+                events.append({"type": "agent_text", "text": f"[后台任务] {summary}"})
+        elif subtype == "task_started":
+            desc = data.get("description") or ""
+            if desc:
+                events.append({"type": "agent_text", "text": f"[后台任务] 已启动: {desc}"})
+        else:
+            task_id = data.get("task_id") or ""
+            patch = data.get("patch") if isinstance(data.get("patch"), dict) else {}
+            status = patch.get("status") or data.get("status") or "updated"
+            events.append({"type": "agent_text", "text": f"[后台任务] {task_id} {status}"})
+        return events
+    if msg_type == "SystemMessage":
+        return events
 
     if msg_type == "AssistantMessage" or isinstance(msg, AssistantMessage):
         for block in getattr(msg, "content", []):
@@ -278,8 +309,10 @@ def parse_log_file_to_ui_events(
     format_tool_result: Callable[[Any], str] | None = None,
     result_failed: Callable[[Any], bool] | None = None,
 ) -> list[dict[str, Any]]:
-    """
-    解析 log.txt：用户行（JSON）+ SDK repr 行，生成与 WebSocket 协议一致的事件列表。
+    """解析会话日志，生成与 WebSocket 协议一致的事件列表。
+
+    ``log.jsonl`` 走结构化路径；尚未迁移的旧 ``log.txt`` 仍按原来的
+    「用户行 JSON + SDK repr 行」解析，保证历史会话可回放。
     """
     fmt = format_tool_result or _format_tool_result_content
     if result_failed is None:
@@ -291,6 +324,22 @@ def parse_log_file_to_ui_events(
         return []
 
     events: list[dict[str, Any]] = []
+
+    if log_path.name.endswith(".jsonl"):
+        from src.event_log import read_messages
+
+        for rec, msg in read_messages(log_path):
+            if rec.get("type") == "UserTurn":
+                text = (rec.get("payload") or {}).get("text", "")
+                events.append({"type": "user_message", "text": str(text)})
+                continue
+            if msg is None:
+                continue
+            events.extend(
+                sdk_message_to_ui_events(msg, format_tool_result=fmt, result_failed=result_failed)
+            )
+        return _prepend_replay_notice_if_needed(events)
+
     try:
         f = log_path.open("r", encoding="utf-8", errors="replace")
     except OSError:

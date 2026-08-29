@@ -30,9 +30,23 @@ def load_session_state(workspace: str | Path) -> dict[str, Any]:
         return {}
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except OSError:
+        return {}
+    except json.JSONDecodeError:
+        # 内容损坏。直接返回 {} 会让调用方生成新 id 并覆盖原文件——本来可能
+        # 救得回来的 claude_session_id 就此消失，sqlite 里旧 id 对应的
+        # turns/tasks/events 也全变孤儿。先留一份证据再放行。
+        _quarantine_corrupt_state(path)
         return {}
     return data if isinstance(data, dict) else {}
+
+
+def _quarantine_corrupt_state(path: Path) -> None:
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    try:
+        path.replace(path.with_suffix(path.suffix + f".corrupt.{stamp}"))
+    except OSError:
+        return
 
 
 def load_structured_resume_session_id(workspace: str | Path) -> str | None:
@@ -41,10 +55,36 @@ def load_structured_resume_session_id(workspace: str | Path) -> str | None:
     return str(session_id) if session_id else None
 
 
+def connect_sqlite(db_path: Path) -> sqlite3.Connection:
+    """打开 sqlite 连接并设好并发参数。
+
+    裸 ``connect()`` 在 CLI 与 WebUI 同开一个工作区、或两个 WebUI 共用全局会话
+    索引时，5 秒后直接抛 ``database is locked``，而调用方多半没有 try/except。
+    WAL 让读写不互斥，busy_timeout 给写入方留出重试窗口。
+    """
+    conn = sqlite3.connect(str(db_path), timeout=30.0)
+    conn.row_factory = sqlite3.Row
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=30000")
+        conn.execute("PRAGMA synchronous=NORMAL")
+    except sqlite3.DatabaseError:
+        pass  # 只读挂载等场景下设置失败不应阻止打开
+    return conn
+
+
 def _write_json_atomic(path: Path, data: dict[str, Any]) -> None:
+    import os
+
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    # 临时文件名带 pid：固定名字会让两个并发写入方写同一个 tmp，rename 虽原子，
+    # 内容却可能是交错的半成品。
+    tmp = path.with_suffix(path.suffix + f".tmp.{os.getpid()}")
+    payload = json.dumps(data, ensure_ascii=False, indent=2) + "\n"
+    with tmp.open("w", encoding="utf-8") as fh:
+        fh.write(payload)
+        fh.flush()
+        os.fsync(fh.fileno())  # 无 fsync 时掉电可能 rename 出一个空文件
     tmp.replace(path)
 
 
@@ -62,8 +102,7 @@ class SchedulerStateStore:
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self.state_file = self.state_dir / STATE_FILE_NAME
         self.db_path = self.state_dir / DB_FILE_NAME
-        self.conn = sqlite3.connect(str(self.db_path))
-        self.conn.row_factory = sqlite3.Row
+        self.conn = connect_sqlite(self.db_path)
         self._init_schema()
         self.scheduler_session_id = self._ensure_scheduler_session_id()
         self.upsert_session(status="created")
@@ -116,6 +155,13 @@ class SchedulerStateStore:
                 payload_json text not null default '{}',
                 created_at text not null
             );
+
+            -- 三张表原本只有主键，而查询一律按 scheduler_session_id 过滤，
+            -- 全是全表扫；events 又只增不减，会随会话时长线性劣化。
+            create index if not exists idx_turns_session on turns(scheduler_session_id);
+            create index if not exists idx_tasks_session on tasks(scheduler_session_id, updated_at);
+            create index if not exists idx_events_session on events(scheduler_session_id, created_at);
+            create index if not exists idx_events_turn on events(turn_id);
             """
         )
         self.conn.commit()
@@ -141,6 +187,11 @@ class SchedulerStateStore:
         return load_structured_resume_session_id(self.workspace)
 
     def save_claude_session_id(self, claude_session_id: str, *, source: str) -> None:
+        # 每条 SDK 消息都会调到这里（且调用链上有两处），而 session_id 在一次会话中
+        # 几乎不变。不做短路的话，一个含几十次工具调用的 turn 会产生上百次
+        # 「读整个 JSON + 写临时文件 + rename + sqlite commit」。
+        if getattr(self, "_last_saved_claude_session_id", None) == claude_session_id:
+            return
         data = load_session_state(self.workspace)
         now = utc_now()
         data.update(
@@ -160,8 +211,10 @@ class SchedulerStateStore:
             claude_session_id=claude_session_id,
             metadata={"claude_session_source": source},
         )
+        self._last_saved_claude_session_id = claude_session_id
 
     def clear_claude_session_id(self, *, invalid_session_id: str | None = None, source: str) -> None:
+        self._last_saved_claude_session_id = None  # 失效缓存，否则清除后重存会被短路掉
         data = load_session_state(self.workspace)
         now = utc_now()
         if invalid_session_id and data.get("claude_session_id") == invalid_session_id:

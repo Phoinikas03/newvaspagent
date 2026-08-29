@@ -4,11 +4,17 @@ import json
 import os
 import re
 import sqlite3
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .state_store import SCHEDULER_DIR_NAME, load_structured_resume_session_id, utc_now
+from .state_store import (
+    SCHEDULER_DIR_NAME,
+    connect_sqlite,
+    load_structured_resume_session_id,
+    utc_now,
+)
 
 
 SESSION_INDEX_DIR = SCHEDULER_DIR_NAME
@@ -16,6 +22,7 @@ SESSION_INDEX_DB = "session_index.sqlite3"
 INTERNAL_WORKSPACE_FILES = {
     "claude_stderr.log",
     "conversation_turns.jsonl",
+    "log.jsonl",
     "log.txt",
 }
 
@@ -27,8 +34,13 @@ def _slug(value: str) -> str:
 
 
 def _parse_last_session_id(log_path: Path) -> str | None:
+    """log.jsonl 直接读字段；旧 log.txt 才回落到全文正则。"""
     if not log_path.is_file():
         return None
+    if log_path.name == "log.jsonl":
+        from src.event_log import last_session_id
+
+        return last_session_id(log_path)
     try:
         text = log_path.read_text(encoding="utf-8", errors="replace")
     except OSError:
@@ -40,7 +52,35 @@ def _parse_last_session_id(log_path: Path) -> str | None:
     return matches[-1] if matches else None
 
 
+#: 工作区 mtime 缓存：``{路径: (顶层目录 mtime, 算出的 mtime, 计算时刻)}``。
+#: 每个 turn 开始和结束都会调 list_sessions，而它对每个工作区 os.walk 一遍并
+#: stat 每个文件（实测 115 个工作区 = 12849 次 stat）。VASP 目录里全是 CHGCAR/
+#: WAVECAR，这个代价随使用时长线性增长。
+_MTIME_CACHE: dict[str, tuple[float, float | None, float]] = {}
+_MTIME_CACHE_TTL = 30.0
+
+
 def _workspace_modified_timestamp(workspace: Path) -> float | None:
+    """返回工作区内最新的文件 mtime；带缓存。
+
+    缓存以「工作区顶层目录自身的 mtime + TTL」为失效条件：目录内新增或删除文件
+    会更新顶层 mtime，纯改写已有文件则由 TTL 兜底。
+    """
+    key = str(workspace)
+    try:
+        top_mtime = workspace.stat().st_mtime
+    except OSError:
+        return None
+    now = time.monotonic()
+    cached = _MTIME_CACHE.get(key)
+    if cached and cached[0] == top_mtime and (now - cached[2]) < _MTIME_CACHE_TTL:
+        return cached[1]
+    value = _scan_workspace_modified_timestamp(workspace)
+    _MTIME_CACHE[key] = (top_mtime, value, now)
+    return value
+
+
+def _scan_workspace_modified_timestamp(workspace: Path) -> float | None:
     latest: float | None = None
     for root, dirs, files in os.walk(workspace):
         dirs[:] = [name for name in dirs if name != SCHEDULER_DIR_NAME]
@@ -83,8 +123,7 @@ class WorkspaceSessionIndex:
         self.index_dir = self.runs_root / SESSION_INDEX_DIR
         self.index_dir.mkdir(parents=True, exist_ok=True)
         self.db_path = self.index_dir / SESSION_INDEX_DB
-        self.conn = sqlite3.connect(str(self.db_path))
-        self.conn.row_factory = sqlite3.Row
+        self.conn = connect_sqlite(self.db_path)
         self._init_schema()
 
     def close(self) -> None:
@@ -122,7 +161,11 @@ class WorkspaceSessionIndex:
         for child in sorted(self.runs_root.iterdir()):
             if not child.is_dir() or child.name.startswith("."):
                 continue
-            if not ((child / "log.txt").exists() or (child / SCHEDULER_DIR_NAME).exists()):
+            if not (
+                (child / "log.jsonl").exists()
+                or (child / "log.txt").exists()
+                or (child / SCHEDULER_DIR_NAME).exists()
+            ):
                 continue
             self.ensure_session_for_workspace(child, title=child.name, touch=False, revive_deleted=False)
 
@@ -158,7 +201,11 @@ class WorkspaceSessionIndex:
         base_id = _slug(ws.name)
         agent_session_id = self._unique_session_id(base_id, workspace=ws)
         now = utc_now()
-        claude_session_id = load_structured_resume_session_id(ws) or _parse_last_session_id(ws / "log.txt")
+        from src.event_log import resolve_log_path
+
+        claude_session_id = load_structured_resume_session_id(ws) or _parse_last_session_id(
+            resolve_log_path(ws)
+        )
         self.conn.execute(
             """
             insert into workspace_sessions
