@@ -10,6 +10,8 @@ Exposes a single WebUI class that:
 import asyncio
 import errno
 import json
+import os
+from contextlib import suppress
 from collections.abc import Awaitable, Callable
 from typing import Any
 from aiohttp import web
@@ -649,14 +651,41 @@ function ensureSessionState(id) {
   return sessionStates[sid];
 }
 
-const ws = new WebSocket(`ws://${location.host}/ws`);
-ws.onopen  = () => { setStatus('已连接', false); sendBtn.disabled = false; };
-ws.onclose = () => { setStatus('连接断开', false); sendBtn.disabled = false; };
-ws.onerror = () => { setStatus('连接错误', false); sendBtn.disabled = false; };
-ws.onmessage = (ev) => {
-  const d = JSON.parse(ev.data);
-  dispatch(d, false);
-};
+// VASP 会话动辄跑几小时，一次网络抖动如果不重连，页面看起来还在跑、
+// 实际什么都收不到。指数退避重连，重连成功后服务端会重发会话历史。
+let ws = null;
+let wsRetry = 0;
+let wsTimer = null;
+
+function connectWs() {
+  if (wsTimer) { clearTimeout(wsTimer); wsTimer = null; }
+  ws = new WebSocket(`ws://${location.host}/ws`);
+  ws.onopen = () => {
+    wsRetry = 0;
+    setStatus('已连接', false);
+    sendBtn.disabled = false;
+  };
+  ws.onclose = () => {
+    sendBtn.disabled = false;
+    scheduleReconnect();
+  };
+  ws.onerror = () => { setStatus('连接错误', false); };
+  ws.onmessage = (ev) => {
+    let d;
+    try { d = JSON.parse(ev.data); } catch (e) { return; }
+    dispatch(d, false);
+  };
+}
+
+function scheduleReconnect() {
+  if (wsTimer) return;
+  const delay = Math.min(1000 * Math.pow(2, wsRetry), 30000);
+  wsRetry += 1;
+  setStatus(`连接断开，${Math.round(delay / 1000)} 秒后重连…`, false);
+  wsTimer = setTimeout(() => { wsTimer = null; connectWs(); }, delay);
+}
+
+connectWs();
 
 function dispatch(d, replay) {
   if (d.type === 'session_list') {
@@ -1101,7 +1130,14 @@ function send() {
 
 function wsSend(payload) {
   if (!payload.agent_session_id && activeSessionId) payload.agent_session_id = activeSessionId;
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    // 断线时静默丢弃会让用户以为消息发出去了。明确告知并触发重连。
+    setStatus('连接已断开，正在重连…', false);
+    scheduleReconnect();
+    return false;
+  }
   ws.send(JSON.stringify(payload));
+  return true;
 }
 
 function selectSession(id) {
@@ -1167,18 +1203,6 @@ deleteDialogBackdrop.addEventListener('click', (ev) => {
 # WebUI class
 # ---------------------------------------------------------------------------
 
-_HISTORY_TYPES = {
-    "user_message",
-    "agent_text",
-    "tool_use",
-    "tool_result",
-    "result",
-    "log_path",
-    "status",
-    "todo_update",
-}
-
-
 class WebUI:
     def __init__(
         self,
@@ -1190,10 +1214,9 @@ class WebUI:
     ) -> None:
         self.port = port
         self.input_queue: asyncio.Queue = asyncio.Queue()
-        self._ws: web.WebSocketResponse | None = None
         self._clients: set[web.WebSocketResponse] = set()
+        self._send_locks: dict[int, asyncio.Lock] = {}
         self._runner: web.AppRunner | None = None
-        self._history: list[dict] = []
         self._on_event = on_event
         self._on_connect = on_connect
         self._api_handler = api_handler
@@ -1210,9 +1233,20 @@ class WebUI:
         await self._runner.setup()
         requested = int(self.port)
         last: OSError | None = None
+        # 界面没有鉴权，而 agent 以 bypassPermissions 运行——绑到 0.0.0.0 等于把
+        # 任意命令执行开放给整个网段。默认只监听回环；远程访问走 SSH 端口转发
+        # （ssh -L 18688:localhost:18688 user@host）。确需对内网暴露时显式设置
+        # VASP_AGENT_WEB_HOST，此时打印警告。
+        host = (os.environ.get("VASP_AGENT_WEB_HOST") or "127.0.0.1").strip()
+        if host not in ("127.0.0.1", "localhost", "::1"):
+            print(
+                f"[web] 警告：监听 {host}，该网段内任何人都可无鉴权操作本 agent "
+                f"（其权限模式为 bypassPermissions）。仅在可信内网使用。",
+                flush=True,
+            )
         for p in range(requested, requested + WEB_PORT_TRY_COUNT):
             try:
-                await web.TCPSite(self._runner, "0.0.0.0", p).start()
+                await web.TCPSite(self._runner, host, p).start()
                 self.port = p
                 return
             except OSError as e:
@@ -1229,26 +1263,36 @@ class WebUI:
         if self._runner:
             await self._runner.cleanup()
 
-    def extend_history(self, events: list[dict]) -> None:
-        """在连接建立前注入事件（例如从 log.txt 恢复），供首次 WebSocket 重放。"""
-        for e in events:
-            if e.get("type") in _HISTORY_TYPES:
-                self._history.append(e)
 
     async def send(self, data: dict) -> None:
-        if data.get("type") in _HISTORY_TYPES:
-            self._history.append(data)
-        dead: list[web.WebSocketResponse] = []
-        for ws in list(self._clients):
-            if ws.closed:
-                dead.append(ws)
-                continue
-            try:
-                await ws.send_json(data)
-            except Exception:
-                dead.append(ws)
-        for ws in dead:
+        """向所有客户端广播。
+
+        并发发送而不是串行：串行时一个慢客户端会阻塞**所有**会话的接收循环
+        （每个 WorkspaceRuntime._receive_loop 都在 await 这里）。
+        """
+        targets = [ws for ws in list(self._clients) if not ws.closed]
+        for ws in self._clients - set(targets):
             self._clients.discard(ws)
+        if not targets:
+            return
+        results = await asyncio.gather(
+            *(self._send_one(ws, data) for ws in targets), return_exceptions=True
+        )
+        for ws, result in zip(targets, results):
+            if result is not True:
+                self._clients.discard(ws)
+
+    async def _send_one(self, ws: web.WebSocketResponse, data: dict) -> bool:
+        # 每个连接一把锁：多个 runtime 的接收循环会并发发向同一个 WebSocket，
+        # 无锁并发 send_json 存在帧交错风险。
+        lock = self._send_locks.setdefault(id(ws), asyncio.Lock())
+        try:
+            async with lock:
+                await ws.send_json(data)
+            return True
+        except Exception:
+            self._send_locks.pop(id(ws), None)
+            return False
 
     async def send_to(self, ws: web.WebSocketResponse, data: dict) -> None:
         if not ws.closed:
@@ -1275,36 +1319,46 @@ class WebUI:
         return web.json_response(data)
 
     async def _ws_handler(self, request: web.Request) -> web.WebSocketResponse:
-        ws = web.WebSocketResponse()
+        ws = web.WebSocketResponse(heartbeat=30.0)
         await ws.prepare(request)
-        self._ws = ws
         self._clients.add(ws)
         if self._on_connect:
             await self._on_connect(self, ws)
-        # Replay history to newly connected client
-        if self._history and not self._on_connect:
-            try:
-                await ws.send_json({"type": "history", "events": self._history})
-            except Exception:
-                pass
         async for msg in ws:
             if msg.type == aiohttp.WSMsgType.TEXT:
                 try:
                     data = json.loads(msg.data)
+                except json.JSONDecodeError:
+                    continue
+                try:
                     if self._on_event:
                         await self._on_event(data)
                     elif data.get("type") == "user_message":
-                        self._history.append(data)
                         await self.input_queue.put({"type": "user_message", "text": data["text"]})
                     elif data.get("type") == "interrupt":
                         text = str(data.get("text") or "")
-                        if text.strip():
-                            self._history.append({"type": "user_message", "text": text})
                         await self.input_queue.put({"type": "interrupt", "text": text})
-                except Exception:
-                    pass
+                except Exception as exc:
+                    # 此前是 except Exception: pass —— 未知会话、rmtree 失败、
+                    # 启动失败等全部被静默吞掉，浏览器收不到任何反馈，界面永远
+                    # 停在「思考中」。至少要把错误回送并留在服务端日志里。
+                    import traceback
+
+                    traceback.print_exc()
+                    with suppress(Exception):
+                        await ws.send_json(
+                            {
+                                "type": "agent_text",
+                                "text": f"[错误] 处理请求失败: {type(exc).__name__}: {exc}",
+                            }
+                        )
+                    with suppress(Exception):
+                        await ws.send_json(
+                            {"type": "status", "text": "就绪 — 请在下方输入", "thinking": False}
+                        )
+                        await ws.send_json({"type": "done"})
             elif msg.type in (aiohttp.WSMsgType.ERROR, aiohttp.WSMsgType.CLOSE):
                 break
         self._clients.discard(ws)
-        self._ws = None
+        self._send_locks.pop(id(ws), None)
         return ws

@@ -36,8 +36,12 @@ from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-CONFIG_PATH = REPO_ROOT / "litellm_autostart_config.yaml"
-LOG_PATH = REPO_ROOT / "litellm_autostart.log"
+# 每个进程一套文件名。共用固定文件名时，两个 agent 同时启动会互相覆盖 config，
+# 后写的 model 会被先启动的子进程读到——**A 的对话就发到了 B 的上游模型**，
+# 而且不会有任何报错。日志同理（"w" 模式直接截断对方的）。
+_AUTOSTART_DIR = REPO_ROOT / ".litellm_autostart"
+CONFIG_PATH = _AUTOSTART_DIR / f"config.{os.getpid()}.yaml"
+LOG_PATH = _AUTOSTART_DIR / f"autostart.{os.getpid()}.log"
 
 # 与常见 litellm --port 4000 一致（Agent → 本机 LiteLLM）
 DEFAULT_LITELLM_BASE_URL = "http://127.0.0.1:4000"
@@ -175,9 +179,53 @@ def first_free_port(
     """
     end = start + max_scan
     for port in range(start, end):
-        if not port_is_listening(host, port, timeout=0.12):
+        if port_is_listening(host, port, timeout=0.12):
+            continue
+        # 「探测到没人监听」和「LiteLLM 真正 bind 上去」之间有几秒窗口，
+        # 期间另一个进程会挑中同一个端口，后启动的那个 bind 失败静默死掉，
+        # 而 ANTHROPIC_BASE_URL 已经指过去了。用排他创建的锁文件占位。
+        if _claim_port(port):
             return port
     return None
+
+
+_PORT_CLAIM_DIR = REPO_ROOT / ".litellm_autostart"
+_claimed_ports: list[Path] = []
+
+
+def _claim_port(port: int) -> bool:
+    """用 ``O_CREAT|O_EXCL`` 抢占端口占位文件；陈旧占位（进程已死）自动回收。"""
+    _PORT_CLAIM_DIR.mkdir(parents=True, exist_ok=True)
+    claim = _PORT_CLAIM_DIR / f"port-{port}.claim"
+    try:
+        fd = os.open(claim, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+    except FileExistsError:
+        try:
+            owner = int(claim.read_text().strip() or "0")
+        except (OSError, ValueError):
+            return False
+        if owner > 0 and Path(f"/proc/{owner}").exists():
+            return False  # 占位仍然有效
+        try:
+            claim.unlink()          # owner 已死，回收后重试
+            return _claim_port(port)
+        except OSError:
+            return False
+    except OSError:
+        return False
+    with os.fdopen(fd, "w") as fh:
+        fh.write(str(os.getpid()))
+    _claimed_ports.append(claim)
+    atexit.register(_release_port_claims)
+    return True
+
+
+def _release_port_claims() -> None:
+    while _claimed_ports:
+        try:
+            _claimed_ports.pop().unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def normalize_upstream_api_base_for_litellm(api_base: str) -> str:
@@ -485,9 +533,17 @@ def maybe_start_litellm(base_url: str, *, disable: bool = False) -> None:
     _merge_no_proxy_for_url(new_base)
     print(f"[llm] 自启 LiteLLM 选用空闲端口: {port}（已设置 ANTHROPIC_BASE_URL={new_base}）", flush=True)
 
+    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     CONFIG_PATH.write_text(_build_yaml(model, api_base, api_key), encoding="utf-8")
+    # 该文件含明文上游 API key，不应对同机其他用户可读。
+    try:
+        os.chmod(CONFIG_PATH, 0o600)
+    except OSError:
+        pass
 
     log_f = LOG_PATH.open("w", encoding="utf-8", buffering=1)
+    # Popen 继承了这个 fd，父进程侧的句柄此前从不关闭（每次自启泄漏一个）。
+    atexit.register(lambda: log_f.close() if not log_f.closed else None)
     ts = time.strftime("%Y-%m-%d %H:%M:%S")
     log_f.write(f"\n--- autostart {ts} ---\n")
     log_f.flush()
