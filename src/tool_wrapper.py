@@ -16,27 +16,32 @@ def setup_vasp_inputs_tool(workspace_dir: str, default_kpoints_density: int = 10
             "Otherwise writes KPOINTS via automatic_density; kpoints_density defaults to 100. "
             'Optional potcar_overrides maps POSCAR element symbols to exact PBE POTCAR symbols as a JSON object '
             '(for example {"Cr": "Cr_pv"}). Pass this when the user explicitly requests a POTCAR variant; '
-            "explicit overrides are validated and do not fall back. JSON object strings are accepted for compatibility."
-        ), 
+            "explicit overrides are validated and do not fall back. JSON object strings are accepted for compatibility. "
+            "Optional work_dir writes the generated files into a subdirectory of the workspace "
+            "(for example 'configs/ontop_upright'); use it for per-configuration workflows such as "
+            "adsorption stages or EOS volume points instead of generating POTCAR by hand."
+        ),
         input_schema={
-            "poscar_path": str, 
-            "incar_path": str, 
+            "poscar_path": str,
+            "incar_path": str,
             "kpoints_density": Optional[int],  # 允许大模型根据需要调整 K 点密度
             "potcar_overrides": Optional[Dict[str, str]],
+            "work_dir": Optional[str],  # 工作区内的目标子目录；缺省为工作区根目录
         }
     )
     async def setup_vasp_inputs(args: Dict[str, Any]) -> Dict[str, Any]:
-        # 提取参数，如果大模型没有传入 kpoints_density，则使用外部注入的默认值
-        density = int(args.get("kpoints_density", default_kpoints_density))
+        # 用 `or` 而非 `get(k, default)`：模型显式传 null 时 get 返回 None，int(None) 会抛 TypeError
+        density = int(args.get("kpoints_density") or default_kpoints_density)
         potcar_overrides = args.get("potcar_overrides") or None
-        
+
         # 仅负责参数提取和转发
         return await setup_vasp_inputs_impl(
-            poscar_path=args["poscar_path"], 
-            incar_path=args["incar_path"], 
+            poscar_path=args["poscar_path"],
+            incar_path=args["incar_path"],
             workspace_dir=workspace_dir,
             kpoints_density=density,
             potcar_overrides=potcar_overrides,
+            work_dir=args.get("work_dir") or None,
         )
             
     return setup_vasp_inputs

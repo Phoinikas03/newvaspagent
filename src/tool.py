@@ -2,8 +2,24 @@ import ast
 import json
 import os
 import asyncio
+import time
 from pathlib import Path
 from typing import Dict, Any, Optional
+
+def _ok(text: str) -> Dict[str, Any]:
+    """成功返回。空结果（如「未搜到论文」）也走这里——那是合法结果，不是失败。"""
+    return {"content": [{"type": "text", "text": text}]}
+
+
+def _err(text: str) -> Dict[str, Any]:
+    """失败返回。
+
+    必须带 ``is_error``：宿主用 ``ToolResultBlock.is_error`` 判定工具是否失败，
+    并据此驱动界面标记与错误兜底文案。只把 "Error: ..." 写进正文的话，失败在
+    界面上是绿色的，轨迹里也没有任何机器可读的失败标记。
+    """
+    return {"content": [{"type": "text", "text": text}], "is_error": True}
+
 
 # ==========================================
 # 设置 VASP 输入文件 (POTCAR 推荐赝势 + 智能回退)
@@ -71,7 +87,7 @@ def _setup_vasp_inputs_sync(
     _configure_repo_potcar_dir()
 
     from pymatgen.core import Structure
-    from pymatgen.io.vasp import Incar, Kpoints, Potcar, PotcarSingle
+    from pymatgen.io.vasp import Incar, Kpoints, Poscar, Potcar, PotcarSingle
     
     # 确保目标工作目录存在
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -84,8 +100,10 @@ def _setup_vasp_inputs_sync(
     use_kspacing = incar.get("KSPACING") is not None
     
     # 3. 自动生成 POTCAR (使用 pymatgen / Materials Project 推荐赝势)
-    # 获取 POSCAR 中按顺序排列的元素种类
-    species = [str(sp) for sp in structure.types_of_specie]
+    # 元素顺序必须取自实际写出的 POSCAR（site 顺序），而不是 types_of_specie
+    # （后者按电负性排序）。两者不一致时 VASP 会按位置把 POTCAR 条目配到 POSCAR
+    # 的原子计数上，静默算错元素且不报错。
+    species = list(Poscar(structure).site_symbols)
 
     # pymatgen MPRelaxSet 推荐的 PBE 赝势变体：对过渡金属/碱金属/碱土/重元素等
     # 推荐含半芯态的 _pv/_sv/_d (如 Ti_pv, Fe_pv, Mn_pv, Li_sv, Ba_sv, Sn_d)。
@@ -149,6 +167,19 @@ def _setup_vasp_inputs_sync(
     
     # 4. 将所有文件写入目标工作目录
     structure.to(fmt="poscar", filename=str(work_dir / "POSCAR"))
+
+    # 落盘后复核：POTCAR 的元素序必须与写出的 POSCAR 元素行逐位对应。
+    # VASP 按位置配对二者且不校验，错配只会表现为错误的物理结果。
+    written_symbols = list(Poscar.from_file(str(work_dir / "POSCAR")).site_symbols)
+    potcar_elements = [str(p.element) for p in potcar]
+    if written_symbols != potcar_elements:
+        raise ValueError(
+            "POTCAR/POSCAR element order mismatch — refusing to write inconsistent inputs. "
+            f"POSCAR element line: {written_symbols}; POTCAR order: {potcar_elements}. "
+            "VASP pairs these positionally and would silently assign the wrong "
+            "pseudopotential to each element."
+        )
+
     incar.write_file(str(work_dir / "INCAR"))
     kpath = work_dir / "KPOINTS"
     if use_kspacing:
@@ -160,12 +191,26 @@ def _setup_vasp_inputs_sync(
         kpoints.write_file(str(kpath))
         k_mesh_info = f"KPOINTS from automatic_density={kpoints_density}"
     potcar.write_file(str(work_dir / "POTCAR"))
-    
-    return (
+
+    message = (
         f"Successfully generated POSCAR, INCAR, and POTCAR in {work_dir}\n"
         f"{k_mesh_info}\n"
         f"(Used POTCARs: {', '.join(potcar_symbols)})"
     )
+    # 结构化溯源：这些字段是「输入选择 → 最终收敛/失败」这条监督链的输入端，
+    # 只写进散文里的话无法机器读取。
+    detail = {
+        "work_dir": str(work_dir),
+        "element_order": written_symbols,
+        "potcar_symbols": potcar_symbols,
+        "potcar_overrides": normalized_overrides or None,
+        "kspacing": incar.get("KSPACING") if use_kspacing else None,
+        "kpoints_density": None if use_kspacing else kpoints_density,
+        "encut": incar.get("ENCUT"),
+        "n_sites": len(structure),
+        "formula": structure.composition.reduced_formula,
+    }
+    return message, detail
 
 
 async def setup_vasp_inputs_impl(
@@ -174,33 +219,77 @@ async def setup_vasp_inputs_impl(
     workspace_dir: str,
     kpoints_density: int = 100,
     potcar_overrides: Optional[Any] = None,
+    work_dir: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """(异步接口) 供 Tool 调用的核心逻辑：基于自定义 INCAR 和 POSCAR 自动生成全套 VASP 输入文件"""
-    work_dir = Path(workspace_dir).resolve()
+    """(异步接口) 供 Tool 调用的核心逻辑：基于自定义 INCAR 和 POSCAR 自动生成全套 VASP 输入文件
+
+    ``work_dir`` 为可选的目标子目录，用于吸附三段式、EOS 多体积等每算例一个目录的
+    工作流。缺省写入工作区根目录。必须位于 ``workspace_dir`` 之内——否则本工具会
+    成为往工作区外任意位置写文件的通道。
+    """
+    workspace_root = Path(workspace_dir).resolve()
+    if work_dir:
+        candidate = Path(work_dir)
+        target = (candidate if candidate.is_absolute() else workspace_root / candidate).resolve()
+        if target != workspace_root and workspace_root not in target.parents:
+            return _err(
+                f"Error: work_dir must stay inside the workspace ({workspace_root}); got {target}"
+            )
+        work_dir_path = target
+    else:
+        work_dir_path = workspace_root
     poscar_file = Path(poscar_path).resolve()
     incar_file = Path(incar_path).resolve()
-    
+
+    from src.event_log import append_tool_record
+
+    started = time.monotonic()
+    args_record = {
+        "poscar_path": str(poscar_file),
+        "incar_path": str(incar_file),
+        "kpoints_density": kpoints_density,
+        "potcar_overrides": potcar_overrides,
+        "work_dir": work_dir,
+    }
+
+    def _record(ok: bool, detail: dict | None = None, error: str | None = None) -> None:
+        append_tool_record(
+            workspace_root,
+            tool="setup_vasp_inputs",
+            ok=ok,
+            duration_ms=int((time.monotonic() - started) * 1000),
+            args=args_record,
+            detail=detail,
+            error=error,
+        )
+
     if not poscar_file.exists():
-        return {"content": [{"type": "text", "text": f"Error: The source POSCAR file was not found at {poscar_file}"}]}
+        msg = f"Error: The source POSCAR file was not found at {poscar_file}"
+        _record(False, error=msg)
+        return _err(msg)
     if not incar_file.exists():
-        return {"content": [{"type": "text", "text": f"Error: The source INCAR file was not found at {incar_file}"}]}
-        
+        msg = f"Error: The source INCAR file was not found at {incar_file}"
+        _record(False, error=msg)
+        return _err(msg)
+
     try:
-        success_msg = await asyncio.to_thread(
-            _setup_vasp_inputs_sync, 
-            poscar_file, 
-            incar_file, 
-            work_dir, 
+        success_msg, detail = await asyncio.to_thread(
+            _setup_vasp_inputs_sync,
+            poscar_file,
+            incar_file,
+            work_dir_path,
             kpoints_density,
             potcar_overrides,
         )
-        return {"content": [{"type": "text", "text": success_msg}]}
-        
+        _record(True, detail=detail)
+        return _ok(success_msg)
+
     except Exception as e:
         error_msg = f"Error during VASP input generation: {str(e)}"
         if "No POTCAR" in str(e) or "VASP_PSP_DIR" in str(e):
             error_msg += "\n(Hint: Ensure PMG_VASP_PSP_DIR is configured in your environment or ~/.pmgrc.yaml)"
-        return {"content": [{"type": "text", "text": error_msg}]}
+        _record(False, error=str(e))
+        return _err(error_msg)
 
 
 # ==========================================
@@ -214,14 +303,14 @@ async def duckduckgo_search_impl(query: str, max_results: int = 10) -> Dict[str,
                 return list(ddgs.text(query, max_results=max_results))
         results = await asyncio.to_thread(_run_search)
         if not results:
-            return {"content": [{"type": "text", "text": "No results found! Try a less restrictive/shorter query."}]}
+            return _ok("No results found! Try a less restrictive/shorter query.")
         postprocessed_results = [f"[{res['title']}]({res['href']})\n{res['body']}" for res in results]
         final_text = "## Search Results\n\n" + "\n\n".join(postprocessed_results)
-        return {"content": [{"type": "text", "text": final_text}]}
+        return _ok(final_text)
     except ImportError:
-        return {"content": [{"type": "text", "text": "Error: You must install `ddgs` (pip install duckduckgo-search)."}]}
+        return _err("Error: You must install `ddgs` (pip install ddgs).")
     except Exception as e:
-        return {"content": [{"type": "text", "text": f"Error: {str(e)}"}]}
+        return _err(f"Error: {str(e)}")
 
 # ==========================================
 # Google 搜索
@@ -241,12 +330,12 @@ def _google_search_sync(query: str, provider: str, api_key: str) -> dict:
 async def google_search_impl(query: str, provider: str = "serper") -> Dict[str, Any]:
     api_key = os.getenv(f"{provider.upper()}_API_KEY")
     if not api_key:
-        return {"content": [{"type": "text", "text": f"Error: Missing API key. Make sure {provider.upper()}_API_KEY is in your env variables."}]}
+        return _err(f"Error: Missing API key. Make sure {provider.upper()}_API_KEY is in your env variables.")
     try:
         results = await asyncio.to_thread(_google_search_sync, query, provider, api_key)
         organic_key = "organic_results" if provider == "serpapi" else "organic"
         if organic_key not in results or len(results[organic_key]) == 0:
-            return {"content": [{"type": "text", "text": f"No results found for '{query}'. Try with a more general query."}]}
+            return _ok(f"No results found for '{query}'. Try with a more general query.")
         web_snippets = []
         for idx, page in enumerate(results[organic_key]):
             title = page.get("title", "No Title")
@@ -254,44 +343,83 @@ async def google_search_impl(query: str, provider: str = "serper") -> Dict[str, 
             snippet = page.get("snippet", "")
             web_snippets.append(f"{idx + 1}. [{title}]({link})\n{snippet}")
         final_text = "## Search Results\n\n" + "\n\n".join(web_snippets)
-        return {"content": [{"type": "text", "text": final_text}]}
+        return _ok(final_text)
     except Exception as e:
-        return {"content": [{"type": "text", "text": f"Error: {str(e)}"}]}
+        return _err(f"Error: {str(e)}")
 
 # ==========================================
 # 网页浏览工具
 # ==========================================
+def _assert_public_http_url(url: str) -> None:
+    """拒绝指向内网/本机的 URL。
+
+    没有这道检查，agent 可以让本工具去读 ``http://127.0.0.1:<litellm端口>``、
+    局域网设备或云元数据地址（169.254.169.254）——这是 SSRF，且触发者是 agent
+    自身，不会因为部署在内网就变安全。
+    """
+    import ipaddress
+    import socket
+    from urllib.parse import urlparse
+
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(f"Only http/https URLs are allowed, got scheme {parsed.scheme!r}")
+    host = parsed.hostname
+    if not host:
+        raise ValueError("URL has no host")
+    try:
+        infos = socket.getaddrinfo(host, parsed.port or (443 if parsed.scheme == "https" else 80))
+    except socket.gaierror as exc:
+        raise ValueError(f"Cannot resolve host {host!r}: {exc}") from exc
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0])
+        if (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local        # 含 169.254.169.254 云元数据地址
+            or ip.is_reserved
+            or ip.is_multicast
+            or ip.is_unspecified
+        ):
+            raise ValueError(
+                f"Refusing to fetch {url}: {host} resolves to non-public address {ip}. "
+                "This tool may only reach public internet hosts."
+            )
+
+
 def _visit_webpage_sync(url: str) -> str:
     import requests
     import re
-    import urllib3
     from markdownify import markdownify
-    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+    _assert_public_http_url(url)
     headers = {
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
     }
-    response = requests.get(url, headers=headers, timeout=20, verify=False)
+    # verify=True：关闭 TLS 校验会让抓到的内容失去来源保证，而文献检索结果会直接
+    # 进入科学决策。证书有问题应当报错，而不是静默接受。
+    response = requests.get(url, headers=headers, timeout=20)
     response.raise_for_status()
     markdown_content = markdownify(response.text).strip()
     markdown_content = re.sub(r"\n{3,}", "\n\n", markdown_content)
     return markdown_content
 
-async def visit_webpage_impl(url: str, max_output_length: int = 50000) -> Dict[str, Any]:
+async def visit_webpage_impl(url: str, max_output_length: int = 40000) -> Dict[str, Any]:
     try:
         import markdownify  
     except ImportError:
-        return {"content": [{"type": "text", "text": "Error: You must install `markdownify` (pip install markdownify)."}]}
+        return _err("Error: You must install `markdownify` (pip install markdownify).")
     import requests
     try:
         markdown_content = await asyncio.to_thread(_visit_webpage_sync, url)
         if len(markdown_content) > max_output_length:
             markdown_content = markdown_content[:max_output_length] + \
                 f"\n\n..._This content has been truncated to stay below {max_output_length} characters_...\n"
-        return {"content": [{"type": "text", "text": markdown_content}]}
+        return _ok(markdown_content)
     except requests.exceptions.Timeout:
-        return {"content": [{"type": "text", "text": "Error: The request timed out. Please try again later or check the URL."}]}
+        return _err("Error: The request timed out. Please try again later or check the URL.")
     except Exception as e:
-        return {"content": [{"type": "text", "text": f"Error fetching the webpage: {str(e)}"}]}
+        return _err(f"Error fetching the webpage: {str(e)}")
 
 # ==========================================
 # 学术开源文献检索 (arXiv API)
@@ -331,7 +459,7 @@ async def arxiv_search_impl(query: str, max_results: int = 5) -> Dict[str, Any]:
     try:
         papers = await asyncio.to_thread(_arxiv_search_sync, query, max_results)
         if not papers:
-            return {"content": [{"type": "text", "text": f"No open-access papers found for query: '{query}'"}]}
+            return _ok(f"No open-access papers found for query: '{query}'")
         snippets = []
         for idx, paper in enumerate(papers):
             pdf_url = paper["pdf_link"] + ".pdf" if paper["pdf_link"] else "No PDF available"
@@ -341,9 +469,9 @@ async def arxiv_search_impl(query: str, max_results: int = 5) -> Dict[str, Any]:
                 f"**Abstract**: {paper['summary'][:500]}...\n"
             )
         final_text = "## Academic Search Results (Open Access)\n\n" + "\n\n".join(snippets)
-        return {"content": [{"type": "text", "text": final_text}]}
+        return _ok(final_text)
     except Exception as e:
-        return {"content": [{"type": "text", "text": f"Error searching academic papers: {str(e)}"}]}
+        return _err(f"Error searching academic papers: {str(e)}")
 
 # ==========================================
 # Semantic Scholar 学术文献搜索
@@ -383,7 +511,7 @@ async def semanticscholar_search_impl(query: str, max_results: int = 5) -> Dict[
     try:
         papers = await asyncio.to_thread(_semanticscholar_search_sync, query, max_results)
         if not papers:
-            return {"content": [{"type": "text", "text": f"No papers found for query: '{query}'"}]}
+            return _ok(f"No papers found for query: '{query}'")
         snippets = []
         for idx, paper in enumerate(papers):
             pdf_url = paper["pdf_link"] if paper["pdf_link"] else "No open-access PDF available"
@@ -396,7 +524,7 @@ async def semanticscholar_search_impl(query: str, max_results: int = 5) -> Dict[
                 f"Abstract: {abstract_text}\n"
             )
         final_text = "## Semantic Scholar Bulk Search Results\n\n" + "\n\n".join(snippets)
-        return {"content": [{"type": "text", "text": final_text}]}
+        return _ok(final_text)
     except requests.exceptions.HTTPError as e:
         if e.response.status_code == 429:
             error_msg = "Rate limit exceeded (429). You are sharing the unauthenticated API pool. Please configure an API Key (1 req/sec limit)."
@@ -404,6 +532,6 @@ async def semanticscholar_search_impl(query: str, max_results: int = 5) -> Dict[
             error_msg = f"Bad Request (400): Check your search query parameters. Details: {e.response.text}"
         else:
             error_msg = f"HTTP Error {e.response.status_code}: {str(e)}"
-        return {"content": [{"type": "text", "text": error_msg}]}
+        return _err(error_msg)
     except Exception as e:
-        return {"content": [{"type": "text", "text": f"Error searching Semantic Scholar: {str(e)}"}]}
+        return _err(f"Error searching Semantic Scholar: {str(e)}")
