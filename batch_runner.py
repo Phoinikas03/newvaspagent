@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """批量 VASP Agent 运行器
 
-用多进程池驱动 ClaudeSDKClient，对 data/relax 和 data/bandgap 下的材料
+用多进程池驱动 ClaudeSDKClient，对 data/datasets/relax 和
+data/datasets/bandgap 下的材料
 做结构优化和能带计算。每个 worker 绑定一块 GPU（CUDA_VISIBLE_DEVICES）。
 
 用法示例：
     python batch_runner.py --gpus 0,1,2,3 --tasks relax bandgap
+    python batch_runner.py --data-root data/datasets --dry-run
     python batch_runner.py --api-base http://127.0.0.1:43336   # LiteLLM 若随机端口须显式指定
     python batch_runner.py --gpus 0,1 --tasks relax --materials Al AlN
     python batch_runner.py --dry-run          # 只列出任务不执行
@@ -13,7 +15,7 @@
 环境：启动前请 export ANTHROPIC_BASE_URL 与 litellm 监听一致；worker 内用 setdefault，不再强行覆盖为 4000。
 
 注意：本脚本中的 worker prompt 也应遵守仓库统一规范：
-- 正式 VASP 提交优先通过 `python .claude/skills/run_vasp/scripts/vasp_runner.py`
+- 正式 VASP 提交优先通过 `python .claude/skills/run-vasp/scripts/vasp_runner.py`
 - 不应引导 agent 直接执行 `bash run_vasp.sh` 或手写 `mpirun`
 """
 
@@ -33,7 +35,15 @@ from typing import Any
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
-DATA_ROOT = SCRIPT_DIR / "data"
+def _default_data_root() -> Path:
+    public_data = SCRIPT_DIR / "data" / "datasets"
+    if public_data.is_dir():
+        return public_data
+    return SCRIPT_DIR / "data"
+
+
+DATA_ROOT = _default_data_root()
+RUNS_ROOT = SCRIPT_DIR / "runs"
 LOG_DIR = SCRIPT_DIR / "logs" / "batch"
 MAX_CONTINUATIONS = 15
 TASK_TIMEOUT_SEC = 3600  # 1 hour per task
@@ -44,15 +54,16 @@ RELAX_PROMPT = """\
 请对材料 {material} 执行结构优化（structure relaxation）计算。
 
 数据目录: {data_dir}
-该目录中已有以下文件: POSCAR, KPOINTS, POTCAR
-你需要将该目录复制到/mnt/data_x3/xiazeyu/newvaspagent/runs/relax/{material}目录下
+运行目录: {workspace_dir}
+数据目录中提供公开 POSCAR；VASP 受限文件不随仓库分发。
 
 操作步骤：
-1. 查看数据目录中的文件，确认 POSCAR、KPOINTS、POTCAR 存在
-2. 该目录中没有 INCAR，请根据结构优化需求创建 INCAR 文件（推荐参数：IBRION=2, ISIF=3, NSW>=30, EDIFFG=-0.02, ENCUT 根据 POTCAR 选取合适值）
-3. 通过 `python .claude/skills/run_vasp/scripts/vasp_runner.py` 运行 VASP；不要执行 `bash run_vasp.sh`，也不要手写 `mpirun`
-4. VASP 完成后检查 OSZICAR 确认收敛
-5. 运行 python get_energy.py 获取最终优化能量并报告
+1. 查看数据目录中的 POSCAR
+2. 在运行目录中创建 INCAR 文件（推荐参数：IBRION=2, ISIF=3, NSW>=30, EDIFFG=-0.02, ENCUT 根据 POTCAR 选取合适值）
+3. 调用 setup_vasp_inputs 工具，使用数据目录的 POSCAR 与运行目录的 INCAR，在运行目录中生成 POSCAR、KPOINTS 和 POTCAR；POTCAR 必须来自本地已配置的 PMG_VASP_PSP_DIR 或 POTCAR_dir
+4. 通过 `python .claude/skills/run-vasp/scripts/vasp_runner.py` 运行 VASP；不要执行 `bash run_vasp.sh`，也不要手写 `mpirun`
+5. VASP 完成后检查 OSZICAR 确认收敛
+6. 提取最终优化能量并报告
 
 关键要求：
 - 你必须一次性完成所有步骤，最终输出优化后的总能量数值
@@ -64,15 +75,16 @@ BANDGAP_PROMPT = """\
 请对材料 {material} 执行能带带隙（band gap）计算。
 
 数据目录: {data_dir}
-该目录中已有以下文件: POSCAR, KPOINTS, POTCAR
-你需要将该目录复制到/mnt/data_x3/xiazeyu/newvaspagent/runs/bandgap/{material}目录下
+运行目录: {workspace_dir}
+数据目录中提供公开 POSCAR；VASP 受限文件不随仓库分发。
 
 操作步骤：
-1. 查看数据目录中的文件，确认 POSCAR、KPOINTS、POTCAR 存在
-2. 该目录中没有 INCAR，请根据能带带隙计算需求创建 INCAR 文件（需使用HSE06杂化泛函，请合理调整HFSCREEN、AEXX、ALGO等参数）
-3. 通过 `python .claude/skills/run_vasp/scripts/vasp_runner.py` 运行 VASP；不要执行 `bash run_vasp.sh`，也不要手写 `mpirun`
-4. VASP 完成后检查 OSZICAR/OUTCAR 确认计算正常完成
-5. 运行 python gap.py 获取带隙值并报告（包括带隙数值和类型）
+1. 查看数据目录中的 POSCAR
+2. 在运行目录中创建 INCAR 文件（需使用 HSE06 杂化泛函，请合理调整 HFSCREEN、AEXX、ALGO 等参数）
+3. 调用 setup_vasp_inputs 工具，使用数据目录的 POSCAR 与运行目录的 INCAR，在运行目录中生成 POSCAR、KPOINTS 和 POTCAR；POTCAR 必须来自本地已配置的 PMG_VASP_PSP_DIR 或 POTCAR_dir
+4. 通过 `python .claude/skills/run-vasp/scripts/vasp_runner.py` 运行 VASP；不要执行 `bash run_vasp.sh`，也不要手写 `mpirun`
+5. VASP 完成后检查 OSZICAR/OUTCAR 确认计算正常完成
+6. 提取带隙值并报告（包括带隙数值和类型）
 
 关键要求：
 - 你必须一次性完成所有步骤，最终输出带隙数值
@@ -83,18 +95,60 @@ BANDGAP_PROMPT = """\
 CONTINUE_PROMPT = "继续执行上述计算任务。请直接调用工具完成操作，不要重复描述计划。"
 
 
+DIGEST_DIR = SCRIPT_DIR / "runs" / ".distill_candidates"
+
+
+def write_trajectory_digest(
+    workspace_dir: Path, *, task_type: str, material: str, info: dict[str, Any]
+) -> Path:
+    """把一次批量任务的轨迹压缩成摘要，写入候选池供事后审阅。
+
+    无人值守跑批是产生轨迹最多的路径，但它无法走交互式的 skill 审阅流程。
+    这里只产出素材（摘要 + 失败清单），**不**自动写入 ``.claude/skills/``——
+    自动写入等于让未经审阅的内容进入 skill 库。
+    """
+    skill_scripts = SCRIPT_DIR / ".claude/skills/simple-skill-creator/scripts"
+    for path in (SCRIPT_DIR, skill_scripts):
+        if str(path) not in sys.path:
+            sys.path.insert(0, str(path))
+    from extract_trajectory import extract, to_markdown  # type: ignore
+
+    from src.event_log import resolve_log_path
+
+    log_path = resolve_log_path(workspace_dir)
+    data = extract(log_path)
+    header = (
+        f"<!-- task_type={task_type} material={material} "
+        f"status={info.get('status')} rounds={info.get('rounds')} -->\n\n"
+    )
+    DIGEST_DIR.mkdir(parents=True, exist_ok=True)
+    out = DIGEST_DIR / f"{task_type}_{material}.md"
+    out.write_text(header + to_markdown(data), encoding="utf-8")
+    return out
+
+
 def _build_system_prompt(workspace: str, task_type: str) -> str:
+    repo_root = str(SCRIPT_DIR)
     lines = [
         f"Your workspace directory is: {workspace}",
         f"All VASP input/output files should be read from and written to this directory.",
+        "",
+        f"Repository root (skills and everything under `.claude/`): {repo_root}",
+        "The shell cwd for Bash is the workspace above, which is **not** the repository "
+        "root. Any Bash that runs a skill script MUST either be prefixed with "
+        f'`cd \"{repo_root}\" && ...` or use an absolute path starting with `{repo_root}/`. '
+        "A bare relative `.claude/skills/...` path will not resolve.",
         "",
         "CRITICAL RULES:",
         "1. You MUST NOT use the AskUserQuestion tool. Never ask for confirmation.",
         "2. You MUST complete the entire computation in one session — create INCAR, "
         "run VASP, extract results. Do NOT stop after merely describing your plan.",
-        "3. Prefer running `python .claude/skills/run_vasp/scripts/vasp_runner.py` "
-        "to launch VASP. Do NOT use `bash run_vasp.sh`, and do NOT hand-write raw "
-        "`mpirun` commands as the assistant.",
+        "3. Prefer running `python .claude/skills/run-vasp/scripts/vasp_runner.py` "
+        "(with the cd/absolute-path rule above) to launch VASP. Do NOT use "
+        "`bash run_vasp.sh`, and do NOT hand-write raw `mpirun` commands as the assistant.",
+        "4. Generate POTCAR only through `setup_vasp_inputs`. For per-case directories "
+        "(EOS volume points, adsorption stages) pass its `work_dir` argument instead of "
+        "building POTCAR by hand.",
         "",
     ]
     if task_type == "relax":
@@ -110,6 +164,7 @@ async def run_single_task(
     task_type: str,
     material: str,
     data_dir: Path,
+    workspace_dir: Path,
     log_path: Path,
     gpu_id: str,
     max_continuations: int,
@@ -128,7 +183,8 @@ async def run_single_task(
     )
     from src.result_message import result_message_indicates_failure
 
-    workspace = str(data_dir)
+    workspace_dir.mkdir(parents=True, exist_ok=True)
+    workspace = str(workspace_dir)
     mcp_name = "vasp_agent"
     mcp_server = create_sdk_mcp_server(
         name=mcp_name,
@@ -157,12 +213,17 @@ async def run_single_task(
     )
 
     template = RELAX_PROMPT if task_type == "relax" else BANDGAP_PROMPT
-    initial_prompt = template.format(material=material, data_dir=data_dir)
+    initial_prompt = template.format(
+        material=material,
+        data_dir=data_dir,
+        workspace_dir=workspace_dir,
+    )
 
     info: dict[str, Any] = {
         "task_type": task_type,
         "material": material,
         "data_dir": str(data_dir),
+        "workspace_dir": str(workspace_dir),
         "gpu": gpu_id,
         "status": "unknown",
         "total_turns": 0,
@@ -172,6 +233,11 @@ async def run_single_task(
 
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_file = open(log_path, "w", encoding="utf-8")
+    # 结构化轨迹与交互模式落在同一位置（工作区内 log.jsonl），使 extract_trajectory.py
+    # 和自蒸馏流程对批量运行同样可用。
+    from src.event_log import EventLogWriter
+
+    event_log = EventLogWriter.open_for_workspace(workspace_dir)
 
     try:
         async with ClaudeSDKClient(options=options) as client:
@@ -183,6 +249,7 @@ async def run_single_task(
                 log_file.write(f"\n{'='*60}\n=== Round {rnd}  prompt={'(initial)' if rnd == 0 else '(continue)'}\n{'='*60}\n")
                 if rnd == 0:
                     log_file.write(prompt + "\n\n")
+                event_log.append_user_turn(prompt)
                 log_file.write(
                     "\n--- 等待 LLM 响应（若长时间无下文，请检查 ANTHROPIC_BASE_URL 是否与 LiteLLM 端口一致）---\n"
                 )
@@ -196,6 +263,7 @@ async def run_single_task(
                 async for msg in client.receive_response():
                     log_file.write(repr(msg) + "\n")
                     log_file.flush()
+                    event_log.append_sdk_message(msg)
 
                     if isinstance(msg, AssistantMessage):
                         for block in msg.content:
@@ -248,9 +316,20 @@ async def run_single_task(
         log_file.write(f"\nEXCEPTION: {exc}\n")
     finally:
         log_file.close()
+        event_log.close()
 
     if info["status"] == "unknown":
         info["status"] = "completed"
+
+    # 无人值守模式下无法走「起网页编辑器等用户点确认」的蒸馏流程，改为把压缩后的
+    # 轨迹摘要落到候选池，供事后批量审阅。这里只产出素材，不写 .claude/skills/。
+    try:
+        info["trajectory_digest"] = str(
+            write_trajectory_digest(workspace_dir, task_type=task_type, material=material, info=info)
+        )
+    except Exception as exc:  # 摘要失败不应影响任务本身的结果
+        info["trajectory_digest"] = f"failed: {exc}"
+
     return info
 
 
@@ -279,13 +358,22 @@ def _worker_entry(
 
         task_type, material, data_dir = task
         label = f"{task_type}/{material}"
+        workspace_dir = RUNS_ROOT / task_type / material
         log_path = log_root / f"gpu{gpu_id}" / f"{task_type}_{material}.txt"
 
         print(f"[{tag}] ▶ {label}", flush=True)
         t0 = time.monotonic()
 
         info = asyncio.run(
-            run_single_task(task_type, material, data_dir, log_path, gpu_id, max_continuations)
+            run_single_task(
+                task_type,
+                material,
+                data_dir,
+                workspace_dir,
+                log_path,
+                gpu_id,
+                max_continuations,
+            )
         )
         elapsed = time.monotonic() - t0
         info["elapsed_sec"] = round(elapsed, 1)
@@ -334,6 +422,7 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="示例:\n"
                "  python batch_runner.py --gpus 0,1,2,3\n"
+               "  python batch_runner.py --data-root data/datasets --dry-run\n"
                "  python batch_runner.py --api-base http://127.0.0.1:43336   # 与 LiteLLM 实际端口一致\n"
                "  python batch_runner.py --gpus 0 --tasks relax --materials Al AlN\n"
                "  python batch_runner.py --dry-run\n",
@@ -383,12 +472,16 @@ def main():
     if args.api_base:
         os.environ["ANTHROPIC_BASE_URL"] = args.api_base.rstrip("/")
 
+    data_root = args.data_root
+    if not data_root.is_absolute():
+        data_root = (SCRIPT_DIR / data_root).resolve()
+
     gpu_list = [g.strip() for g in args.gpus.split(",") if g.strip()]
     if not gpu_list:
         print("错误：未指定任何 GPU", file=sys.stderr)
         sys.exit(1)
 
-    all_tasks = discover_tasks(args.data_root, args.tasks, args.materials)
+    all_tasks = discover_tasks(data_root, args.tasks, args.materials)
     if not all_tasks:
         print("未发现任何符合条件的任务", file=sys.stderr)
         sys.exit(1)
