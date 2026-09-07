@@ -25,12 +25,13 @@ research-literature/
 ## 可用工具（与当前 Agent MCP 一致）
 
 - `arxiv_search`：开放获取预印本，标题/摘要/PDF 链接
-- `google_search`：网页与学术线索
+- `semanticscholar_search`：跨出版商学术检索，覆盖 arXiv 上没有的期刊论文；在 **arXiv 结果不足**时补充
 - `duckduckgo_search`：通用网页检索
+- `google_search`：网页与学术线索；**走第三方 API 配额，可能因余额耗尽或密钥失效而返回错误**
 - `visit_webpage`：打开 URL 抽取正文（用于摘要页、期刊页、数据表）
 - `Write` / `Edit`：将整理后的块写入工作区文件（如 `INCAR_explanation.md`、`HSE_INCAR_explanation.md`、`Convergence_Report.md` 附录等）
 
-若运行环境后续增加 `semanticscholar_search`，可在 **arXiv 结果不足**时作为补充，仍须遵守下文「查询词」原则。
+以上检索工具**都**须遵守下文「查询词」原则。
 
 ---
 
@@ -54,7 +55,9 @@ research-literature/
 
 1. **`arxiv_search`**：用 `query_guide.md` 中的推荐句式发 **1～3 次**查询；优先读摘要中与目标相关的句子，记录 **论文标识**（arXiv id / 标题 / 年份）。
 2. 若摘要信息不足：对选中的条目用 **`visit_webpage`** 打开 PDF 页面或期刊页面（若有），抓取**数值与条件**（温度、实验方法、计算泛函）。
-3. **`google_search` 或 `duckduckgo_search`**：用于补实验手册、数据库页面、综述（例如「材料名 + experimental lattice constant」），仍应用**简短查询词**，避免一整句英文堆砌。
+3. **`semanticscholar_search`**：arXiv 没覆盖到目标时补一轮——老论文、实验测量、期刊专刊多半不在 arXiv 上。
+4. **`duckduckgo_search`（首选）或 `google_search`**：用于补实验手册、数据库页面、综述（例如「材料名 + experimental lattice constant」），仍应用**简短查询词**，避免一整句英文堆砌。
+   两者在本 skill 里用途等价。`google_search` 依赖外部 API 配额，失效时会直接返回错误文本；**遇到报错就换 `duckduckgo_search` 继续，不要重试同一个工具**——网页检索不因单个后端不可用而中断，更不要因此跳过这一步。
 
 ### 4. 输出格式（回复用户或写入文件时采用）
 

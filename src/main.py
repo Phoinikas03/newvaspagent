@@ -51,11 +51,14 @@ from src.scheduler import (
     load_structured_resume_session_id,
 )
 from src.scheduler.state_store import load_session_state
-from src.litellm_proxy import (
-    configure_anthropic_for_litellm,
-    direct_model_from_upstream,
-    maybe_prefer_direct_upstream,
-    maybe_start_litellm,
+from src.litellm_proxy import resolve_llm_endpoint
+from src.skill_hooks import (
+    SKILL_COVERAGE_FILENAME,
+    build_consolidation_prompt,
+    describe_coverage,
+    format_skill_catalog,
+    load_skill_catalog,
+    write_trajectory_digest,
 )
 
 load_dotenv(REPO_ROOT / ".env")
@@ -208,6 +211,10 @@ def build_options(
     persist_context: str | None = None,
 ) -> ClaudeAgentOptions:
     repo_root = str(RUNS_ROOT.parent.resolve())
+    # 入口 E1：会话初始化只交给模型 skill 的名字，没有 description，无从判断覆盖度。
+    # 这里把 frontmatter 扫出来拼进 system prompt，让「核查有没有 skill 覆盖」有据可依。
+    skill_catalog = format_skill_catalog(load_skill_catalog(repo_root))
+    coverage_file = SKILL_COVERAGE_FILENAME
     persist_block = ""
     if persist_context and persist_context.strip():
         persist_block = f"""
@@ -244,11 +251,8 @@ The following was saved by VASP Agent to `{PERSIST_FILENAME}` under this workspa
         except OSError:
             pass
 
-    model_name = (
-        os.environ.get("CLAUDE_CODE_MODEL")
-        or direct_model_from_upstream(os.environ.get("UPSTREAM_MODEL", ""))
-        or None
-    )
+    # 模型名由 resolve_llm_endpoint 统一确定并写入环境，这里不再自行解析上游变量。
+    model_name = os.environ.get("CLAUDE_CODE_MODEL") or None
 
     return _make_agent_options(
         cwd=workspace,
@@ -268,6 +272,25 @@ SKILL & `.claude` PATH RULE (mandatory):
 - Any Bash that loads or runs skill assets (Python scripts under `.claude/skills/`, `vasp_runner.py`, `probe_env.py`, `quick_test.py`, sourcing templates, etc.) MUST start by changing directory to the repository root: prefix with `cd "{repo_root}" && ...`, **or** use absolute paths beginning with `{repo_root}/`.
 - Do **not** assume `.claude` exists under the session workspace.
 
+SKILL LIBRARY: the session's skill list gives names only. These are the project skills and what each one is for — use this table, not the bare names, to decide what applies:
+{skill_catalog}
+
+SKILL COVERAGE CHECK (mandatory, once per task, before your first heavy action). Two separate obligations — doing the first does not discharge the second:
+
+**(a) Load** every skill above that applies, by calling the `Skill` tool. Naming a skill, reading its SKILL.md with Bash, or running a script out of its directory is **not** loading it and does not give you its instructions.
+
+**(b) Record** the verdict by writing `{coverage_file}` in the workspace:
+`{{"task_type": "<short slug>", "workflow_skill": "<name or null>", "component_skills": ["<name>", ...], "reason": "<one line>"}}`
+- `workflow_skill`: the ONE skill that covers this **class of task end to end**, or `null` if no skill does. Judge the task as a whole: a task whose pieces are each covered by a helper skill, with no skill describing the overall procedure, has `workflow_skill: null`. `null` is a meaningful and common answer, not a failure — it is exactly the signal that a new skill may be worth creating.
+- `component_skills`: the skills you actually loaded in (a) because they cover a part of the task.
+Write it once; update it if you later load a skill you had not listed.
+
+MANDATORY SKILL LOADS (these override your own judgement about whether you need help):
+- Before any Bash that runs `mpirun`, `vasp_std`, `vasp_gpu`, `vasp_runner.py`, `quick_test.py`, or submits to Slurm/PBS: you MUST have loaded **`Skill: run-vasp`** in this session.
+- Before writing or editing an **INCAR**: **`Skill: incar-builder`**.
+- Before fetching or constructing a **POSCAR**: **`Skill: structure-builder`**.
+Running a skill's scripts by path is **not** a substitute for loading the skill — the scripts carry no instructions, and the constraints you need (hardware alignment, parameter tables, provenance rules) live only in the SKILL.md.
+
 VASP FILE PROVENANCE (mandatory): You MUST NOT use Write, Edit, or Bash/heredocs to manually author the full contents of **POSCAR**, **POTCAR**, or **KPOINTS**. Obtain and construct crystal structures through **`Skill: structure`** and its scripts (for example `.claude/skills/structure/scripts/fetch_mp_poscar.py`, `build_surface.py`, or `build_adsorption.py`), or through explicitly documented external retrieval procedures—not by typing lattice vectors and coordinates from memory. Generate **POTCAR** (and the POSCAR copy used with them in the workspace) **only** via **`setup_vasp_inputs`**. If the user explicitly requests a POTCAR variant, pass it through `setup_vasp_inputs` using `potcar_overrides` as a JSON object such as `{{"Cr": "Cr_pv"}}`; do not generate, edit, concatenate, or copy POTCAR manually with Bash/Python as a fallback. For workflows that need one directory per case (adsorption stages, EOS volume points, per-configuration scans), pass `work_dir` (a path relative to the workspace, e.g. `configs/ontop_upright`) to `setup_vasp_inputs` and call it once per directory — this replaces any hand-written POTCAR generation. Prefer **KSPACING** (and optionally **KGAMMA**) in **INCAR** so **`setup_vasp_inputs`** does not create a **KPOINTS** file; only when **KSPACING** is absent does the tool write **KPOINTS** from density. You MAY create or adjust **INCAR** by copying skill templates and changing parameters (ENCUT, ISMEAR, KSPACING, etc.).
 
 CRITICAL INTERACTION RULE: You MUST NOT call or attempt to use the `AskUserQuestion` tool. Instead, whenever you finish a major workflow step, encounter an error, or need permission to proceed to a computationally expensive task (like running VASP), you MUST output a plain text block. In this text block, clearly summarize what you have achieved so far, and explicitly ask the user for confirmation to proceed to the next step. NEVER terminate your turn silently without reporting your status.
@@ -286,6 +309,9 @@ You are STRICTLY FORBIDDEN from ending a conversation turn silently.
 1. The LAST THING the user sees in your turn MUST ALWAYS be ordinary human-readable text (Chinese or English prose; Markdown allowed).
 2. If your last action was a tool call (especially if the tool returned an ERROR, 'Exit code 1', or empty output), you MUST explicitly generate a text block analyzing the result or explaining the failure before waiting for the user.
 3. Never end a turn with only tool calls, empty text, placeholder or control tokens (e.g. strings like "<ctrl46>" or similar), or meaningless repeated characters. If you are stuck, explicitly say (in the user's language when appropriate): "我遇到了问题，需要您的帮助..." and describe the roadblock.
+4. When a turn delivers a **final result** (not intermediate progress), its closing text MUST end with exactly one line in this form:
+   `[沉淀] 需要 — <一句话理由>`  或  `[沉淀] 不需要 — <一句话理由>`
+   Judge it against the SKILL LIBRARY above: needed when this class of task will recur **and** no skill covered it, or when a skill you did load proved incomplete. This is a declaration, not the work itself — do not start editing skills because of it.
 
 MARKDOWN & WEB UI (strikethrough / `~~`):
 User-visible replies are rendered as Markdown (GFM). A pair of `~~` starts GitHub-Flavored-Markdown **strikethrough**, which is often triggered by accident in paths or ranges (e.g. `e_300~~e_500`). In normal prose, **do not** type two tildes in a row. For ranges or "A to B", use an en dash (–), a hyphen (-), the word "to", Chinese 「至／到」, or a **single** `~` if needed—**not** `~~`.
@@ -294,6 +320,7 @@ SKILL CONSOLIDATION (self-evolution): Once a task is **fully complete** and prod
 - **A SKILL was used and could be improved** (unclear steps, missing edge cases, errors you had to recover from): update that skill via its path B.
 - **No existing skill covered the task** and you completed it by combining other skills, consulting literature, or working it out yourself: distil the trajectory into a **new** skill via its path C. This is the case that matters most for self-evolution, and it is the one most easily missed — the absence of a matching skill is precisely the signal that one is needed.
 Apply judgement before consolidating: only do this when that class of task will recur. Do not create a skill for a one-off request; that pollutes the library. The full trajectory is in `<workspace>/log.jsonl` — do **not** read it directly, compress it first with `.claude/skills/simple-skill-creator/scripts/extract_trajectory.py`. Always present the result to the user for confirmation; never write into `.claude/skills/` without review.
+You do not have to remember to do this at the right moment: when the session ends, the trajectory is compressed automatically and you are handed the digest together with the `{coverage_file}` verdict, which decides path B vs path C. Your obligation during the task is the SKILL COVERAGE CHECK above — record what covered the task (or that nothing did), and the exit flow will pick it up.
 
 BASH ENVIRONMENT PROBES — NO "FAIL-FAST" CHAINS (CRITICAL):
 Fragile probes that exit non-zero on the first missing binary cause Bash tools to return ERROR. In parallel tool rounds, that can trigger **Sibling tool call errored** for other tools (e.g. Skill) in the same assistant message—even though Skill content is fine.
@@ -471,6 +498,85 @@ async def _cli_sdk_receive_loop(
                 await scheduler.submit(pending)
 
 
+#: 少于这么多轮的会话不提示沉淀——通常是启动即退或刚开个头就放弃，没有可提炼的轨迹。
+_MIN_TURNS_FOR_CONSOLIDATION = 2
+
+
+def _capture_trajectory_digest(workspace: str) -> Path | None:
+    """出口 X1：无条件把本次轨迹压进候选池。
+
+    纯脚本、不过 LLM，因此不可能因为模型「忘了」而失败。失败也只警告不抛，
+    退出流程不该被沉淀这件事挡住。
+    """
+    try:
+        digest_path, summary, turns = write_trajectory_digest(workspace, RUNS_ROOT.parent.resolve())
+    except Exception as exc:  # 捕获轨迹失败不应阻断退出
+        print(f"[沉淀] 轨迹压缩失败，跳过：{exc}\n", flush=True)
+        return None
+    print(f"[沉淀] 轨迹已存档：{digest_path}（{summary}）", flush=True)
+    # 空会话（启动即退、或刚开个头就放弃）没有可沉淀的东西，别拿这个去烦用户。
+    return digest_path if turns >= _MIN_TURNS_FOR_CONSOLIDATION else None
+
+
+async def _offer_consolidation(workspace: str, digest_path: Path) -> str | None:
+    """出口 X2：读入口的覆盖度判定，问用户走哪条路。
+
+    返回投给 agent 的沉淀指令；用户跳过则返回 None。判定优先取
+    `.skill_coverage.json`，缺失时回退到日志里实际的 `Skill` 调用记录——
+    后者是硬事实，不依赖模型有没有照做。
+    """
+    covered_by, coverage, explanation = describe_coverage(workspace)
+    print(f"[沉淀] {explanation}", flush=True)
+    try:
+        answer = await _async_input("[沉淀] 现在让 agent 沉淀吗？(y = 是 / 回车 = 跳过并退出) ")
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return None
+    if answer.strip().lower() not in ("y", "yes", "是"):
+        print("[沉淀] 已跳过。digest 留在候选池，之后仍可随时沉淀。\n", flush=True)
+        return None
+    return build_consolidation_prompt(
+        digest_path=digest_path,
+        covered_by=covered_by,
+        coverage=coverage,
+        repo_root=RUNS_ROOT.parent.resolve(),
+    )
+
+
+def _report_consolidation_candidate(workspace: str) -> None:
+    """存档 digest 并打印沉淀判定，但**不**发起沉淀。
+
+    用于拿不到用户即时确认的退出路径（web 模式关闭、CLI 里 Ctrl-C）。这些场合下
+    静默退出会让整条轨迹的价值随会话消失，而用户往往并不知道 digest 可以事后使用。
+    """
+    digest_path = _capture_trajectory_digest(workspace)
+    if digest_path is None:
+        return
+    _, _, explanation = describe_coverage(workspace)
+    print(f"[沉淀] {explanation}", flush=True)
+    print(
+        "[沉淀] 本次未做沉淀。之后可用 `python main.py --mode cli --dir "
+        f"{Path(workspace).name}` 进入该工作区，输入 quit 走沉淀流程。\n",
+        flush=True,
+    )
+
+
+async def _run_consolidation_session(workspace: str, prompt: str, log_file) -> None:
+    """在**全新会话**里做沉淀，而不是复用刚跑完任务的那个。
+
+    退出时老会话的上下文已经被整个任务塞满——实测一次声子任务结束时 input 已达
+    415k token，而模型窗口只有 200k，再投任何实质工作都会被上游直接拒掉
+    （`400 malformed JSON body`）。沉淀需要的只是轨迹 digest，不需要任务历史，
+    所以另开一个干净会话，输入仅有 digest 路径和沉淀指令。
+    """
+    options = build_options(workspace, resume=None, persist_context=None)
+    async with ClaudeSDKClient(options=options) as fresh:
+        await fresh.query(prompt)
+        async for msg in fresh.receive_response():
+            _append_sdk_log_line(log_file, msg)
+            _dispatch_message_to_cli(msg)
+
+
 async def cli_agent_loop(
     client: ClaudeSDKClient,
     log_file,
@@ -481,15 +587,38 @@ async def cli_agent_loop(
     drain = asyncio.create_task(
         _cli_sdk_receive_loop(client, log_file, workspace, persist_state, scheduler)
     )
+    consolidation_offered = False
     try:
         while True:
             try:
                 user_input = await _async_input("You> ")
             except (EOFError, KeyboardInterrupt):
+                # Ctrl-C 是「立刻放我出去」，不该弹确认；但也不该静默——存档并告诉
+                # 用户 digest 在哪、之后怎么捡回来。
                 print()
+                if not consolidation_offered:
+                    _report_consolidation_candidate(workspace)
                 break
 
-            if user_input.strip().lower() in ("quit", "exit", "q"):
+            command = user_input.strip().lower()
+            if command in ("quit!", "exit!", "q!"):
+                _report_consolidation_candidate(workspace)
+                break
+            if command in ("quit", "exit", "q"):
+                # X1：先无条件捕获轨迹。沉淀可以推迟，轨迹丢了就没了。
+                digest_path = _capture_trajectory_digest(workspace)
+                if consolidation_offered or digest_path is None:
+                    break
+                consolidation_offered = True
+                prompt = await _offer_consolidation(workspace, digest_path)
+                if prompt is None:
+                    break
+                print("[沉淀] 另开一个干净会话执行（当前会话上下文已被本次任务占满）...\n", flush=True)
+                write_user_turn_log(log_file, prompt)
+                try:
+                    await _run_consolidation_session(workspace, prompt, log_file)
+                except Exception as exc:
+                    print(f"\n[沉淀] 会话失败：{exc}\n候选 digest 仍在 {digest_path}，可稍后重试。", flush=True)
                 break
             if not user_input.strip():
                 continue
@@ -1140,6 +1269,11 @@ class WorkspaceRuntimeManager:
         await self.open_runtime(self.active_session_id)
 
     async def close(self) -> None:
+        # 出口 X1：web 模式没有 stdin，做不了「确认后立即沉淀」的交互，但**存档必须
+        # 照做**——沉淀可以推迟，轨迹丢了就没了。这里为本次托管过的每个工作区各落一份
+        # digest 并打印判定，用户之后起一个 CLI 会话即可完成沉淀。
+        for runtime in list(self.runtimes.values()):
+            _report_consolidation_candidate(str(runtime.workspace))
         for runtime in list(self.runtimes.values()):
             await runtime.close()
         self.index.close()
@@ -1450,18 +1584,25 @@ def parse_args() -> argparse.Namespace:
         help=f"网页端口（仅 web 模式，默认 {WEB_PORT}）",
     )
     parser.add_argument(
-        "--base-url",
+        "--api-base",
         type=str,
         default=None,
         metavar="URL",
-        help="LiteLLM（或其它 Anthropic 兼容服务）的 base URL；默认读 .env 中 BASE_URL（或 ANTHROPIC_BASE_URL），缺省为 http://127.0.0.1:4000",
+        help="上游 API 地址；默认读 .env 的 LLM_API_BASE（兼容 UPSTREAM_API_BASE）",
     )
     parser.add_argument(
         "--api-key",
         type=str,
         default=None,
         metavar="KEY",
-        help="转发用的 API Key；默认读 .env 中 API_KEY（或 ANTHROPIC_API_KEY），可与 litellm 配置的 sk- 一致",
+        help="上游 API Key；默认读 .env 的 LLM_API_KEY（兼容 UPSTREAM_API_KEY）",
+    )
+    parser.add_argument(
+        "--model",
+        type=str,
+        default=None,
+        metavar="NAME",
+        help="模型名；默认读 .env 的 LLM_MODEL（兼容 UPSTREAM_MODEL）",
     )
     parser.add_argument(
         "--no-resume",
@@ -1474,23 +1615,22 @@ def parse_args() -> argparse.Namespace:
         help="不从 conversation_turns.jsonl 注入历史到 system prompt（仍会继续写入该文件）",
     )
     parser.add_argument(
-        "--no-litellm-autostart",
+        "--force-litellm",
         action="store_true",
-        help="不在本机端口未监听时自动 subprocess 启动 LiteLLM（需已手动启动代理）",
+        help="跳过直连探测，强制经进程内协议桥转换（上游探测误判时使用）",
     )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    applied_url, _ = configure_anthropic_for_litellm(
-        base_url=args.base_url,
+    endpoint = resolve_llm_endpoint(
+        api_base=args.api_base,
         api_key=args.api_key,
+        model=args.model,
+        force_litellm=args.force_litellm,
     )
-    applied_url, _ = maybe_prefer_direct_upstream(applied_url)
-    maybe_start_litellm(applied_url, disable=args.no_litellm_autostart)
-    final_llm_url = (os.environ.get("ANTHROPIC_BASE_URL") or applied_url).strip().rstrip("/")
-    print(f"[llm] ANTHROPIC_BASE_URL={final_llm_url}", flush=True)
+    print(f"[llm] {endpoint.describe()}", flush=True)
     try:
         ws_path, resume = resolve_workspace(args.dir)
     except ValueError as e:

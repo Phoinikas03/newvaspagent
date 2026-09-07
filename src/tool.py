@@ -320,12 +320,28 @@ def _google_search_sync(query: str, provider: str, api_key: str) -> dict:
     if provider == "serpapi":
         base_url = "https://serpapi.com/search.json"
         params = {"q": query, "api_key": api_key, "engine": "google", "google_domain": "google.com"}
+        response = requests.get(base_url, params=params, timeout=15)
     else:
+        # serper.dev 要求 POST + X-API-KEY 头。key 放 URL query 会被 requests 的
+        # 异常消息原样带出，再经 _err() 写进 log.jsonl 和轨迹 digest——密钥会一路
+        # 泄漏到 skill 沉淀的输入里。放进 header 就不会出现在异常里的 URL 中。
         base_url = "https://google.serper.dev/search"
-        params = {"q": query, "api_key": api_key}
-    response = requests.get(base_url, params=params, timeout=15)
+        response = requests.post(
+            base_url,
+            headers={"X-API-KEY": api_key, "Content-Type": "application/json"},
+            json={"q": query},
+            timeout=15,
+        )
     response.raise_for_status()
     return response.json()
+
+
+def _redact(text: str, *secrets: str) -> str:
+    """从对外文本里抹掉密钥。异常消息可能带 URL、header 或 body 里的 key。"""
+    for secret in secrets:
+        if secret and len(secret) >= 8:
+            text = text.replace(secret, f"{secret[:4]}…[已隐去]")
+    return text
 
 async def google_search_impl(query: str, provider: str = "serper") -> Dict[str, Any]:
     api_key = os.getenv(f"{provider.upper()}_API_KEY")
@@ -345,7 +361,7 @@ async def google_search_impl(query: str, provider: str = "serper") -> Dict[str, 
         final_text = "## Search Results\n\n" + "\n\n".join(web_snippets)
         return _ok(final_text)
     except Exception as e:
-        return _err(f"Error: {str(e)}")
+        return _err(f"Error: {_redact(str(e), api_key)}")
 
 # ==========================================
 # 网页浏览工具

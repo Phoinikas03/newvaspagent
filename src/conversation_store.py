@@ -12,8 +12,15 @@ from pathlib import Path
 from typing import Any
 
 PERSIST_FILENAME = "conversation_turns.jsonl"
-# 注入 system prompt 时的上限（字符），从文件尾部向前截断
-MAX_INJECT_CHARS = 120_000
+# 注入 system prompt 时的上限，从文件尾部向前截断。
+#
+# 必须按**字节**算，不能按字符：system prompt 是作为单个命令行参数传给 Claude Code
+# CLI 的，Linux 对单参数有 MAX_ARG_STRLEN = 32 * PAGE_SIZE = 131072 字节的硬上限。
+# 中文在 UTF-8 下 3 字节/字，此前按 120000 *字符* 截断，最坏情况就是 360 KB，
+# 远超上限——恢复任何带中文历史的长会话都会在启动时 execve 失败（`[Errno 7]
+# Argument list too long`），且报错发生在 SDK 内部，很难看出根因。
+# 这里留足余量：基础 system prompt 约 28 KB，注入再占 64 KB，合计仍在上限内。
+MAX_INJECT_BYTES = 64_000
 
 
 def persist_path(workspace: Path | str) -> Path:
@@ -112,8 +119,11 @@ def load_persist_context_for_prompt(workspace: Path | str) -> str | None:
     if not blocks:
         return None
     out = "\n\n".join(blocks)
-    if len(out) > MAX_INJECT_CHARS:
-        out = out[-MAX_INJECT_CHARS:]
+    encoded = out.encode("utf-8")
+    if len(encoded) > MAX_INJECT_BYTES:
+        # 从尾部取，再按 UTF-8 解码；截断点可能落在多字节字符中间，errors="ignore"
+        # 丢掉开头那个残缺字符即可。
+        out = encoded[-MAX_INJECT_BYTES:].decode("utf-8", errors="ignore")
         out = "…[前文已截断]…\n\n" + out
     return out
 
