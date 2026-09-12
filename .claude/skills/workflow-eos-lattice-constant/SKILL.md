@@ -63,15 +63,18 @@ workflow-eos-lattice-constant/
 
 ---
 
-### 2. 截断能与 K 点收敛（前置：独立 Skill + 用户确认）
+### 2. 截断能与 K 点收敛（前置：独立 Skill，默认执行）
 
-**不在本文件中展开细则。** 在载入 **`workflow-convergence`** 之前：
+**不在本文件中展开细则。**
 
-1. **询问用户**是否要进行 **ENCUT/KSPACING 收敛测试**（多步静态计算、机时成本；EOS 精度通常依赖合理 **ENCUT/K**），**停止并等待回复**。**禁止**在未获用户同意时自动开始收敛或假定执行。
-2. 若用户**同意**，再载入并执行 **`Skill: workflow-convergence`**（该 skill 内含执行前的用户确认），完成：
-   - 静态单点（`NSW=0`）下的 **ENCUT** 与 **`KSPACING`** 扫描；
-   - **`Convergence_Report.md`**（含选定 **ENCUT**、**KSPACING** 与能量表）。
-3. 若用户**拒绝**或工作区已有可信 **`Convergence_Report.md`**：可**询问**是否**复用**现有报告；否则将用户**指定**或模板中的 **ENCUT/KSPACING** 用于下文，并在说明中注明**未做**或**未重做**系统收敛。
+1. **默认执行** **`Skill: workflow-convergence`**，完成静态单点（`NSW=0`）下的 **ENCUT** 与
+   **`KSPACING`** 扫描，产出 **`Convergence_Report.md`**（含选定 **ENCUT**、**KSPACING** 与能量表）。
+   **不要**为询问是否执行而停下等待回复。
+2. **仅**在用户**明确要求跳过**、或工作区已有**可信且适用**的 `Convergence_Report.md` 时省略；
+   两种情形都按 `workflow-convergence` §0 第 3 条留下记录。
+3. 「计算方案与参数由你自行决定」这类任务描述**不是**跳过收敛测试的理由——它恰恰要求由
+   收敛测试来定这些参数。凭经验直接取一个「稳妥值」（如 ENCUT=520）而不做扫描，属于
+   **未完成本工作流**。
 
 将最终采用的 **ENCUT**、**KSPACING** 填入 **`templates/INCAR_static`** 及所有 **`scale_*`** 子目录的 **INCAR**。
 
