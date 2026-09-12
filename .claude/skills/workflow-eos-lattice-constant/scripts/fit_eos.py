@@ -53,8 +53,9 @@ def extract_data_from_outcar(outcar_path):
         if volume is None and "volume of cell :" in line:
             # 解析例如: " volume of cell :      34.1234 "
             volume = float(line.split(":")[1].strip())
-        if energy is None and "free  energy   TOTEN  =" in line:
+        if energy is None and "free  energy" in line and "TOTEN" in line:
             # 解析例如: "  free  energy   TOTEN  =       -24.123456 eV"
+            # (不同 VASP 版本在 "energy" 后的空格数可能不同，因此用子串匹配而非固定空格数)
             energy = float(line.split("=")[1].split("eV")[0].strip())
             
         if volume is not None and energy is not None:
