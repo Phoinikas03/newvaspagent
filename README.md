@@ -35,9 +35,18 @@ pip install -r requirements.txt
    | `MP_API` | Materials Project API Key（`mp-api`） |
    | `SERPER_API_KEY` | Serper 网页搜索 API（若启用对应搜索工具，不填会回退到DuckDuckGo搜索） |
    | `PMG_VASP_PSP_DIR` | VASP POTCAR 所在目录（pymatgen 生成输入等） |
-   | `UPSTREAM_MODEL` | 上游大模型标识（如经 LiteLLM 使用的 `provider/model`） |
-   | `UPSTREAM_API_BASE` | 上游 API 根地址，例如`https://host/v1` |
-   | `UPSTREAM_API_KEY` | 上游 API Key |
+   | `LLM_API_BASE` | 上游 API 根地址，例如 `https://host/v1` |
+   | `LLM_API_KEY` | 上游 API Key |
+   | `LLM_MODEL` | 模型名，写上游认的**裸名**（如 `glm-5`），不要加 `anthropic/` 等 provider 前缀 |
+
+   上游只需这一组。启动时会自动探测它是否支持 Anthropic `/v1/messages`：支持就让
+   Claude Agent SDK 直连，不支持则在 agent 进程内拉起一个协议桥
+   （`litellm.anthropic_messages()`）做转换，不落配置文件、不起独立服务。
+   探测误判时可加 `--force-litellm` 强制走协议桥。
+
+   旧变量名 `UPSTREAM_MODEL` / `UPSTREAM_API_BASE` / `UPSTREAM_API_KEY` 仍作兼容回退，
+   新配置请用上表的名字。`ANTHROPIC_BASE_URL` / `ANTHROPIC_API_KEY` 由程序自动写入，
+   **不需要**你在 `.env` 里设置。
 
 3. 保存 `.env` 后，**无需**提交到 Git（仓库已忽略 `.env`）；团队共享请只提交 `.env.example`。
 
@@ -77,7 +86,7 @@ python main.py --mode web --dir my_run_20260418
    - **Shift + Enter**：换行（不发送）
 4. 也可点击 **「发送」** 提交。上方区域会依次显示用户消息、助手回复以及工具调用等过程；状态栏会反映是否在处理中。
 
-若页面无法打开，请确认本机防火墙未拦截该端口，且启动命令未报错（例如上游 API、LiteLLM 未就绪等）。
+若页面无法打开，请确认本机防火墙未拦截该端口，且启动命令未报错（例如上游 API 不可达、Key 失效等）。
 
 ## 命令行模式（可选）
 

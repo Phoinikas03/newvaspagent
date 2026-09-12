@@ -401,6 +401,7 @@ __pycache__/
 .env
 .venv/
 venv/
+.litellm_autostart/
 litellm_autostart_config.yaml
 litellm_autostart.log
 

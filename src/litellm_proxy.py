@@ -1,156 +1,71 @@
+"""LLM 接入：把 Claude Agent SDK 连到用户给的上游，必要时在进程内翻译协议。
+
+用户只需给**一组**凭据（base URL + API key + 模型名）。之后是全自动的三步：
+
+1. **探测** —— 拿这组凭据去打上游的 Anthropic ``/v1/messages``。
+   401/403 单独归类：那是 key 的问题，不是协议的问题，会直接报错而不是退化去起桥。
+2. **能直连就直连** —— SDK 直接指向上游，不启任何代理。
+3. **不能就在进程内翻译** —— 上游只认 OpenAI ``/v1/chat/completions`` 时，起一个
+   只监听回环、端口由系统分配的极薄 HTTP 端点，内部调 ``litellm.anthropic_messages()``
+   做转换。它随 agent 进程生死，同进程所有会话共用，不落任何配置文件。
+
+配置（``.env`` 或命令行），按优先级：
+
+- 命令行 ``--api-base`` / ``--api-key`` / ``--model``
+- ``LLM_API_BASE`` / ``LLM_API_KEY`` / ``LLM_MODEL``
+- 兼容旧名 ``UPSTREAM_API_BASE`` / ``UPSTREAM_API_KEY`` / ``UPSTREAM_MODEL``
+
+``ANTHROPIC_BASE_URL`` / ``ANTHROPIC_API_KEY`` 由本模块**输出**给 SDK，
+不需要用户设置。
 """
-本仓库内 **LiteLLM 相关逻辑**（原 ``litellm_env.py`` 与本代理合并）：
 
-1. **``configure_anthropic_for_litellm``**（当前进程）  
-   设置 ``ANTHROPIC_BASE_URL`` / ``ANTHROPIC_API_KEY``，使 Claude Agent SDK 把请求发到本机 LiteLLM
-  （或任意 Anthropic 兼容 URL）。读 ``BASE_URL`` / ``API_KEY`` 或 ``--base-url`` / ``--api-key``；
-   并合并 ``NO_PROXY``，避免本机地址被系统代理劫持。
-
-2. **``maybe_start_litellm``**（按需子进程）  
-   当 ``BASE_URL`` 指向本机、且配置了 ``UPSTREAM_*`` 时，从 **4000** 起寻找第一个空闲端口，
-   更新 ``ANTHROPIC_BASE_URL`` 为该端口，写 ``litellm_autostart_config.yaml`` 并拉起 LiteLLM（与已有实例隔离）。
-
-3. **子进程入口**（``__main__``）  
-   启动 LiteLLM 与官方 CLI 一致，并打补丁使 Anthropic ``/v1/messages`` 走 ``/v1/chat/completions``，
-   避免仅支持 Chat Completions 的中转在 ``/v1/responses`` 上失败。
-
-``.env`` 中常见变量：``BASE_URL`` / ``API_KEY``（→ Agent）；``UPSTREAM_MODEL`` / ``UPSTREAM_API_BASE`` / ``UPSTREAM_API_KEY``（→ 上游）。
-``UPSTREAM_API_BASE`` 可写 ``https://host`` 或 ``https://host/v1``；写入 LiteLLM 前会去掉末尾 ``/v1``，避免与 LiteLLM 内置路径拼成 ``/v1/v1/...``。
-仍兼容旧名 ``ANTHROPIC_BASE_URL`` / ``ANTHROPIC_API_KEY``。
-"""
 from __future__ import annotations
 
-import atexit
-from contextlib import suppress
 import importlib.util
 import json
 import os
-import signal
+import queue
+import re
 import socket
-import subprocess
 import sys
-import time
+import threading
+from contextlib import suppress
+from dataclasses import dataclass
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-# 每个进程一套文件名。共用固定文件名时，两个 agent 同时启动会互相覆盖 config，
-# 后写的 model 会被先启动的子进程读到——**A 的对话就发到了 B 的上游模型**，
-# 而且不会有任何报错。日志同理（"w" 模式直接截断对方的）。
-_AUTOSTART_DIR = REPO_ROOT / ".litellm_autostart"
-CONFIG_PATH = _AUTOSTART_DIR / f"config.{os.getpid()}.yaml"
-LOG_PATH = _AUTOSTART_DIR / f"autostart.{os.getpid()}.log"
+_LOCAL_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", "0.0.0.0", ""})
 
-# 与常见 litellm --port 4000 一致（Agent → 本机 LiteLLM）
-DEFAULT_LITELLM_BASE_URL = "http://127.0.0.1:4000"
-DEFAULT_LITELLM_API_KEY = "sk-dummy-key"
-
-# 自启 LiteLLM 时从该端口起寻找第一个未被占用的端口（4000→4001→…）
-LITELLM_AUTOSTART_PORT_MIN = 4000
-LITELLM_AUTOSTART_PORT_SCAN_MAX = 1000
-
-# 用户已写 ``provider/model`` 且 provider 已知则原样使用；否则按模型 ID 推断：
-# 含 claude → anthropic；含 gemini → gemini；其余 → openai
-_LITELLM_KNOWN_PROVIDER_PREFIXES = frozenset(
+_KNOWN_PROVIDERS = frozenset(
     {
-        "openai",
-        "azure",
-        "anthropic",
-        "vertex_ai",
-        "vertex_ai_beta",
-        "gemini",
-        "bedrock",
-        "ollama",
-        "huggingface",
-        "deepseek",
-        "mistral",
-        "cohere",
-        "openrouter",
-        "databricks",
+        "openai", "azure", "anthropic", "vertex_ai", "vertex_ai_beta", "gemini",
+        "bedrock", "ollama", "huggingface", "deepseek", "mistral", "cohere",
+        "openrouter", "databricks",
     }
 )
 
 
-def _env_url() -> str | None:
-    v = os.environ.get("BASE_URL") or os.environ.get("ANTHROPIC_BASE_URL")
-    return v.strip() if v and str(v).strip() else None
+@dataclass(frozen=True)
+class LLMEndpoint:
+    """解析结果。``base_url`` / ``api_key`` 已同步写入环境供 SDK 使用。"""
+
+    base_url: str
+    api_key: str
+    model: str | None
+    mode: str      # "direct" | "bridge"
+    detail: str
+
+    def describe(self) -> str:
+        label = "直连上游" if self.mode == "direct" else "经进程内协议桥转换"
+        return f"{label}  {self.base_url}  model={self.model or '(默认)'}  [{self.detail}]"
 
 
-def _env_key() -> str | None:
-    v = os.environ.get("API_KEY") or os.environ.get("ANTHROPIC_API_KEY")
-    return v.strip() if v and str(v).strip() else None
-
-
-def _merge_no_proxy_for_url(base_url: str) -> None:
-    host: str | None
-    try:
-        host = urlparse(base_url).hostname
-    except Exception:
-        host = None
-
-    existing = os.environ.get("NO_PROXY") or os.environ.get("no_proxy") or ""
-    parts = [p.strip() for p in existing.split(",") if p.strip()]
-    seen = set(parts)
-    hosts = ["127.0.0.1", "localhost", "0.0.0.0"]
-    if host in {"127.0.0.1", "localhost", "0.0.0.0", "::1"}:
-        hosts.append(host)
-    for h in hosts:
-        if h and h not in seen:
-            seen.add(h)
-            parts.append(h)
-    merged = ",".join(parts)
-    os.environ["NO_PROXY"] = merged
-    os.environ["no_proxy"] = merged
-
-
-def configure_anthropic_for_litellm(
-    base_url: str | None = None,
-    api_key: str | None = None,
-) -> tuple[str, str]:
-    """
-    设置 ``ANTHROPIC_BASE_URL`` / ``ANTHROPIC_API_KEY``，供 claude-agent-sdk 转发到 LiteLLM。
-
-    优先级：命令行参数 > ``BASE_URL`` / ``API_KEY``（或 ``ANTHROPIC_*``）> 下方默认值。
-
-    Returns:
-        实际生效的 ``(base_url, api_key)``（URL 无尾部斜杠）。
-    """
-    raw_url = base_url if (base_url is not None and str(base_url).strip()) else None
-    raw_key = api_key if (api_key is not None and str(api_key).strip()) else None
-
-    url = (raw_url or _env_url() or DEFAULT_LITELLM_BASE_URL).strip().rstrip("/")
-    key = (raw_key or _env_key() or DEFAULT_LITELLM_API_KEY).strip()
-
-    os.environ["ANTHROPIC_BASE_URL"] = url
-    os.environ["ANTHROPIC_API_KEY"] = key
-
-    _merge_no_proxy_for_url(url)
-
-    return url, key
-
-
-_LOCAL_HOSTS = frozenset(
-    {"127.0.0.1", "localhost", "::1", "0.0.0.0", ""}
-)
-
-
-def _default_port_for_scheme(scheme: str) -> int:
-    return 443 if (scheme or "http").lower() == "https" else 80
-
-
-def host_port_from_base_url(base_url: str) -> tuple[str | None, int]:
-    try:
-        u = urlparse(base_url)
-    except Exception:
-        return None, _default_port_for_scheme("http")
-    host = u.hostname
-    port = u.port
-    if port is None:
-        port = _default_port_for_scheme(u.scheme or "http")
-    return host, port
-
+# --------------------------------------------------------------------------
+# 基础工具
+# --------------------------------------------------------------------------
 
 def _is_local_host(host: str | None) -> bool:
     if not host:
@@ -159,7 +74,15 @@ def _is_local_host(host: str | None) -> bool:
     return h in _LOCAL_HOSTS or h.startswith("127.")
 
 
-def port_is_listening(host: str, port: int, timeout: float = 0.35) -> bool:
+def host_port_from_base_url(base_url: str) -> tuple[str | None, int]:
+    try:
+        u = urlparse(base_url)
+    except ValueError:
+        return None, 80
+    return u.hostname, u.port or (443 if (u.scheme or "http") == "https" else 80)
+
+
+def port_is_listening(port: int, host: str = "127.0.0.1", timeout: float = 0.2) -> bool:
     try:
         with socket.create_connection((host, port), timeout=timeout):
             return True
@@ -167,83 +90,28 @@ def port_is_listening(host: str, port: int, timeout: float = 0.35) -> bool:
         return False
 
 
-def first_free_port(
-    host: str,
-    *,
-    start: int = LITELLM_AUTOSTART_PORT_MIN,
-    max_scan: int = LITELLM_AUTOSTART_PORT_SCAN_MAX,
-) -> int | None:
-    """
-    从 ``start`` 起递增，返回第一个 **当前无服务监听** 的端口（本机可 bind）。
-    若连续 ``max_scan`` 个端口均被占用则返回 ``None``。
-    """
-    end = start + max_scan
-    for port in range(start, end):
-        if port_is_listening(host, port, timeout=0.12):
-            continue
-        # 「探测到没人监听」和「LiteLLM 真正 bind 上去」之间有几秒窗口，
-        # 期间另一个进程会挑中同一个端口，后启动的那个 bind 失败静默死掉，
-        # 而 ANTHROPIC_BASE_URL 已经指过去了。用排他创建的锁文件占位。
-        if _claim_port(port):
-            return port
-    return None
+def _merge_no_proxy(base_url: str) -> None:
+    """把本机地址并入 NO_PROXY，避免请求被系统代理劫持。"""
+    with suppress(ValueError):
+        host = urlparse(base_url).hostname
+    parts = [p.strip() for p in (os.environ.get("NO_PROXY") or "").split(",") if p.strip()]
+    for h in ("127.0.0.1", "localhost", "0.0.0.0", host):
+        if h and h not in parts:
+            parts.append(h)
+    merged = ",".join(parts)
+    os.environ["NO_PROXY"] = merged
+    os.environ["no_proxy"] = merged
 
 
-_PORT_CLAIM_DIR = REPO_ROOT / ".litellm_autostart"
-_claimed_ports: list[Path] = []
-
-
-def _claim_port(port: int) -> bool:
-    """用 ``O_CREAT|O_EXCL`` 抢占端口占位文件；陈旧占位（进程已死）自动回收。"""
-    _PORT_CLAIM_DIR.mkdir(parents=True, exist_ok=True)
-    claim = _PORT_CLAIM_DIR / f"port-{port}.claim"
-    try:
-        fd = os.open(claim, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
-    except FileExistsError:
-        try:
-            owner = int(claim.read_text().strip() or "0")
-        except (OSError, ValueError):
-            return False
-        if owner > 0 and Path(f"/proc/{owner}").exists():
-            return False  # 占位仍然有效
-        try:
-            claim.unlink()          # owner 已死，回收后重试
-            return _claim_port(port)
-        except OSError:
-            return False
-    except OSError:
-        return False
-    with os.fdopen(fd, "w") as fh:
-        fh.write(str(os.getpid()))
-    _claimed_ports.append(claim)
-    atexit.register(_release_port_claims)
-    return True
-
-
-def _release_port_claims() -> None:
-    while _claimed_ports:
-        try:
-            _claimed_ports.pop().unlink(missing_ok=True)
-        except OSError:
-            pass
-
-
-def normalize_upstream_api_base_for_litellm(api_base: str) -> str:
-    """
-    LiteLLM 会在 ``api_base`` 后拼接 ``/v1/messages``、``/v1/chat/completions`` 等。
-    若 ``UPSTREAM_API_BASE`` 已以 ``/v1`` 结尾，会变成 ``.../v1/v1/...``，此处去掉末尾的 ``/v1``（可重复去至稳定）。
-    """
+def normalize_api_base(api_base: str) -> str:
+    """去掉末尾的 ``/v1``。LiteLLM 与直连都会自行拼接路径，留着会变成 ``/v1/v1/...``。"""
     u = api_base.strip().rstrip("/")
     while u.lower().endswith("/v1"):
         u = u[:-3].rstrip("/")
     return u
 
 
-def _infer_litellm_provider_from_model_id(model_id: str) -> str:
-    """
-    根据裸模型 ID 推断 LiteLLM 的 provider 前缀（小写比较）。
-    Claude 系 → anthropic；Gemini → gemini；其它 → openai。
-    """
+def _infer_provider(model_id: str) -> str:
     s = model_id.strip().lower()
     if "gemini" in s:
         return "gemini"
@@ -252,359 +120,380 @@ def _infer_litellm_provider_from_model_id(model_id: str) -> str:
     return "openai"
 
 
-def normalize_upstream_model_for_litellm(model: str) -> str:
-    """补全 ``provider/model``：已知前缀保留；否则按模型 ID 推断 anthropic / gemini / openai。"""
+def litellm_model_id(model: str) -> str:
+    """补全 ``provider/model``：已知前缀保留，否则按模型 ID 推断。"""
     m = model.strip()
     if not m:
         return m
     if "/" in m:
         prov, rest = m.split("/", 1)
-        prov_l = prov.strip().lower()
         rest = rest.strip()
         if not rest:
             return m
-        if prov_l in _LITELLM_KNOWN_PROVIDER_PREFIXES:
-            return f"{prov_l}/{rest}"
-        p = _infer_litellm_provider_from_model_id(rest)
-        return f"{p}/{rest}"
-    p = _infer_litellm_provider_from_model_id(m)
-    return f"{p}/{m}"
+        prov_l = prov.strip().lower()
+        return f"{prov_l if prov_l in _KNOWN_PROVIDERS else _infer_provider(rest)}/{rest}"
+    return f"{_infer_provider(m)}/{m}"
 
 
-def direct_model_from_upstream(model: str) -> str:
-    """
-    提取直连 Anthropic 兼容接口时应使用的裸模型名。
-    例如 ``anthropic/glm-5.1`` -> ``glm-5.1``。
+def bare_model_id(model: str) -> str:
+    """去掉 provider 前缀：``anthropic/glm-5`` -> ``glm-5``。直连时 SDK 要裸名。"""
+    m = model.strip()
+    return m.split("/", 1)[1].strip() or m if "/" in m else m
+
+
+#: litellm 各 provider 拼 URL 的方式不同，``api_base`` 该带什么版本段也就不同：
+#: openai/openrouter 只补 ``/chat/completions``，gemini 只补 ``/models/<m>:generateContent``，
+#: 都得由 base 自带版本段；anthropic 会自己补 ``/v1/messages``，base 反而不能带。
+_API_BASE_SUFFIX = {"openai": "/v1", "openrouter": "/v1", "gemini": "/v1beta"}
+
+
+def bridge_model_id(model: str) -> str:
+    """协议桥专用的 litellm 模型 ID。
+
+    走到桥这一步，说明上游刚刚**拒绝**了 Anthropic ``/v1/messages``。此时再按
+    ``claude`` 字样推断出 ``anthropic/`` provider，litellm 就会拿 Anthropic 协议去打
+    一个不认它的网关——必然失败。所以裸名在桥里一律按 OpenAI 兼容处理。
+
+    两个例外：用户显式写了 provider 前缀就照办；``gemini`` 的接口本就不是 OpenAI
+    形状（``/models/<m>:generateContent``），仍走 litellm 的 gemini provider。
     """
     m = model.strip()
-    if not m:
-        return m
-    if "/" not in m:
-        return m
-    _prov, rest = m.split("/", 1)
-    return rest.strip() or m
+    if "/" in m and m.split("/", 1)[0].strip().lower() in _KNOWN_PROVIDERS:
+        return litellm_model_id(m)          # 用户点名了 provider，尊重
+    resolved = litellm_model_id(m)
+    prov, _, rest = resolved.partition("/")
+    return resolved if prov == "gemini" else f"openai/{rest}"
 
 
-def _build_yaml(model: str, api_base: str, api_key: str) -> str:
-    normalized = normalize_upstream_model_for_litellm(model)
-    base = normalize_upstream_api_base_for_litellm(api_base)
-    return (
-        "model_list:\n"
-        '  - model_name: "*"\n'
-        "    litellm_params:\n"
-        f"      model: {json.dumps(normalized)}\n"
-        f"      api_base: {json.dumps(base)}\n"
-        f"      api_key: {json.dumps(api_key)}\n"
-        "      drop_params: true\n"
-    )
+def litellm_api_base(model: str, api_base: str) -> str:
+    """按 provider 把 ``api_base`` 补成 litellm 期望的形态。
 
-
-# 自启 LiteLLM 子进程（``start_new_session=True`` 与父进程脱组，不能依赖「父进程退出内核顺带杀子」）
-_AUTOSTART_LITELLM_PROC: subprocess.Popen | None = None
-_AUTOSTART_CLEANUP_REGISTERED = False
-
-
-def _kill_autostart_litellm_child() -> None:
-    global _AUTOSTART_LITELLM_PROC
-    proc = _AUTOSTART_LITELLM_PROC
-    _AUTOSTART_LITELLM_PROC = None
-    if proc is None or proc.poll() is not None:
-        return
-    proc.terminate()
-    try:
-        proc.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-
-
-def _register_autostart_cleanup(proc: subprocess.Popen) -> None:
-    global _AUTOSTART_LITELLM_PROC, _AUTOSTART_CLEANUP_REGISTERED
-    _AUTOSTART_LITELLM_PROC = proc
-    if _AUTOSTART_CLEANUP_REGISTERED:
-        return
-    _AUTOSTART_CLEANUP_REGISTERED = True
-    atexit.register(_kill_autostart_litellm_child)
-
-    def _on_sigterm(_signum: int, _frame: object) -> None:
-        """systemd/docker 等发 SIGTERM 时，先杀子进程再退出（仅 atexit 时子进程可能仍短暂存活）。"""
-        _kill_autostart_litellm_child()
-        sys.exit(143)
-
-    with suppress(AttributeError, ValueError, OSError):
-        signal.signal(signal.SIGTERM, _on_sigterm)
-
-
-def _litellm_package_available() -> bool:
-    return importlib.util.find_spec("litellm") is not None
-
-
-def run_litellm_proxy_main() -> int:
-    """子进程入口：与 ``litellm --config ... --port ...`` 相同，带 Anthropic 上游补丁。"""
-    os.environ.setdefault(
-        "LITELLM_USE_CHAT_COMPLETIONS_URL_FOR_ANTHROPIC_MESSAGES",
-        "true",
-    )
-    from litellm import run_server
-    import litellm
-    from litellm.llms.anthropic.experimental_pass_through.adapters.handler import (
-        LiteLLMMessagesToCompletionTransformationHandler,
-    )
-
-    _orig = (
-        LiteLLMMessagesToCompletionTransformationHandler._route_openai_thinking_to_responses_api_if_needed
-    )
-
-    def _wrapped(completion_kwargs, *, thinking):
-        if getattr(litellm, "use_chat_completions_url_for_anthropic_messages", False):
-            return
-        return _orig(completion_kwargs, thinking=thinking)
-
-    LiteLLMMessagesToCompletionTransformationHandler._route_openai_thinking_to_responses_api_if_needed = (
-        staticmethod(_wrapped)
-    )
-
-    sys.argv[0] = "litellm"
-    rc = run_server()
-    return int(rc) if rc is not None else 0
-
-
-def maybe_prefer_direct_upstream(base_url: str) -> tuple[str, str]:
+    ``normalize_api_base()`` 去掉的 ``/v1`` 对直连和 anthropic provider 是对的，
+    但 openai provider 少了它就会打到 ``/chat/completions``（网关多半回 405）。
     """
-    若当前仍是本机默认/代理地址，且 ``UPSTREAM_*`` 提供的上游已支持 Anthropic ``/v1/messages``，
-    则优先把 Claude Agent SDK 直连到远端；否则保留原本的本机地址，后续可继续回退到 LiteLLM。
+    base = normalize_api_base(api_base)
+    provider = litellm_model_id(model).split("/", 1)[0]
+    suffix = _API_BASE_SUFFIX.get(provider, "")
+    if suffix and not base.lower().endswith(suffix):
+        base += suffix
+    return base
+
+
+# --------------------------------------------------------------------------
+# 上游协议探测
+# --------------------------------------------------------------------------
+
+def _short_error(text: str, limit: int = 160) -> str:
+    """把网关的错误响应压成一行。有些网关 404 会回整页 HTML，原样带进日志没法看。"""
+    s = re.sub(r"<[^>]+>", " ", text)           # 剥标签，HTML 错误页只剩正文
+    s = " ".join(s.split())
+    return s if len(s) <= limit else s[:limit] + "…"
+
+
+@dataclass(frozen=True)
+class ProbeResult:
+    """Anthropic ``/v1/messages`` 探测结果。
+
+    ``ok`` 与 ``auth_failed`` 必须分开看：401/403 说明**这把 key 没被接受**，
+    跟上游支不支持 Anthropic 协议无关。早期版本把两者混为一谈，key 一过期就
+    误判成「上游不支持 Anthropic」转去起桥，而桥用的是同一把 key，只会以更绕的
+    方式再失败一次。
     """
-    host, _ignored_port = host_port_from_base_url(base_url)
-    if host and not _is_local_host(host):
-        return base_url, (os.environ.get("ANTHROPIC_API_KEY") or "").strip()
 
-    model = (os.environ.get("UPSTREAM_MODEL") or "").strip()
-    api_base = (os.environ.get("UPSTREAM_API_BASE") or "").strip()
-    api_key = (os.environ.get("UPSTREAM_API_KEY") or "").strip()
-    if not (model and api_base and api_key):
-        return base_url, (os.environ.get("ANTHROPIC_API_KEY") or "").strip()
-
-    direct_base = normalize_upstream_api_base_for_litellm(api_base)
-    direct_model = direct_model_from_upstream(model)
-    if not direct_base or not direct_model:
-        return base_url, (os.environ.get("ANTHROPIC_API_KEY") or "").strip()
-
-    ok, detail = probe_anthropic_messages_endpoint(
-        base_url=direct_base,
-        api_key=api_key,
-        model=direct_model,
-    )
-    if not ok:
-        print(
-            f"[llm] 远端 Anthropic 直连探测失败，回退 LiteLLM: {detail}",
-            flush=True,
-        )
-        return base_url, (os.environ.get("ANTHROPIC_API_KEY") or "").strip()
-
-    direct_base = direct_base.rstrip("/")
-    os.environ["ANTHROPIC_BASE_URL"] = direct_base
-    os.environ["ANTHROPIC_API_KEY"] = api_key
-    _merge_no_proxy_for_url(direct_base)
-    print(f"[llm] 远端 Anthropic 直连可用，跳过 LiteLLM: {direct_base}", flush=True)
-    return direct_base, api_key
+    ok: bool
+    auth_failed: bool
+    detail: str
 
 
-def probe_anthropic_messages_endpoint(
-    *,
-    base_url: str,
-    api_key: str,
-    model: str,
-    timeout: float = 20.0,
-) -> tuple[bool, str]:
+def probe_anthropic_messages(
+    *, base_url: str, api_key: str, model: str, timeout: float = 20.0
+) -> ProbeResult:
+    """探测上游能否直接处理 Anthropic ``/v1/messages``。
+
+    两种鉴权头都试（``Authorization: Bearer`` 与 ``x-api-key``），中转网关用哪种的都有。
+    只有在**每次尝试都是 401/403** 时才判定为凭据问题——只要有一次是别的错
+    （404/405 等），那就是路由层面不认这个端点，属于协议不支持。
     """
-    轻量探测远端是否能处理 Anthropic ``/v1/messages``。
-
-    返回 ``(是否可直连, 说明)``。仅作为路由判定，不代表后续所有推理都必定成功。
-    """
-    endpoint = base_url.strip().rstrip("/") + "/v1/messages"
+    endpoint = normalize_api_base(base_url) + "/v1/messages"
     body = json.dumps(
-        {
-            "model": model,
-            "max_tokens": 1,
-            "messages": [{"role": "user", "content": "ping"}],
-        }
+        {"model": model, "max_tokens": 1, "messages": [{"role": "user", "content": "ping"}]}
     ).encode("utf-8")
+    base_headers = {"content-type": "application/json", "anthropic-version": "2023-06-01"}
     attempts = [
-        (
-            "Bearer",
-            {
-                "content-type": "application/json",
-                "Authorization": f"Bearer {api_key}",
-                "anthropic-version": "2023-06-01",
-            },
-        ),
-        (
-            "x-api-key",
-            {
-                "content-type": "application/json",
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01",
-            },
-        ),
+        ("Bearer", {**base_headers, "Authorization": f"Bearer {api_key}"}),
+        ("x-api-key", {**base_headers, "x-api-key": api_key}),
     ]
     failures: list[str] = []
+    codes: list[int | None] = []
     for label, headers in attempts:
         req = Request(endpoint, data=body, method="POST", headers=headers)
         try:
             with urlopen(req, timeout=timeout) as resp:
-                status = getattr(resp, "status", 200)
-                if 200 <= int(status) < 300:
-                    return True, f"HTTP {status} ({label})"
+                status = int(getattr(resp, "status", 200))
+                if 200 <= status < 300:
+                    return ProbeResult(True, False, f"HTTP {status} ({label})")
+                codes.append(status)
                 failures.append(f"{label}: HTTP {status}")
         except HTTPError as e:
             detail = ""
             with suppress(Exception):
-                detail = e.read(512).decode("utf-8", errors="replace").strip()
+                detail = _short_error(e.read(2048).decode("utf-8", errors="replace"))
+            codes.append(e.code)
             failures.append(f"{label}: HTTP {e.code}{': ' + detail if detail else ''}")
-        except URLError as e:
-            failures.append(f"{label}: {type(e.reason).__name__}: {e.reason}")
-        except OSError as e:
+        except (URLError, OSError) as e:
+            codes.append(None)
             failures.append(f"{label}: {type(e).__name__}: {e}")
-    return False, "; ".join(failures)
+    auth_failed = bool(codes) and all(c in (401, 403) for c in codes)
+    return ProbeResult(False, auth_failed, "; ".join(failures))
 
 
-def maybe_start_litellm(base_url: str, *, disable: bool = False) -> None:
+def probe_openai_chat(
+    *, base_url: str, api_key: str, model: str, timeout: float = 20.0
+) -> tuple[bool, str]:
+    """探测上游的 OpenAI ``/v1/chat/completions``，用来判断 key 本身是不是好的。
+
+    只在 Anthropic 探测因 401/403 失败时才需要——两边都不认这把 key，就是 key 的问题；
+    这边认那边不认，说明只是 ``/v1/messages`` 的鉴权方式不同，仍可以走桥。
     """
-    若 ``disable`` 为真，或 ``base_url`` 非本机，则直接返回。
-    否则在具备 ``UPSTREAM_*`` 时：从 **4000** 起选第一个空闲端口，写 ``ANTHROPIC_BASE_URL`` 并启动子进程 LiteLLM。
+    endpoint = normalize_api_base(base_url) + "/v1/chat/completions"
+    body = json.dumps(
+        {"model": model, "max_tokens": 1, "messages": [{"role": "user", "content": "ping"}]}
+    ).encode("utf-8")
+    req = Request(
+        endpoint,
+        data=body,
+        method="POST",
+        headers={"content-type": "application/json", "Authorization": f"Bearer {api_key}"},
+    )
+    try:
+        with urlopen(req, timeout=timeout) as resp:
+            status = int(getattr(resp, "status", 200))
+            return 200 <= status < 300, f"HTTP {status}"
+    except HTTPError as e:
+        # 404/405 = 没这个端点，但至少不是凭据被拒
+        return False, f"HTTP {e.code}"
+    except (URLError, OSError) as e:
+        return False, f"{type(e).__name__}: {e}"
 
-    若需使用已手动启动的代理（例如固定占用 4000），请使用 ``--no-litellm-autostart``。
 
-    Args:
-        base_url: 与 ``configure_anthropic_for_litellm`` 生效后的 ``ANTHROPIC_BASE_URL``（仅用于判断是否本机）。
-        disable: 对应 ``--no-litellm-autostart``。
+# --------------------------------------------------------------------------
+# 进程内协议桥：Anthropic /v1/messages -> 上游 OpenAI /v1/chat/completions
+# --------------------------------------------------------------------------
+#
+# 上游只认 OpenAI 协议时，需要有人把 SDK 发出的 Anthropic 请求翻译过去。
+# 这件事交给 ``litellm.anthropic_messages()`` —— 它是 LiteLLM 的**库接口**，
+# 不需要跑 LiteLLM 的代理服务器。我们只补一个极薄的 HTTP 端点，因为 SDK 只会
+# 通过 ``ANTHROPIC_BASE_URL`` 用 HTTP 说话。
+#
+# 相比拉子进程跑 `litellm --config`，这样省掉了：配置文件落盘（含明文 key）、
+# 端口扫描与占位、跨进程实例登记、脱组子进程的生命周期清理、以及对 LiteLLM
+# 私有方法的 monkeypatch。桥随 agent 进程生死，不会留下孤儿。
+
+#: 透传给 litellm 的 Anthropic Messages 参数。白名单而非全量转发，
+#: 避免上游因未知字段报错。
+_PASSTHROUGH_KEYS = (
+    "messages", "system", "max_tokens", "stop_sequences", "stream",
+    "temperature", "top_k", "top_p", "tools", "tool_choice", "metadata", "thinking",
+)
+
+_bridge_url: str | None = None
+_bridge_lock = threading.Lock()
+
+
+def _make_bridge_app(model: str, api_base: str, api_key: str):
+    from aiohttp import web
+    import litellm
+
+    # 让 litellm 把 Anthropic 请求发到 /v1/chat/completions，而不是多数中转
+    # 不支持的 /v1/responses。
+    litellm.use_chat_completions_url_for_anthropic_messages = True
+    # SDK 会发 Anthropic 的 thinking，litellm 映射成 OpenAI 的 reasoning_effort；
+    # 通用 openai provider 对任意模型都不认这个参数，会抛 UnsupportedParamsError。
+    # 桥面对的是各式各样的兼容网关，能力参差不齐，丢掉不认的参数比整个请求失败好。
+    litellm.drop_params = True
+    target_model = bridge_model_id(model)
+    target_api_base = litellm_api_base(target_model, api_base)
+
+    async def handle(request):
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"type": "error", "error": {"type": "invalid_request_error",
+                                                                 "message": "malformed JSON body"}},
+                                     status=400)
+        kwargs = {k: body[k] for k in _PASSTHROUGH_KEYS if k in body}
+        kwargs.setdefault("max_tokens", 4096)
+        kwargs["model"] = target_model      # 忽略请求里的模型名，用配置里的
+        kwargs["api_base"] = target_api_base
+        kwargs["api_key"] = api_key
+        streaming = bool(kwargs.get("stream"))
+
+        try:
+            result = await litellm.anthropic_messages(**kwargs)
+        except Exception as exc:
+            return web.json_response(
+                {"type": "error", "error": {"type": "api_error", "message": f"{type(exc).__name__}: {exc}"}},
+                status=502,
+            )
+
+        if not streaming:
+            payload = result if isinstance(result, dict) else result.model_dump()
+            return web.json_response(payload)
+
+        resp = web.StreamResponse(
+            status=200,
+            headers={"Content-Type": "text/event-stream", "Cache-Control": "no-cache"},
+        )
+        await resp.prepare(request)
+        try:
+            async for chunk in result:
+                await resp.write(chunk if isinstance(chunk, (bytes, bytearray)) else str(chunk).encode())
+        except Exception as exc:
+            # 流已经开始，只能以 SSE 错误事件收尾
+            err = json.dumps({"type": "error",
+                              "error": {"type": "api_error", "message": str(exc)}})
+            with suppress(Exception):
+                await resp.write(f"event: error\ndata: {err}\n\n".encode())
+        await resp.write_eof()
+        return resp
+
+    app = web.Application()
+    app.router.add_post("/v1/messages", handle)
+    return app
+
+
+def start_protocol_bridge(model: str, api_base: str, api_key: str) -> str | None:
+    """在后台线程起一个只监听回环、端口由系统分配的协议桥，返回其 base URL。
+
+    单例：同一进程内所有会话共用它。桥是无状态的，并发请求没有问题。
     """
-    if disable:
-        return
+    global _bridge_url
+    with _bridge_lock:
+        if _bridge_url:
+            return _bridge_url
+        if importlib.util.find_spec("litellm") is None:
+            print("[llm] 未安装 litellm，无法进行协议转换。请 `pip install litellm`",
+                  file=sys.stderr, flush=True)
+            return None
 
-    host, _ignored_port = host_port_from_base_url(base_url)
-    if not host or not _is_local_host(host):
-        print(f"[llm] BASE_URL 非本机 ({host!r})，跳过 LiteLLM 自启", flush=True)
-        return
+        ready: queue.Queue = queue.Queue(maxsize=1)
 
-    connect_host = "127.0.0.1" if host in ("0.0.0.0", "::1", "") else host
-    if connect_host == "::1":
-        connect_host = "127.0.0.1"
+        def _serve() -> None:
+            import asyncio
 
-    model = (os.environ.get("UPSTREAM_MODEL") or "").strip()
-    api_base = (os.environ.get("UPSTREAM_API_BASE") or "").strip()
-    api_key = (os.environ.get("UPSTREAM_API_KEY") or "").strip()
+            from aiohttp import web
 
-    _norm_model = normalize_upstream_model_for_litellm(model)
-    if model and _norm_model != model:
-        print(f"[llm] UPSTREAM_MODEL 规范化: {model!r} -> {_norm_model!r}", flush=True)
-    _norm_base = normalize_upstream_api_base_for_litellm(api_base)
-    if api_base and _norm_base != api_base.strip():
-        print(f"[llm] UPSTREAM_API_BASE 规范化: {api_base.strip()!r} -> {_norm_base!r}", flush=True)
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                app = _make_bridge_app(model, api_base, api_key)
+                runner = web.AppRunner(app)
+                loop.run_until_complete(runner.setup())
+                site = web.TCPSite(runner, "127.0.0.1", 0)  # 端口交给系统分配
+                loop.run_until_complete(site.start())
+                port = site._server.sockets[0].getsockname()[1]
+                ready.put(port)
+                loop.run_forever()
+            except Exception as exc:
+                ready.put(exc)
 
-    if not (model and api_base and api_key):
-        print(
-            "[llm] 未设置 UPSTREAM_MODEL / UPSTREAM_API_BASE / UPSTREAM_API_KEY，"
-            "无法自动生成 LiteLLM 配置；请手动启动代理或补全 .env",
-            file=sys.stderr,
-            flush=True,
+        threading.Thread(target=_serve, name="llm-protocol-bridge", daemon=True).start()
+        try:
+            got = ready.get(timeout=30)
+        except queue.Empty:
+            print("[llm] 协议桥启动超时", file=sys.stderr, flush=True)
+            return None
+        if isinstance(got, Exception):
+            print(f"[llm] 协议桥启动失败: {got}", file=sys.stderr, flush=True)
+            return None
+        _bridge_url = f"http://127.0.0.1:{got}"
+        return _bridge_url
+
+
+# --------------------------------------------------------------------------
+# 主入口
+# --------------------------------------------------------------------------
+
+def _first(*values: str | None) -> str:
+    for v in values:
+        if v and str(v).strip():
+            return str(v).strip()
+    return ""
+
+
+def _publish(base_url: str, api_key: str, model: str) -> None:
+    """把解析结果写进环境，供 Claude Agent SDK 与 build_options 读取。
+
+    集中在这里设置，避免各处再去猜 UPSTREAM_* 该怎么转成 SDK 要的形式。
+    """
+    os.environ["ANTHROPIC_BASE_URL"] = base_url
+    os.environ["ANTHROPIC_API_KEY"] = api_key
+    if model:
+        os.environ.setdefault("CLAUDE_CODE_MODEL", model)
+    _merge_no_proxy(base_url)
+
+
+def resolve_llm_endpoint(
+    *,
+    api_base: str | None = None,
+    api_key: str | None = None,
+    model: str | None = None,
+    force_litellm: bool = False,
+) -> LLMEndpoint:
+    """解析出 SDK 该连的地址，必要时自动拉起/复用 LiteLLM。
+
+    副作用：设置 ``ANTHROPIC_BASE_URL`` / ``ANTHROPIC_API_KEY`` 与 ``NO_PROXY``。
+    """
+    base = _first(api_base, os.environ.get("LLM_API_BASE"), os.environ.get("UPSTREAM_API_BASE"))
+    key = _first(api_key, os.environ.get("LLM_API_KEY"), os.environ.get("UPSTREAM_API_KEY"))
+    mdl = _first(model, os.environ.get("LLM_MODEL"), os.environ.get("UPSTREAM_MODEL"))
+
+    if not (base and key):
+        raise SystemExit(
+            "[llm] 缺少上游配置。请在 .env 中设置 LLM_API_BASE / LLM_API_KEY "
+            "（可选 LLM_MODEL），或用 --api-base / --api-key 传入。"
         )
-        return
 
-    if not _litellm_package_available():
-        print(
-            "[llm] 当前 Python 环境中未安装 litellm 包。请 `pip install 'litellm[proxy]'` 后重试。",
-            file=sys.stderr,
-            flush=True,
-        )
-        return
+    base = normalize_api_base(base)
+    direct_model = bare_model_id(mdl) if mdl else ""
 
-    port = first_free_port(connect_host)
-    if port is None:
-        print(
-            f"[llm] 自 {LITELLM_AUTOSTART_PORT_MIN} 起连续 {LITELLM_AUTOSTART_PORT_SCAN_MAX} "
-            "个端口均被占用，无法自启 LiteLLM。",
-            file=sys.stderr,
-            flush=True,
-        )
-        return
+    # 1) 上游若原生支持 Anthropic 协议，直连最省事，也少一层故障点
+    if not force_litellm and direct_model:
+        res = probe_anthropic_messages(base_url=base, api_key=key, model=direct_model)
+        if res.ok:
+            _publish(base, key, direct_model)
+            return LLMEndpoint(base, key, direct_model, "direct", res.detail)
 
-    new_base = f"http://{connect_host}:{port}".rstrip("/")
-    os.environ["ANTHROPIC_BASE_URL"] = new_base
-    _merge_no_proxy_for_url(new_base)
-    print(f"[llm] 自启 LiteLLM 选用空闲端口: {port}（已设置 ANTHROPIC_BASE_URL={new_base}）", flush=True)
-
-    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    CONFIG_PATH.write_text(_build_yaml(model, api_base, api_key), encoding="utf-8")
-    # 该文件含明文上游 API key，不应对同机其他用户可读。
-    try:
-        os.chmod(CONFIG_PATH, 0o600)
-    except OSError:
-        pass
-
-    log_f = LOG_PATH.open("w", encoding="utf-8", buffering=1)
-    # Popen 继承了这个 fd，父进程侧的句柄此前从不关闭（每次自启泄漏一个）。
-    atexit.register(lambda: log_f.close() if not log_f.closed else None)
-    ts = time.strftime("%Y-%m-%d %H:%M:%S")
-    log_f.write(f"\n--- autostart {ts} ---\n")
-    log_f.flush()
-
-    cmd = [
-        sys.executable,
-        "-m",
-        "src.litellm_proxy",
-        "--config",
-        str(CONFIG_PATH),
-        "--port",
-        str(port),
-    ]
-    print(
-        f"[llm] 正在自启 LiteLLM: port={port}  module=src.litellm_proxy  config={CONFIG_PATH}",
-        flush=True,
-    )
-
-    env = os.environ.copy()
-    env.setdefault(
-        "LITELLM_USE_CHAT_COMPLETIONS_URL_FOR_ANTHROPIC_MESSAGES",
-        "true",
-    )
-
-    try:
-        proc = subprocess.Popen(
-            cmd,
-            stdin=subprocess.DEVNULL,
-            stdout=log_f,
-            stderr=subprocess.STDOUT,
-            cwd=str(REPO_ROOT),
-            env=env,
-            start_new_session=True,
-        )
-    except OSError as e:
-        print(f"[llm] 启动 LiteLLM 失败: {e}", file=sys.stderr, flush=True)
-        return
-
-    _register_autostart_cleanup(proc)
-
-    deadline = time.monotonic() + 20.0
-    while time.monotonic() < deadline:
-        if proc.poll() is not None:
+        if res.auth_failed:
+            # 401/403 不代表上游不支持 Anthropic。先确认这把 key 在 OpenAI 那条路上
+            # 是否也被拒——都被拒就是凭据问题，起桥只会把同一个错误包装得更难懂。
+            key_ok, chat_detail = probe_openai_chat(base_url=base, api_key=key, model=direct_model)
+            if not key_ok:
+                raise SystemExit(
+                    f"[llm] 上游拒绝了这组凭据（不是协议问题）。\n"
+                    f"      /v1/messages:        {res.detail}\n"
+                    f"      /v1/chat/completions: {chat_detail}\n"
+                    f"      两条路都不认这把 key，协议桥用的也是它，先检查 LLM_API_KEY "
+                    f"是否过期、额度是否用尽、LLM_API_BASE 是否写对。"
+                )
             print(
-                f"[llm] LiteLLM 进程已退出（code={proc.returncode}）。"
-                f"请查看 {LOG_PATH}",
-                file=sys.stderr,
+                "[llm] /v1/messages 拒绝了这把 key，但 /v1/chat/completions 认它，"
+                "改用进程内协议桥转换",
                 flush=True,
             )
-            return
-        if port_is_listening(connect_host, port, timeout=0.25):
-            print(f"[llm] LiteLLM 已监听 {connect_host}:{port}", flush=True)
-            return
-        time.sleep(0.35)
+        else:
+            print(
+                f"[llm] 上游不支持 Anthropic /v1/messages，改用进程内协议桥转换: {res.detail}",
+                flush=True,
+            )
 
-    print(
-        f"[llm] 等待 {connect_host}:{port} 超时；进程仍在则稍后可连，详见 {LOG_PATH}",
-        file=sys.stderr,
-        flush=True,
-    )
+    # 2) 否则在进程内起协议桥翻译
+    if not mdl:
+        raise SystemExit("[llm] 需要协议转换时必须指定模型（LLM_MODEL 或 --model）。")
+    local = start_protocol_bridge(mdl, base, key)
+    if local is None:
+        raise SystemExit("[llm] 无法建立到上游的连接：既不支持直连，协议桥也未能启动。")
 
-
-if __name__ == "__main__":
-    raise SystemExit(run_litellm_proxy_main())
+    resolved_model = direct_model or bare_model_id(mdl)
+    _publish(local, key, resolved_model)
+    return LLMEndpoint(local, key, resolved_model, "bridge", local)

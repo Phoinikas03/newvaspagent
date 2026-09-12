@@ -8,11 +8,14 @@ data/datasets/bandgap 下的材料
 用法示例：
     python batch_runner.py --gpus 0,1,2,3 --tasks relax bandgap
     python batch_runner.py --data-root data/datasets --dry-run
-    python batch_runner.py --api-base http://127.0.0.1:43336   # LiteLLM 若随机端口须显式指定
+    python batch_runner.py --api-base https://host/v1 --model glm-5   # 覆盖 .env 的上游
     python batch_runner.py --gpus 0,1 --tasks relax --materials Al AlN
     python batch_runner.py --dry-run          # 只列出任务不执行
 
-环境：启动前请 export ANTHROPIC_BASE_URL 与 litellm 监听一致；worker 内用 setdefault，不再强行覆盖为 4000。
+环境：上游只需 .env 里的 LLM_API_BASE / LLM_API_KEY / LLM_MODEL。主进程启动时
+调用 resolve_llm_endpoint() 完成探测——上游支持 Anthropic 协议就直连，否则在**主进程内**
+起一个协议桥；worker 通过继承来的 ANTHROPIC_BASE_URL 连过去，因此主进程必须存活到所有
+worker 结束（本脚本本来就会 join）。
 
 注意：本脚本中的 worker prompt 也应遵守仓库统一规范：
 - 正式 VASP 提交优先通过 `python .claude/skills/run-vasp/scripts/vasp_runner.py`
@@ -198,6 +201,7 @@ async def run_single_task(
     )
     options = ClaudeAgentOptions(
         cwd=workspace,
+        model=os.environ.get("CLAUDE_CODE_MODEL") or None,
         setting_sources=["project"],
         permission_mode="bypassPermissions",
         system_prompt=_build_system_prompt(workspace, task_type),
@@ -251,7 +255,7 @@ async def run_single_task(
                     log_file.write(prompt + "\n\n")
                 event_log.append_user_turn(prompt)
                 log_file.write(
-                    "\n--- 等待 LLM 响应（若长时间无下文，请检查 ANTHROPIC_BASE_URL 是否与 LiteLLM 端口一致）---\n"
+                    "\n--- 等待 LLM 响应（若长时间无下文，用 scripts/test_env_llm_connection.py 查上游）---\n"
                 )
                 log_file.flush()
 
@@ -343,9 +347,11 @@ def _worker_entry(
     max_continuations: int,
 ):
     os.environ["CUDA_VISIBLE_DEVICES"] = gpu_id
-    # 须与 LiteLLM / 代理实际监听端口一致；启动 batch 前可 export ANTHROPIC_BASE_URL
-    os.environ.setdefault("ANTHROPIC_BASE_URL", "http://127.0.0.1:4000")
-    os.environ.setdefault("ANTHROPIC_API_KEY", "sk-dummy-key")
+    # ANTHROPIC_* 由主进程的 resolve_llm_endpoint() 写好后继承下来（直连地址或桥地址），
+    # 这里不再猜端口。缺失说明主进程没解析成功，早退比让 SDK 连 404 强。
+    if not os.environ.get("ANTHROPIC_BASE_URL"):
+        print(f"[GPU-{gpu_id}] 未继承到 ANTHROPIC_BASE_URL，主进程 LLM 解析失败？", file=sys.stderr, flush=True)
+        return
     os.environ.setdefault("NO_PROXY", "127.0.0.1,localhost,0.0.0.0")
 
     tag = f"GPU-{gpu_id}"
@@ -423,7 +429,7 @@ def main():
         epilog="示例:\n"
                "  python batch_runner.py --gpus 0,1,2,3\n"
                "  python batch_runner.py --data-root data/datasets --dry-run\n"
-               "  python batch_runner.py --api-base http://127.0.0.1:43336   # 与 LiteLLM 实际端口一致\n"
+               "  python batch_runner.py --api-base https://host/v1 --model glm-5\n"
                "  python batch_runner.py --gpus 0 --tasks relax --materials Al AlN\n"
                "  python batch_runner.py --dry-run\n",
     )
@@ -465,12 +471,24 @@ def main():
     parser.add_argument(
         "--api-base",
         default=None,
-        help="覆盖 ANTHROPIC_BASE_URL（须与 litellm 监听地址一致，默认 env 或 http://127.0.0.1:4000）",
+        help="上游 API 地址；默认读 .env 的 LLM_API_BASE（兼容 UPSTREAM_API_BASE）",
+    )
+    parser.add_argument(
+        "--api-key",
+        default=None,
+        help="上游 API Key；默认读 .env 的 LLM_API_KEY（兼容 UPSTREAM_API_KEY）",
+    )
+    parser.add_argument(
+        "--model",
+        default=None,
+        help="模型名；默认读 .env 的 LLM_MODEL（兼容 UPSTREAM_MODEL）",
+    )
+    parser.add_argument(
+        "--force-litellm",
+        action="store_true",
+        help="跳过直连探测，强制经进程内协议桥转换（上游探测误判时使用）",
     )
     args = parser.parse_args()
-
-    if args.api_base:
-        os.environ["ANTHROPIC_BASE_URL"] = args.api_base.rstrip("/")
 
     data_root = args.data_root
     if not data_root.is_absolute():
@@ -494,8 +512,18 @@ def main():
         print("\n(dry-run 模式，不执行)")
         return
 
-    api_base = os.environ.get("ANTHROPIC_BASE_URL", "http://127.0.0.1:4000")
-    print(f"ANTHROPIC_BASE_URL={api_base}  （须与 LiteLLM 终端里 Uvicorn 端口一致）")
+    # 在 fork 出 worker 之前解析：直连时 worker 各自连上游，走桥时共用主进程这一个桥。
+    from dotenv import load_dotenv
+    load_dotenv(SCRIPT_DIR / ".env")
+    from src.litellm_proxy import resolve_llm_endpoint
+
+    endpoint = resolve_llm_endpoint(
+        api_base=args.api_base,
+        api_key=args.api_key,
+        model=args.model,
+        force_litellm=args.force_litellm,
+    )
+    print(f"[llm] {endpoint.describe()}")
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     log_root = LOG_DIR / timestamp
