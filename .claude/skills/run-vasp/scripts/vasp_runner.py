@@ -222,6 +222,34 @@ def verify_local_dependencies(exe: str, env_script: str = "") -> None:
         sys.exit(1)
 
 
+def inherited_visible_devices() -> list[str]:
+    """GPU allocation handed down by the caller via ``CUDA_VISIBLE_DEVICES``.
+
+    A scheduler (Slurm, a batch driver, a per-task wrapper) expresses "this task
+    owns these GPUs" by setting ``CUDA_VISIBLE_DEVICES`` before launching us.
+    Overwriting it with our own physical indices would silently escape that
+    allocation -- several tasks each computing ``task_idx * gpu_per_task`` from
+    zero would all land on GPU 0. When the variable is already set we allocate
+    from its entries instead. Entries may be indices or ``GPU-<uuid>`` strings;
+    both are passed through untouched.
+    """
+    raw = os.environ.get("CUDA_VISIBLE_DEVICES", "").strip()
+    if not raw:
+        return []
+    return [tok.strip() for tok in raw.split(",") if tok.strip()]
+
+
+def allocate_gpu_tokens(task_idx: int, gpu_per_task: int, pool: list[str]) -> list:
+    """GPU identifiers for one task: from the inherited pool if there is one."""
+    if gpu_per_task <= 0:
+        return []
+    if not pool:
+        start = task_idx * gpu_per_task
+        return list(range(start, start + gpu_per_task))
+    start = (task_idx * gpu_per_task) % len(pool)
+    return [pool[(start + g) % len(pool)] for g in range(gpu_per_task)]
+
+
 def query_gpu_free_mib() -> dict[int, float]:
     """nvidia-smi：各 GPU 索引 -> 空闲显存 (MiB)。"""
     if not shutil.which("nvidia-smi"):
@@ -520,7 +548,7 @@ def launch_local_task(
     exe: str,
     env_script: str,
     log_name: str,
-    gpu_ids: list[int],
+    gpu_ids: list,
 ) -> tuple[subprocess.Popen, Path, str]:
     ensure_no_active_owned_run(dir_path)
     state_path = state_file_for_dir(dir_path)
@@ -791,13 +819,23 @@ def run_local_fixed_batch(
     max_rc = 0
     launch_failed = False
 
+    inherited_pool = inherited_visible_devices()
+    if inherited_pool and gpu_per_task > 0:
+        print(
+            f"[local-run] honouring inherited CUDA_VISIBLE_DEVICES={','.join(inherited_pool)}",
+            file=sys.stderr,
+        )
+        if len(work_dirs) * gpu_per_task > len(inherited_pool):
+            print(
+                f"WARNING: {len(work_dirs)} tasks x {gpu_per_task} GPU(s) exceed the "
+                f"{len(inherited_pool)} allocated GPU(s); tasks will share them.",
+                file=sys.stderr,
+            )
+
     for task_idx, wdir in enumerate(work_dirs):
         dir_path = Path(wdir).resolve()
         resolved_log = resolve_log_file_name(task_idx, len(work_dirs), log_file, log_prefix)
-        gpu_ids: list[int] = []
-        if gpu_per_task > 0:
-            gpu_start = task_idx * gpu_per_task
-            gpu_ids = list(range(gpu_start, gpu_start + gpu_per_task))
+        gpu_ids = allocate_gpu_tokens(task_idx, gpu_per_task, inherited_pool)
         try:
             proc, state_path, cmd = launch_local_task(
                 task_idx=task_idx,
@@ -963,6 +1001,19 @@ if __name__ == "__main__":
 
     if args.mode == "local":
         verify_local_dependencies(args.exe, args.env_script)
+        # The flex scheduler picks GPUs by physical index from nvidia-smi. When
+        # the caller has already handed us an allocation through
+        # CUDA_VISIBLE_DEVICES those indices refer to different devices (and may
+        # be UUIDs), so honour the allocation with the fixed layout instead.
+        inherited_alloc = inherited_visible_devices()
+        if inherited_alloc and args.gpu_per_task > 0 and not args.fixed_gpu_layout:
+            print(
+                "[local-run] CUDA_VISIBLE_DEVICES is already set "
+                f"({','.join(inherited_alloc)}); using the inherited allocation "
+                "instead of the flex GPU scheduler.",
+                file=sys.stderr,
+            )
+            args.fixed_gpu_layout = True
         if args.gpu_per_task > 0 and not args.fixed_gpu_layout:
             rc = run_local_gpu_flexible_queue(
                 args.dirs,
@@ -986,7 +1037,7 @@ if __name__ == "__main__":
                 )
                 sys.exit(rc)
         else:
-            if args.gpu_per_task > 0 and args.fixed_gpu_layout and (
+            if args.gpu_per_task > 0 and args.fixed_gpu_layout and not inherited_alloc and (
                 args.min_gpu_free_mib > 0 or args.max_gpu_util_percent > 0
             ):
                 indices = gpu_indices_for_local_batch(len(args.dirs), args.gpu_per_task)
