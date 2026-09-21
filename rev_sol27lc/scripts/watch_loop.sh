@@ -1,6 +1,6 @@
 #!/bin/bash
 # Append a status line every 2 min so progress is auditable after the fact.
-EXP=/mnt/data_x3/xiazeyu/vasp_agent/newvaspagent/rev_sol27lc
+EXP="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 while true; do
   ts=$(date '+%H:%M:%S')
   a2=$(grep -l '"status": "completed"' "$EXP"/runs_atomate2/*/run_meta.json 2>/dev/null | wc -l)

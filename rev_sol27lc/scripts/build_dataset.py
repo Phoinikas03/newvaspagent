@@ -18,8 +18,9 @@ import sys
 from pymatgen.core import Structure
 from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
 
-SRC = "/mnt/data_x3/xiazeyu/vasp_agent/newvaspagent/runs"
-OUT = "/mnt/data_x3/xiazeyu/vasp_agent/newvaspagent/rev_sol27lc/data"
+_EXP = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SRC = os.path.join(os.path.dirname(_EXP), "runs")  # archived manuscript runs (d01 only)
+OUT = os.path.join(_EXP, "data")
 # atoms per conventional cell, used only to report the cubic lattice constant
 PER_CONV = {"fcc": 4, "dia": 8, "bcc": 2}
 

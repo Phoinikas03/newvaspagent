@@ -111,3 +111,23 @@ Two driver changes came out of the same failure:
   loop burned rounds and grew the context until the upstream rejected the
   request. The workspace is now fingerprinted (OUTCAR count and total size); an
   unchanged fingerprint buys a wait (30/60/120/240/300 s) instead of a prompt.
+
+## 2026-09-22 — scripts made machine-independent for the d03 replications (rep2, rep3)
+
+The Sol27LC replications requested in the revision (repeated runs of the
+DeepSeek v4 + domain-skills configuration) are executed on d03, not d01. Every
+script under `rev_sol27lc/` had d01 paths hard-coded; they now derive the
+repository root from their own location, and the two launch wrappers read the
+conda prefix and the VASP environment script from an untracked `<repo>/site.env`
+(`site.env.example` documents both machines; the defaults are d01's).
+
+The pre-registered hardware answer in `answer_script.py` keeps its wording; the
+VASP binary directory and the CPU count are filled in at runtime (`VASP_BIN_DIR`
+exported by the wrapper, `os.cpu_count()`). On d01 the rendered text is
+byte-identical to the rep1 text. Nothing else in the protocol (task prompt,
+system prompt, answer rules, budget, round limit) changed.
+
+Reference for the software environment rep1 ran with:
+`protocol/d01-claude-env-freeze.txt` (pip freeze of d01's `claude` env,
+Python 3.12.12; Claude Code CLI 2.1.278). d03 installs the same pinned versions
+of the packages the agent arm imports.

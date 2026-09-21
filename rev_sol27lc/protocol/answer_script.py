@@ -13,10 +13,15 @@ from the agent to the operator.
 """
 import re
 
-HARDWARE = """\
+import os as _os
+# Wording is the pre-registered one; only the machine facts are filled in at
+# runtime so the same script serves d01 (rep1) and d03 (rep2/rep3).
+_VASP_BIN_DIR = _os.environ.get("VASP_BIN_DIR") or "/mnt/data_x4/vasp/vasp.6.4.2/bin"
+_NCPU = _os.cpu_count() or 64
+HARDWARE = f"""\
 本机是单节点工作站，没有 Slurm / PBS 调度器。
-CPU 64 核；GPU 为 8 × NVIDIA RTX 3090（24 GB）。
-VASP 6.4.2 为 GPU (OpenACC) 构建，vasp_gpu 与 vasp_std 都在 /mnt/data_x4/vasp/vasp.6.4.2/bin。
+CPU {_NCPU} 核；GPU 为 8 × NVIDIA RTX 3090（24 GB）。
+VASP 6.4.2 为 GPU (OpenACC) 构建，vasp_gpu 与 vasp_std 都在 {_VASP_BIN_DIR}。
 环境脚本：source ~/env_vasp（已包含 MKL、CUDA、NVIDIA HPC SDK 的 MPI 以及 VASP 的 PATH）。
 使用 GPU 版 VASP，source ~/env_vasp 后调用 vasp_gpu。本任务已分配 1 块 GPU（CUDA_VISIBLE_DEVICES 已设好），请按 1 rank ↔ 1 GPU、--np 1 --gpu-per-task 1 使用。"""
 

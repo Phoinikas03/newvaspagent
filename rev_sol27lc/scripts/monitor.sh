@@ -1,6 +1,6 @@
 #!/bin/bash
 # At-a-glance status of both arms.
-EXP=/mnt/data_x3/xiazeyu/vasp_agent/newvaspagent/rev_sol27lc
+EXP="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 echo "=== atomate2 arm ==="
 printf "%-10s %-14s %-6s %s\n" SYSTEM STATUS JOBS LAST
 for d in "$EXP"/runs_atomate2/*/; do

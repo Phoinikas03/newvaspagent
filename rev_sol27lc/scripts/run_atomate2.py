@@ -17,7 +17,7 @@ import time
 import traceback
 from pathlib import Path
 
-REPO = Path("/mnt/data_x3/xiazeyu/vasp_agent/newvaspagent")
+REPO = Path(__file__).resolve().parents[2]  # <repo>/rev_sol27lc/scripts/<this>
 EXP = REPO / "rev_sol27lc"
 POTCAR_LIB = REPO / "POTCAR_dir"
 # The one human override, recorded as specification cost: atomate2 asks for

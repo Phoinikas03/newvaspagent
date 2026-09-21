@@ -6,7 +6,7 @@
 # themselves mid-cleanup. Every candidate is verified through /proc before it is
 # signalled, and the script's own process tree is excluded.
 SELF=$$; PARENT=$PPID
-EXP=/mnt/data_x3/xiazeyu/vasp_agent/newvaspagent/rev_sol27lc
+EXP="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 
 signal_matching() {
   local pattern="$1" sig="$2" label="$3" n=0

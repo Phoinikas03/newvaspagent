@@ -3,8 +3,8 @@
 import json, os, sys
 import pandas as pd
 
-EXP = "/mnt/data_x3/xiazeyu/vasp_agent/newvaspagent/rev_sol27lc"
-XLSX = "/mnt/data_x3/xiazeyu/vasp_agent/newvaspagent/lattice_constant.xlsx"
+EXP = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+XLSX = os.path.join(os.path.dirname(EXP), "lattice_constant.xlsx")
 
 df = pd.read_excel(XLSX, sheet_name="晶格常数")
 exp_row, expert_row = df.iloc[0], df.iloc[1]

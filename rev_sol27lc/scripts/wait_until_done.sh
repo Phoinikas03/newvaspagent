@@ -1,7 +1,7 @@
 #!/bin/bash
 # Block until the agent rep finishes (or nothing is running any more), then
 # print a summary. Also surfaces crashes and pending questions as they appear.
-EXP=/mnt/data_x3/xiazeyu/vasp_agent/newvaspagent/rev_sol27lc
+EXP="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 REP="${1:-rep1}"; TARGET="${2:-27}"; MAXSEC="${3:-21600}"
 t=0
 while [ $t -lt $MAXSEC ]; do

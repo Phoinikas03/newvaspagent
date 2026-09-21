@@ -1,6 +1,6 @@
 #!/bin/bash
 # List every question currently waiting for an operator reply.
-EXP=/mnt/data_x3/xiazeyu/vasp_agent/newvaspagent/rev_sol27lc
+EXP="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 found=0
 for q in "$EXP"/runs_agent/*/*/PENDING_QUESTION.md; do
   [ -f "$q" ] || continue

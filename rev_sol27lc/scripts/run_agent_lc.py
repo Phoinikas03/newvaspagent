@@ -21,7 +21,7 @@ import sys
 import time
 from pathlib import Path
 
-REPO = Path("/mnt/data_x3/xiazeyu/vasp_agent/newvaspagent")
+REPO = Path(__file__).resolve().parents[2]  # <repo>/rev_sol27lc/scripts/<this>
 EXP = REPO / "rev_sol27lc"
 sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(EXP / "protocol"))

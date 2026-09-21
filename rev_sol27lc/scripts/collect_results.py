@@ -23,7 +23,7 @@ import sys
 import numpy as np
 from scipy.optimize import curve_fit
 
-EXP = "/mnt/data_x3/xiazeyu/vasp_agent/newvaspagent/rev_sol27lc"
+EXP = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ATOMS_PER_CONVENTIONAL = {"fcc": 4, "dia": 8, "bcc": 2}
 
 

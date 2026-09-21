@@ -7,7 +7,7 @@
 #
 # Usage: run_batch.sh atomate2|agent [rep]
 ARM="${1:?arm required}"; REP="${2:-rep1}"
-EXP=/mnt/data_x3/xiazeyu/vasp_agent/newvaspagent/rev_sol27lc
+EXP="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 mapfile -t UUIDS < <(nvidia-smi --query-gpu=uuid --format=csv,noheader)
 mapfile -t SYSTEMS < <(ls "$EXP/data" | grep -v '\.json$' | sort)
 NGPU=${#UUIDS[@]}
