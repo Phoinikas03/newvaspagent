@@ -23,3 +23,22 @@ runs/**/PCDAT
 runs/**/IBZKPT
 runs/.scheduler/
 runs/**/.scheduler/
+
+# 本地跑出来的基准结果与审计输出（rev_*/data、protocol、scripts 是输入与驱动，保留跟踪）
+convergence_test/
+kspacing_test/
+/runs_agent/
+rev_*/runs_agent/
+rev_*/runs_atomate2/
+rev_*/audit/
+rev_*/protocol/_dump.txt
+/eos_results.json
+# 根目录临时输入（模板正本在 .claude/skills/workflow-convergence/templates/）
+/INCAR_convergence_template
+/POSCAR_mp1265
+# 所有 .env 变体（备份也含明文 key），只留示例
+.env*
+!.env.example
+# VASP 赝势受许可证限制，任何位置都不进仓库
+POTCAR
+POTCAR.spec
