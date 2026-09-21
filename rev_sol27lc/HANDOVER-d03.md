@@ -43,6 +43,13 @@ d03 与 d01 的差异只有：VASP 运行时通过 `~/software/vasp/env.sh` 重�
 
 ## 3. 开跑前的检查（每项都要真的跑一下）
 
+d01 会话在 2026-09-22 00:50 前后已经在 d03 上跑过一遍下面的检查，结果：
+包导入正常；端点探测 `直连上游 https://api.deepseek.com/anthropic model=deepseek-v4-flash-vision-exp [HTTP 200]`；
+pymatgen 能从软链的库解析 `Ag` / `Fe_pv`；用 `vasp_runner.py --np 1 --exe vasp_gpu --gpu-per-task 1 --env-script ~/env_vasp`
+在 GPU 7 上跑 `~/software/vasp/validation/si-1gpu` 的输入 19.5 s 完成，TOTEN = −9.20866026 eV，与主人的验证结果逐位一致。
+pip 曾顺带装进 `pymatgen-core 2026.5.17`（d01 没有），已卸掉并把 `pymatgen 2025.10.7`、`pymatgen-io-validation 0.1.2` 按 d01 版本重装，`pip check` 干净。
+开跑前仍建议再过一遍，环境可能被别的会话动过。
+
 ```bash
 cd /home/xiazeyu/vasp_agent/newvaspagent
 source ~/env_vasp && which vasp_std vasp_gpu mpirun     # 应在 ~/software/vasp/... 下
