@@ -113,6 +113,7 @@ scripts/wait_until_done.sh "rep1 rep2 rep3" 86400                        # 阻�
 - **显存**：95 原子单卡 3090（24 GB）一般够；若出现 CUDA OOM，是 agent 的事（它会看到报错并调整），照录。
 - **串扰**：同一 rep 的 40 个目录同在 `runs_agent/<rep>/` 下，前一个 rep 的目录也在旁边。按主人决定**只审计不阻止**（与 Sol27LC 一致）；跑完用 `scripts/crosstalk_audit.py` 统计。
 - **找答案**：试跑里 agent 自己 `ls` 过 `rev_relax/reference`，所以专家参考已移出 d03。**不要把 `reference/`、`relax_new.xlsx` 的内容或 d01 的任何结果拷到 d03 上**。
+  试跑里它还翻了 `rev_sol27lc/runs_agent/rep*/…/env_local.sh` 找 VASP 环境写法（审计里记为 `rev_sol27lc/repN`，与本实验的 rep 区分）。
   仓库根目录的 `relax.xlsx`/`relax_new.xlsx`（论文的能量/RMSD 表）和 git 历史仍在，`crosstalk_audit.py` 会统计 agent 碰这些的命令（`answer_source_reads`）。
 - **skill 小 bug 不修**：`workflow-relax/scripts/analyze_result.py` 在 VASP 6.4.2 的 OUTCAR 上取不到最大力（返回 null），agent 会自己从 OUTCAR 读。skill 与 Sol27LC 一起冻结，不改。
 - 其余（`pkill -f` 会杀到自己、一张卡别放两个体系、agent 单轮可长时间不回话）同 Sol27LC 交接文档 §6。

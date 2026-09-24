@@ -56,13 +56,15 @@ def audit(rep_dir: str) -> list[dict]:
         if not os.path.exists(log):
             continue
         sib = [d for d in systems if d != s]
-        if not sib:
-            continue
         # a sibling name used as a path component, absolute or relative to the rep dir
-        pat = re.compile(r"(?<![A-Za-z_])(" + "|".join(map(re.escape, sib)) + r")/")
+        # (no siblings: a pattern that never matches, the other checks still run)
+        pat = re.compile(r"(?<![A-Za-z_])(" + "|".join(map(re.escape, sib)) + r")/" if sib else r"(?!x)x")
         own_rep = os.path.basename(os.path.normpath(rep_dir))
-        xrep = re.compile(r"runs_agent/(?!" + re.escape(own_rep) + r"/)([^/\s\"']+)/|"
-                          r"(?<![A-Za-z0-9_])(rep\d+)/")
+        # another rep of this experiment, or any run of another experiment
+        # (rev_sol27lc/..., reported with its prefix so it is not mistaken
+        # for one of our reps)
+        xrep = re.compile(r"(?:(rev_(?!relax/)\w+)/)?runs_agent/([^/\s\"']+)/|"
+                          r"(?<![A-Za-z0-9_/])(rep\d+)/")
         row = {"system": s, "reads": 0, "param_reads": 0, "siblings": set(), "events": [],
                "cross_rep_reads": 0, "cross_rep_same_system": 0, "cross_rep_events": [],
                "answer_source_reads": 0, "answer_source_events": []}
@@ -84,7 +86,8 @@ def audit(rep_dir: str) -> list[dict]:
                 if ANSWER_SOURCE.search(probe):
                     row["answer_source_reads"] += 1
                     row["answer_source_events"].append(cmd[:400])
-                other = {a or b for a, b in xrep.findall(cmd)} - {own_rep}
+                other = {f"{exp}/{rep}" if exp else (rep or bare)
+                         for exp, rep, bare in xrep.findall(cmd)} - {own_rep}
                 if other:
                     row["cross_rep_reads"] += 1
                     same = bool(re.search(r"(" + "|".join(map(re.escape, sorted(other))) + r")/"
