@@ -13,6 +13,11 @@ the expert reference in reference/<system>/:
                    DFT+U and smearing choices (see relax_new.xlsx notes); report
                    it next to those columns, never alone.
 
+The expert references live only on d01 (rev_relax/reference/, untracked, so
+they are never within the agent's reach on the run machine). Without them --
+i.e. on d03 -- everything else is still collected and the three comparison
+columns are left empty with reference_missing=true; rerun on d01 for them.
+
 A run that has not ended (no run_meta.json) is still collected -- the files are
 there -- but carries status "running"; rep_spread.py refuses such rows.
 
@@ -89,6 +94,10 @@ def main() -> None:
     if "--reps" in sys.argv:
         reps = sys.argv[sys.argv.index("--reps") + 1].split(",")
     dataset = {r["system"]: r for r in json.loads((EXP / "data" / "dataset.json").read_text())}
+    ref_json = EXP / "reference" / "reference.json"
+    refs = {r["system"]: r for r in json.loads(ref_json.read_text())} if ref_json.exists() else {}
+    if not refs:
+        print("# reference/ not present: RMSD / dV / dE left empty (compute on d01)", file=sys.stderr)
     matcher = StructureMatcher(angle_tol=30)
     ref_cache: dict[str, Structure] = {}
     rows = []
@@ -133,22 +142,26 @@ def main() -> None:
                 })
                 try:
                     s = Structure.from_file(d / "CONTCAR")
-                    ref = ref_cache.setdefault(system, Structure.from_file(EXP / "reference" / system / "CONTCAR"))
-                    rms = matcher.get_rms_dist(s, ref)
                     e0 = e0_of(d)
-                    ds = dataset[system]
                     row.update({
                         "natoms": len(s),
                         "volume_A3": round(s.volume, 4),
-                        "dV_pct": round(100 * (s.volume / ref.volume - 1), 4),
-                        "rmsd_vs_expert": round(rms[0], 6) if rms else None,
                         "e0_eV": e0,
                         "e0_per_atom_eV": e0 / len(s) if e0 is not None else None,
-                        "dE_meV_atom": round(1000 * (e0 / len(s) - ds["reference_e0_per_atom_eV"]), 3)
-                        if e0 is not None else None,
                         "lattice_abc": [round(x, 5) for x in s.lattice.abc],
                         "lattice_angles": [round(x, 3) for x in s.lattice.angles],
+                        "reference_missing": system not in refs,
+                        "dV_pct": None, "rmsd_vs_expert": None, "dE_meV_atom": None,
                     })
+                    if system in refs:
+                        ref = ref_cache.setdefault(system, Structure.from_file(EXP / "reference" / system / "CONTCAR"))
+                        rms = matcher.get_rms_dist(s, ref)
+                        row.update({
+                            "dV_pct": round(100 * (s.volume / ref.volume - 1), 4),
+                            "rmsd_vs_expert": round(rms[0], 6) if rms else None,
+                            "dE_meV_atom": round(1000 * (e0 / len(s) - refs[system]["reference_e0_per_atom_eV"]), 3)
+                            if e0 is not None else None,
+                        })
                 except Exception as exc:  # noqa: BLE001 -- recorded per row
                     row["error"] = f"{type(exc).__name__}: {exc}"
             rows.append(row)

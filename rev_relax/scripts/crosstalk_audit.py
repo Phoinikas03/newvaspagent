@@ -6,7 +6,12 @@ concurrently under a shared parent directory, so an agent can read a sibling's
 working directory. Because rev_relax queues its reps back to back, an agent can
 also read *another rep's* run of the same or another system; those reads are
 counted separately (cross_rep_reads) -- a same-system read across reps would
-directly contaminate the repeatability measurement. This script records, per system,
+directly contaminate the repeatability measurement.
+
+It also counts commands that go looking for an answer outside the run:
+the expert references (kept off the run machine, but present in git history),
+the manuscript's result workbooks, the archived rx_* runs, or git history
+(answer_source_reads). This script records, per system,
 every tool call whose command names another system of the same rep, and flags
 the ones that touch a file carrying a calculation parameter (INCAR/OUTCAR/EOS
 fit/convergence report). It reads logs only; it changes nothing.
@@ -16,6 +21,9 @@ Usage: crosstalk_audit.py <runs_agent/repN> [--json]
 from __future__ import annotations
 import json, os, re, sys
 
+ANSWER_SOURCE = re.compile(r"rev_relax/reference|(?<![\w-])reference(?=[/\s\"']|$)|vasp_benchmark|relax_new\.xlsx|"
+                           r"relax\.xlsx|benchmark_summary|(?<![\w-])runs/rxp?v?_|(?<![\w-])rx_[A-Z]|"
+                           r"git\s+(log|show|cat-file|rev-list|checkout|grep)|rev_relax/audit", re.I)
 PHYS = re.compile(r"INCAR|ENCUT|KSPACING|SIGMA|ISMEAR|OUTCAR|OSZICAR|CONTCAR|"
                   r"LDAU|MAGMOM|POTCAR|Convergence_Report|INCAR_explanation", re.I)
 
@@ -56,7 +64,8 @@ def audit(rep_dir: str) -> list[dict]:
         xrep = re.compile(r"runs_agent/(?!" + re.escape(own_rep) + r"/)([^/\s\"']+)/|"
                           r"(?<![A-Za-z0-9_])(rep\d+)/")
         row = {"system": s, "reads": 0, "param_reads": 0, "siblings": set(), "events": [],
-               "cross_rep_reads": 0, "cross_rep_same_system": 0, "cross_rep_events": []}
+               "cross_rep_reads": 0, "cross_rep_same_system": 0, "cross_rep_events": [],
+               "answer_source_reads": 0, "answer_source_events": []}
         results = {}
         pending = []
         for line in open(log, encoding="utf-8", errors="replace"):
@@ -66,6 +75,15 @@ def audit(rep_dir: str) -> list[dict]:
                 continue
             payload = msg.get("payload", {})
             for tid, cmd in tool_inputs(payload):
+                try:  # the free-text "description" field is not an access
+                    probe = json.loads(cmd)
+                    probe.pop("description", None)
+                    probe = json.dumps(probe, ensure_ascii=False)
+                except (ValueError, AttributeError):
+                    probe = cmd
+                if ANSWER_SOURCE.search(probe):
+                    row["answer_source_reads"] += 1
+                    row["answer_source_events"].append(cmd[:400])
                 other = {a or b for a, b in xrep.findall(cmd)} - {own_rep}
                 if other:
                     row["cross_rep_reads"] += 1
@@ -117,6 +135,11 @@ def main() -> None:
           f"{sum(r['cross_rep_same_system'] for r in rows)} on the same system")
     for r in xr:
         print(f"    {r['system']}: " + "; ".join(e["command"][:120] for e in r["cross_rep_events"][:3]))
+    ar = [r for r in rows if r["answer_source_reads"]]
+    print(f"{len(ar)}/{len(rows)} systems touched an answer source (reference/, workbooks, rx_* runs, git history); "
+          f"{sum(r['answer_source_reads'] for r in rows)} commands")
+    for r in ar:
+        print(f"    {r['system']}: " + "; ".join(c[:140] for c in r["answer_source_events"][:3]))
 
 if __name__ == "__main__":
     main()

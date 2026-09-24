@@ -13,7 +13,12 @@ reference re-run, the same choice as scripts/rebuild_relax_new_current.py).
 Only CONTCAR, INCAR and KPOINTS are copied, plus the final E0 and the POTCAR
 titles in reference.json -- never a POTCAR.
 
-Run on d01 only (the sources are not on d03); the outputs are committed.
+Run on d01 only (the sources are not on d03). data/ is committed; reference/
+is NOT (see .gitignore): the agent works under rev_relax/runs_agent and in the
+first pilot listed rev_relax/reference/ on its own. Whatever sits in the
+repository on the run machine is within the agent's reach, so the expert
+answers never go there; RMSD vs expert is computed on d01 after the runs come
+back.
 """
 import hashlib
 import json
@@ -75,7 +80,7 @@ def potcar_titles(directory: Path) -> list[str]:
 
 
 def main() -> None:
-    rows = []
+    rows, refs = [], []
     for src in sorted(SRC.iterdir()):
         mat = src.name
         if mat in EXCLUDE:
@@ -105,6 +110,9 @@ def main() -> None:
             "natoms": len(s0),
             "spacegroup_initial": SpacegroupAnalyzer(s0, symprec=0.1).get_space_group_symbol(),
             "volume_initial_A3": round(s0.volume, 4),
+        })
+        refs.append({
+            "system": system,
             "reference_dir": str(rdir.relative_to(REPO.parent)),
             "reference_e0_eV": e0,
             "reference_e0_per_atom_eV": e0 / len(sref) if e0 is not None else None,
@@ -115,6 +123,7 @@ def main() -> None:
         print(f"{system:<14} nat={len(s0):<3} V0={s0.volume:8.2f} Vref={sref.volume:8.2f} E0ref={e0}")
 
     (EXP / "data" / "dataset.json").write_text(json.dumps(rows, indent=2, ensure_ascii=False) + "\n")
+    (EXP / "reference" / "reference.json").write_text(json.dumps(refs, indent=2, ensure_ascii=False) + "\n")
     print(f"{len(rows)} systems")
 
 
